@@ -5,10 +5,10 @@
 package org.chromium.chrome.browser.firstrun;
 
 import android.app.Activity;
-import android.app.Fragment;
 import android.os.Bundle;
 import android.support.annotation.CallSuper;
 import android.support.annotation.StringRes;
+import android.support.v4.app.Fragment;
 import android.text.TextUtils;
 import android.view.View;
 
@@ -19,20 +19,18 @@ import org.chromium.base.VisibleForTesting;
 import org.chromium.base.metrics.CachedMetrics.EnumeratedHistogramSample;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.customtabs.CustomTabActivity;
+import org.chromium.chrome.browser.datareduction.DataReductionPromoUtils;
+import org.chromium.chrome.browser.datareduction.DataReductionProxyUma;
 import org.chromium.chrome.browser.metrics.UmaUtils;
 import org.chromium.chrome.browser.net.spdyproxy.DataReductionProxySettings;
-import org.chromium.chrome.browser.preferences.datareduction.DataReductionPromoUtils;
-import org.chromium.chrome.browser.preferences.datareduction.DataReductionProxyUma;
-import org.chromium.chrome.browser.search_engines.TemplateUrlService;
+import org.chromium.chrome.browser.search_engines.TemplateUrlServiceFactory;
 import org.chromium.chrome.browser.searchwidget.SearchWidgetProvider;
 import org.chromium.ui.base.LocalizationUtils;
 
-import java.lang.reflect.Constructor;
 import java.util.ArrayList;
 import java.util.HashSet;
 import java.util.List;
 import java.util.Set;
-import java.util.concurrent.Callable;
 
 /**
  * Handles the First Run Experience sequences shown to the user launching Chrome for the first time.
@@ -95,7 +93,7 @@ public class FirstRunActivity extends FirstRunActivityBase implements FirstRunPa
     private boolean mFlowIsKnown;
     private boolean mPostNativePageSequenceCreated;
     private boolean mNativeSideIsInitialized;
-    private Set<FirstRunPage> mPagesToNotifyOfNativeInit;
+    private Set<FirstRunFragment> mPagesToNotifyOfNativeInit;
     private boolean mDeferredCompleteFRE;
 
     private FirstRunViewPager mPager;
@@ -110,9 +108,8 @@ public class FirstRunActivity extends FirstRunActivityBase implements FirstRunPa
      */
     private boolean mLaunchedFromChromeIcon;
 
-    private List<Callable<FirstRunPage>> mPages;
-
-    private List<Integer> mFreProgressStates;
+    private final List<FirstRunPage> mPages = new ArrayList<>();
+    private final List<Integer> mFreProgressStates = new ArrayList<>();
 
     /**
      * The pager adapter, which provides the pages to the view pager widget.
@@ -123,12 +120,9 @@ public class FirstRunActivity extends FirstRunActivityBase implements FirstRunPa
      * Defines a sequence of pages to be shown (depending on parameters etc).
      */
     private void createPageSequence() {
-        mPages = new ArrayList<Callable<FirstRunPage>>();
-        mFreProgressStates = new ArrayList<Integer>();
-
         // An optional welcome page.
         if (mShowWelcomePage) {
-            mPages.add(pageOf(ToSAndUMAFirstRunFragment.class));
+            mPages.add(new ToSAndUMAFirstRunFragment.Page());
             mFreProgressStates.add(FRE_PROGRESS_WELCOME_SHOWN);
         }
 
@@ -146,21 +140,21 @@ public class FirstRunActivity extends FirstRunActivityBase implements FirstRunPa
         boolean notifyAdapter = false;
         // An optional Data Saver page.
         if (mFreProperties.getBoolean(SHOW_DATA_REDUCTION_PAGE)) {
-            mPages.add(pageOf(DataReductionProxyFirstRunFragment.class));
+            mPages.add(new DataReductionProxyFirstRunFragment.Page());
             mFreProgressStates.add(FRE_PROGRESS_DATA_SAVER_SHOWN);
             notifyAdapter = true;
         }
 
         // An optional page to select a default search engine.
         if (mFreProperties.getBoolean(SHOW_SEARCH_ENGINE_PAGE)) {
-            mPages.add(pageOf(DefaultSearchEngineFirstRunFragment.class));
+            mPages.add(new DefaultSearchEngineFirstRunFragment.Page());
             mFreProgressStates.add(FRE_PROGRESS_DEFAULT_SEARCH_ENGINE_SHOWN);
             notifyAdapter = true;
         }
 
         // An optional sign-in page.
         if (mFreProperties.getBoolean(SHOW_SIGNIN_PAGE)) {
-            mPages.add(pageOf(AccountFirstRunFragment.class));
+            mPages.add(SigninFirstRunFragment::new);
             mFreProgressStates.add(FRE_PROGRESS_SIGNIN_SHOWN);
             notifyAdapter = true;
         }
@@ -195,7 +189,7 @@ public class FirstRunActivity extends FirstRunActivityBase implements FirstRunPa
     }
 
     @Override
-    public void setContentView() {
+    public void triggerLayoutInflation() {
         initializeStateFromLaunchData();
 
         setFinishOnTouchOutside(true);
@@ -215,7 +209,7 @@ public class FirstRunActivity extends FirstRunActivityBase implements FirstRunPa
                 mShowWelcomePage = mFreProperties.getBoolean(SHOW_WELCOME_PAGE);
                 if (TextUtils.isEmpty(mResultSignInAccountName)) {
                     mResultSignInAccountName = mFreProperties.getString(
-                            AccountFirstRunFragment.FORCE_SIGNIN_ACCOUNT_TO);
+                            SigninFirstRunFragment.FORCE_SIGNIN_ACCOUNT_TO);
                 }
 
                 createPageSequence();
@@ -228,8 +222,7 @@ public class FirstRunActivity extends FirstRunActivityBase implements FirstRunPa
                     return;
                 }
 
-                mPagerAdapter =
-                        new FirstRunPagerAdapter(getFragmentManager(), mPages, mFreProperties);
+                mPagerAdapter = new FirstRunPagerAdapter(getSupportFragmentManager(), mPages);
                 stopProgressionIfNotAcceptedTermsOfService();
                 mPager.setAdapter(mPagerAdapter);
 
@@ -244,6 +237,7 @@ public class FirstRunActivity extends FirstRunActivityBase implements FirstRunPa
         mFirstRunFlowSequencer.start();
 
         recordFreProgressHistogram(FRE_PROGRESS_STARTED);
+        onInitialLayoutInflationComplete();
     }
 
     @Override
@@ -253,12 +247,16 @@ public class FirstRunActivity extends FirstRunActivityBase implements FirstRunPa
         Runnable onNativeFinished = new Runnable() {
             @Override
             public void run() {
-                if (isActivityDestroyed()) return;
+                if (isActivityFinishingOrDestroyed()) return;
 
                 onNativeDependenciesFullyInitialized();
             }
         };
-        TemplateUrlService.getInstance().runWhenLoaded(onNativeFinished);
+        TemplateUrlServiceFactory.get().runWhenLoaded(onNativeFinished);
+    }
+
+    public boolean isNativeSideIsInitializedForTest() {
+        return mNativeSideIsInitialized;
     }
 
     private void onNativeDependenciesFullyInitialized() {
@@ -271,7 +269,7 @@ public class FirstRunActivity extends FirstRunActivityBase implements FirstRunPa
             // sequence - in that case this will be done when onFlowIsKnown() gets called.
             createPostNativePageSequence();
             if (mPagesToNotifyOfNativeInit != null) {
-                for (FirstRunPage page : mPagesToNotifyOfNativeInit) {
+                for (FirstRunFragment page : mPagesToNotifyOfNativeInit) {
                     page.onNativeInitialized();
                 }
             }
@@ -284,16 +282,16 @@ public class FirstRunActivity extends FirstRunActivityBase implements FirstRunPa
 
     @Override
     public void onAttachFragment(Fragment fragment) {
-        if (!(fragment instanceof FirstRunPage)) return;
+        if (!(fragment instanceof FirstRunFragment)) return;
 
-        FirstRunPage page = (FirstRunPage) fragment;
+        FirstRunFragment page = (FirstRunFragment) fragment;
         if (mNativeSideIsInitialized) {
             page.onNativeInitialized();
             return;
         }
 
         if (mPagesToNotifyOfNativeInit == null) {
-            mPagesToNotifyOfNativeInit = new HashSet<FirstRunPage>();
+            mPagesToNotifyOfNativeInit = new HashSet<>();
         }
         mPagesToNotifyOfNativeInit.add(page);
     }
@@ -324,8 +322,8 @@ public class FirstRunActivity extends FirstRunActivityBase implements FirstRunPa
         }
 
         Object currentItem = mPagerAdapter.instantiateItem(mPager, mPager.getCurrentItem());
-        if (currentItem instanceof FirstRunPage) {
-            FirstRunPage page = (FirstRunPage) currentItem;
+        if (currentItem instanceof FirstRunFragment) {
+            FirstRunFragment page = (FirstRunFragment) currentItem;
             if (page.interceptBackPressed()) return;
         }
 
@@ -338,20 +336,20 @@ public class FirstRunActivity extends FirstRunActivityBase implements FirstRunPa
 
     // FirstRunPageDelegate:
     @Override
-    public void advanceToNextPage() {
-        jumpToPage(mPager.getCurrentItem() + 1);
+    public Bundle getProperties() {
+        return mFreProperties;
     }
 
     @Override
-    public void recreateCurrentPage() {
-        mPagerAdapter.notifyDataSetChanged();
+    public void advanceToNextPage() {
+        jumpToPage(mPager.getCurrentItem() + 1);
     }
 
     @Override
     public void abortFirstRunExperience() {
         finish();
 
-        sendPendingIntentIfNecessary(false);
+        notifyCustomTabCallbackFirstRunIfNecessary(getIntent(), false);
         if (sObserver != null) sObserver.onAbortFirstRunExperience();
     }
 
@@ -395,18 +393,25 @@ public class FirstRunActivity extends FirstRunActivityBase implements FirstRunPa
         SearchWidgetProvider.updateCachedEngineName();
         if (sObserver != null) sObserver.onUpdateCachedEngineName();
 
-        if (!sendPendingIntentIfNecessary(true)) {
+        if (!sendFirstRunCompletePendingIntent()) {
             finish();
         } else {
-            ApplicationStatus.registerStateListenerForActivity(new ActivityStateListener() {
+            ApplicationStatus.registerStateListenerForAllActivities(new ActivityStateListener() {
                 @Override
                 public void onActivityStateChange(Activity activity, int newState) {
-                    if (newState == ActivityState.STOPPED || newState == ActivityState.DESTROYED) {
+                    boolean shouldFinish = false;
+                    if (activity == FirstRunActivity.this) {
+                        shouldFinish = (newState == ActivityState.STOPPED
+                                || newState == ActivityState.DESTROYED);
+                    } else {
+                        shouldFinish = newState == ActivityState.RESUMED;
+                    }
+                    if (shouldFinish) {
                         finish();
                         ApplicationStatus.unregisterActivityStateListener(this);
                     }
                 }
-            }, this);
+            });
         }
     }
 
@@ -418,14 +423,10 @@ public class FirstRunActivity extends FirstRunActivityBase implements FirstRunPa
     }
 
     @Override
-    public void acceptSignIn(String accountName, boolean isDefaultAccount) {
+    public void acceptSignIn(String accountName, boolean isDefaultAccount, boolean openSettings) {
         mResultSignInAccountName = accountName;
         mResultIsDefaultAccount = isDefaultAccount;
-    }
-
-    @Override
-    public void askToOpenSignInSettings() {
-        mResultShowSignInSettings = true;
+        mResultShowSignInSettings = openSettings;
     }
 
     @Override
@@ -482,12 +483,10 @@ public class FirstRunActivity extends FirstRunActivityBase implements FirstRunPa
     private void skipPagesIfNecessary() {
         if (mPagerAdapter == null) return;
 
-        int currentPageIndex = mPager.getCurrentItem();
-        while (currentPageIndex < mPagerAdapter.getCount()) {
-            FirstRunPage currentPage = (FirstRunPage) mPagerAdapter.getItem(currentPageIndex);
-            if (!currentPage.shouldSkipPageOnCreate(getApplicationContext())) return;
-            if (!jumpToPage(currentPageIndex + 1)) return;
-            currentPageIndex = mPager.getCurrentItem();
+        boolean shouldSkip = mPages.get(mPager.getCurrentItem()).shouldSkipPageOnCreate();
+        while (shouldSkip) {
+            if (!jumpToPage(mPager.getCurrentItem() + 1)) return;
+            shouldSkip = mPages.get(mPager.getCurrentItem()).shouldSkipPageOnCreate();
         }
     }
 
@@ -497,21 +496,6 @@ public class FirstRunActivity extends FirstRunActivityBase implements FirstRunPa
         } else {
             sMobileFreProgressViewIntentHistogram.record(state);
         }
-    }
-
-    /**
-     * Creates a trivial page constructor for a given page type.
-     * @param clazz The .class of the page type.
-     * @return The simple constructor for a given page type (no parameters, no tuning).
-     */
-    public static Callable<FirstRunPage> pageOf(final Class<? extends FirstRunPage> clazz) {
-        return new Callable<FirstRunPage>() {
-            @Override
-            public FirstRunPage call() throws Exception {
-                Constructor<? extends FirstRunPage> constructor = clazz.getDeclaredConstructor();
-                return constructor.newInstance();
-            }
-        };
     }
 
     @Override

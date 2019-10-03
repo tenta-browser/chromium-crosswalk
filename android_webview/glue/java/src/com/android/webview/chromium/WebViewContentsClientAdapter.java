@@ -4,8 +4,6 @@
 
 package com.android.webview.chromium;
 
-import android.annotation.SuppressLint;
-import android.annotation.TargetApi;
 import android.content.Context;
 import android.content.Intent;
 import android.graphics.Bitmap;
@@ -29,14 +27,9 @@ import android.webkit.JsDialogHelper;
 import android.webkit.JsPromptResult;
 import android.webkit.JsResult;
 import android.webkit.PermissionRequest;
-import android.webkit.RenderProcessGoneDetail;
-import android.webkit.SafeBrowsingResponse;
 import android.webkit.SslErrorHandler;
 import android.webkit.ValueCallback;
 import android.webkit.WebChromeClient;
-import android.webkit.WebChromeClient.CustomViewCallback;
-import android.webkit.WebResourceError;
-import android.webkit.WebResourceRequest;
 import android.webkit.WebResourceResponse;
 import android.webkit.WebView;
 import android.webkit.WebViewClient;
@@ -48,19 +41,20 @@ import org.chromium.android_webview.AwContents;
 import org.chromium.android_webview.AwContentsClient;
 import org.chromium.android_webview.AwContentsClientBridge;
 import org.chromium.android_webview.AwGeolocationPermissions;
+import org.chromium.android_webview.AwHistogramRecorder;
 import org.chromium.android_webview.AwHttpAuthHandler;
 import org.chromium.android_webview.AwRenderProcessGoneDetail;
-import org.chromium.android_webview.AwSafeBrowsingResponse;
 import org.chromium.android_webview.AwWebResourceResponse;
 import org.chromium.android_webview.JsPromptResultReceiver;
 import org.chromium.android_webview.JsResultReceiver;
-import org.chromium.android_webview.SafeBrowsingAction;
+import org.chromium.android_webview.ScopedSysTraceEvent;
 import org.chromium.android_webview.permission.AwPermissionRequest;
 import org.chromium.android_webview.permission.Resource;
 import org.chromium.base.Callback;
 import org.chromium.base.Log;
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.TraceEvent;
+import org.chromium.base.task.PostTask;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 
 import java.lang.ref.WeakReference;
 import java.security.Principal;
@@ -88,22 +82,7 @@ import java.util.WeakHashMap;
  * allow the source WebView to be injected by ContentViewClientAdapter. We
  * choose the latter, because it makes for a cleaner design.
  */
-@SuppressWarnings("deprecation")
-// You shouldn't change TargetApi, please see how Android M API was added.
-@TargetApi(Build.VERSION_CODES.LOLLIPOP)
-class WebViewContentsClientAdapter extends AwContentsClient {
-    // TAG is chosen for consistency with classic webview tracing.
-    private static final String TAG = "WebViewCallback";
-    // Enables API callback tracing
-    private static final boolean TRACE = false;
-    // Default WebViewClient used to avoid null checks.
-    private static WebViewClient sNullWebViewClient = new WebViewClient();
-    // The WebView instance that this adapter is serving.
-    protected final WebView mWebView;
-    // The Context to use. This is different from mWebView.getContext(), which should not be used.
-    private final Context mContext;
-    // The WebViewClient instance that was passed to WebView.setWebViewClient().
-    protected WebViewClient mWebViewClient = sNullWebViewClient;
+class WebViewContentsClientAdapter extends SharedWebViewContentsClientAdapter {
     // The WebChromeClient instance that was passed to WebView.setContentViewClient().
     private WebChromeClient mWebChromeClient;
     // The listener receiving find-in-page API results.
@@ -112,8 +91,6 @@ class WebViewContentsClientAdapter extends AwContentsClient {
     private WebView.PictureListener mPictureListener;
     // Whether the picture listener is invalidate only (i.e. receives a null Picture)
     private boolean mPictureListenerInvalidateOnly;
-
-    private WebViewDelegate mWebViewDelegate;
 
     private DownloadListener mDownloadListener;
 
@@ -129,60 +106,39 @@ class WebViewContentsClientAdapter extends AwContentsClient {
      *
      * @param webView the {@link WebView} instance that this adapter is serving.
      */
-    @SuppressLint("HandlerLeak")
     WebViewContentsClientAdapter(WebView webView, Context context,
             WebViewDelegate webViewDelegate) {
-        if (webView == null || webViewDelegate == null) {
-            throw new IllegalArgumentException("webView or delegate can't be null.");
-        }
+        super(webView, webViewDelegate, context);
+        try (ScopedSysTraceEvent event =
+                        ScopedSysTraceEvent.scoped("WebViewContentsClientAdapter.constructor")) {
+            mUiThreadHandler = new Handler() {
+                @Override
+                public void handleMessage(Message msg) {
+                    switch (msg.what) {
+                        case NEW_WEBVIEW_CREATED:
+                            WebView.WebViewTransport t = (WebView.WebViewTransport) msg.obj;
+                            WebView newWebView = t.getWebView();
+                            if (newWebView == mWebView) {
+                                throw new IllegalArgumentException(
+                                        "Parent WebView cannot host its own popup window. Please "
+                                        + "use WebSettings.setSupportMultipleWindows(false)");
+                            }
 
-        if (context == null) {
-            throw new IllegalArgumentException("context can't be null.");
-        }
+                            if (newWebView != null
+                                    && newWebView.copyBackForwardList().getSize() != 0) {
+                                throw new IllegalArgumentException(
+                                        "New WebView for popup window must not have been "
+                                        + " previously navigated.");
+                            }
 
-        mContext = context;
-        mWebView = webView;
-        mWebViewDelegate = webViewDelegate;
-        setWebViewClient(null);
-
-        mUiThreadHandler = new Handler() {
-            @Override
-            public void handleMessage(Message msg) {
-                switch (msg.what) {
-                    case NEW_WEBVIEW_CREATED:
-                        WebView.WebViewTransport t = (WebView.WebViewTransport) msg.obj;
-                        WebView newWebView = t.getWebView();
-                        if (newWebView == mWebView) {
-                            throw new IllegalArgumentException(
-                                    "Parent WebView cannot host it's own popup window. Please "
-                                    + "use WebSettings.setSupportMultipleWindows(false)");
-                        }
-
-                        if (newWebView != null && newWebView.copyBackForwardList().getSize() != 0) {
-                            throw new IllegalArgumentException(
-                                    "New WebView for popup window must not have been previously "
-                                    + "navigated.");
-                        }
-
-                        WebViewChromium.completeWindowCreation(mWebView, newWebView);
-                        break;
-                    default:
-                        throw new IllegalStateException();
+                            WebViewChromium.completeWindowCreation(mWebView, newWebView);
+                            break;
+                        default:
+                            throw new IllegalStateException();
+                    }
                 }
-            }
-        };
-    }
-
-    void setWebViewClient(WebViewClient client) {
-        if (client != null) {
-            mWebViewClient = client;
-        } else {
-            mWebViewClient = sNullWebViewClient;
+            };
         }
-    }
-
-    WebViewClient getWebViewClient() {
-        return mWebViewClient;
     }
 
     void setWebChromeClient(WebChromeClient client) {
@@ -209,14 +165,6 @@ class WebViewContentsClientAdapter extends AwContentsClient {
     //--------------------------------------------------------------------------------------------
     //                        Adapter for all the methods.
     //--------------------------------------------------------------------------------------------
-
-    /**
-     * @see AwContentsClient#hasWebViewClient.
-     */
-    @Override
-    public boolean hasWebViewClient() {
-        return mWebViewClient != sNullWebViewClient;
-    }
 
     /**
      * @see AwContentsClient#getVisitedHistory.
@@ -265,63 +213,6 @@ class WebViewContentsClientAdapter extends AwContentsClient {
         }
     }
 
-    protected static class WebResourceRequestImpl implements WebResourceRequest {
-        private final AwWebResourceRequest mRequest;
-
-        public WebResourceRequestImpl(AwWebResourceRequest request) {
-            mRequest = request;
-        }
-
-        @Override
-        public Uri getUrl() {
-            return Uri.parse(mRequest.url);
-        }
-
-        @Override
-        public boolean isForMainFrame() {
-            return mRequest.isMainFrame;
-        }
-
-        @Override
-        public boolean hasGesture() {
-            return mRequest.hasUserGesture;
-        }
-
-        @Override
-        public String getMethod() {
-            return mRequest.method;
-        }
-
-        @Override
-        public Map<String, String> getRequestHeaders() {
-            return mRequest.requestHeaders;
-        }
-
-        @Override
-        public boolean isRedirect() {
-            return mRequest.isRedirect;
-        }
-    }
-
-    @TargetApi(Build.VERSION_CODES.M)
-    private static class WebResourceErrorImpl extends WebResourceError {
-        private final AwWebResourceError mError;
-
-        public WebResourceErrorImpl(AwWebResourceError error) {
-            mError = error;
-        }
-
-        @Override
-        public int getErrorCode() {
-            return mError.errorCode;
-        }
-
-        @Override
-        public CharSequence getDescription() {
-            return mError.description;
-        }
-    }
-
     /**
      * @see AwContentsClient#shouldInterceptRequest(java.lang.String)
      */
@@ -330,8 +221,8 @@ class WebViewContentsClientAdapter extends AwContentsClient {
         try {
             TraceEvent.begin("WebViewContentsClientAdapter.shouldInterceptRequest");
             if (TRACE) Log.i(TAG, "shouldInterceptRequest=" + request.url);
-            WebResourceResponse response = mWebViewClient.shouldInterceptRequest(mWebView,
-                    new WebResourceRequestImpl(request));
+            WebResourceResponse response = mWebViewClient.shouldInterceptRequest(
+                    mWebView, new WebResourceRequestAdapter(request));
             if (response == null) return null;
 
             // AwWebResourceResponse should support null headers. b/16332774.
@@ -347,29 +238,6 @@ class WebViewContentsClientAdapter extends AwContentsClient {
                     responseHeaders);
         } finally {
             TraceEvent.end("WebViewContentsClientAdapter.shouldInterceptRequest");
-        }
-    }
-
-    /**
-     * @see AwContentsClient#shouldOverrideUrlLoading(AwContentsClient.AwWebResourceRequest)
-     */
-    @TargetApi(Build.VERSION_CODES.N)
-    @Override
-    public boolean shouldOverrideUrlLoading(AwContentsClient.AwWebResourceRequest request) {
-        try {
-            TraceEvent.begin("WebViewContentsClientAdapter.shouldOverrideUrlLoading");
-            if (TRACE) Log.i(TAG, "shouldOverrideUrlLoading=" + request.url);
-            boolean result;
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
-                result = mWebViewClient.shouldOverrideUrlLoading(
-                        mWebView, new WebResourceRequestImpl(request));
-            } else {
-                result = mWebViewClient.shouldOverrideUrlLoading(mWebView, request.url);
-            }
-            if (TRACE) Log.i(TAG, "shouldOverrideUrlLoading result=" + result);
-            return result;
-        } finally {
-            TraceEvent.end("WebViewContentsClientAdapter.shouldOverrideUrlLoading");
         }
     }
 
@@ -444,6 +312,10 @@ class WebViewContentsClientAdapter extends AwContentsClient {
             TraceEvent.begin("WebViewContentsClientAdapter.onLoadResource");
             if (TRACE) Log.i(TAG, "onLoadResource=" + url);
             mWebViewClient.onLoadResource(mWebView, url);
+
+            // Record UMA for onLoadResource.
+            AwHistogramRecorder.recordCallbackInvocation(
+                    AwHistogramRecorder.WebViewCallbackType.ON_LOAD_RESOURCE);
         } finally {
             TraceEvent.end("WebViewContentsClientAdapter.onLoadResource");
         }
@@ -541,6 +413,11 @@ class WebViewContentsClientAdapter extends AwContentsClient {
             TraceEvent.begin("WebViewContentsClientAdapter.onPageStarted");
             if (TRACE) Log.i(TAG, "onPageStarted=" + url);
             mWebViewClient.onPageStarted(mWebView, url, mWebView.getFavicon());
+
+            // Record UMA for onPageStarted.
+            AwHistogramRecorder.recordCallbackInvocation(
+                    AwHistogramRecorder.WebViewCallbackType.ON_PAGE_STARTED);
+
         } finally {
             TraceEvent.end("WebViewContentsClientAdapter.onPageStarted");
         }
@@ -556,6 +433,10 @@ class WebViewContentsClientAdapter extends AwContentsClient {
             if (TRACE) Log.i(TAG, "onPageFinished=" + url);
             mWebViewClient.onPageFinished(mWebView, url);
 
+            // Record UMA for onPageFinished.
+            AwHistogramRecorder.recordCallbackInvocation(
+                    AwHistogramRecorder.WebViewCallbackType.ON_PAGE_FINISHED);
+
             // See b/8208948
             // This fakes an onNewPicture callback after onPageFinished to allow
             // CTS tests to run in an un-flaky manner. This is required as the
@@ -567,123 +448,16 @@ class WebViewContentsClientAdapter extends AwContentsClient {
             // no further updates after onPageStarted, we'll fail the test by timing
             // out waiting for a Picture.
             if (mPictureListener != null) {
-                ThreadUtils.postOnUiThreadDelayed(new Runnable() {
-                    @Override
-                    public void run() {
-                        if (mPictureListener != null) {
-                            if (TRACE) Log.i(TAG, "onPageFinished-fake");
-                            mPictureListener.onNewPicture(mWebView,
-                                    mPictureListenerInvalidateOnly ? null : new Picture());
-                        }
+                PostTask.postDelayedTask(UiThreadTaskTraits.DEFAULT, () -> {
+                    if (mPictureListener != null) {
+                        if (TRACE) Log.i(TAG, "onPageFinished-fake");
+                        mPictureListener.onNewPicture(
+                                mWebView, mPictureListenerInvalidateOnly ? null : new Picture());
                     }
                 }, 100);
             }
         } finally {
             TraceEvent.end("WebViewContentsClientAdapter.onPageFinished");
-        }
-    }
-
-    /**
-     * @see ContentViewClient#onPageCommitVisible(String)
-     */
-    @Override
-    public void onPageCommitVisible(String url) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
-        try {
-            TraceEvent.begin("WebViewContentsClientAdapter.onPageCommitVisible");
-            if (TRACE) Log.i(TAG, "onPageCommitVisible=" + url);
-            mWebViewClient.onPageCommitVisible(mWebView, url);
-        } finally {
-            TraceEvent.end("WebViewContentsClientAdapter.onPageCommitVisible");
-        }
-    }
-
-    /**
-     * @see ContentViewClient#onReceivedError(int,String,String)
-     */
-    @Override
-    public void onReceivedError(int errorCode, String description, String failingUrl) {
-        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) return;
-        try {
-            TraceEvent.begin("WebViewContentsClientAdapter.onReceivedError");
-            if (description == null || description.isEmpty()) {
-                // ErrorStrings is @hidden, so we can't do this in AwContents.  Normally the net/
-                // layer will set a valid description, but for synthesized callbacks (like in the
-                // case for intercepted requests) AwContents will pass in null.
-                description = mWebViewDelegate.getErrorString(mContext, errorCode);
-            }
-            if (TRACE) Log.i(TAG, "onReceivedError=" + failingUrl);
-            mWebViewClient.onReceivedError(
-                    mWebView, errorCode, description, failingUrl);
-        } finally {
-            TraceEvent.end("WebViewContentsClientAdapter.onReceivedError");
-        }
-    }
-
-    /**
-     * @see ContentViewClient#onReceivedError(AwWebResourceRequest,AwWebResourceError)
-     */
-    @Override
-    public void onReceivedError2(AwWebResourceRequest request, AwWebResourceError error) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
-        try {
-            TraceEvent.begin("WebViewContentsClientAdapter.onReceivedError");
-            if (error.description == null || error.description.isEmpty()) {
-                // ErrorStrings is @hidden, so we can't do this in AwContents.  Normally the net/
-                // layer will set a valid description, but for synthesized callbacks (like in the
-                // case for intercepted requests) AwContents will pass in null.
-                error.description = mWebViewDelegate.getErrorString(mContext, error.errorCode);
-            }
-            if (TRACE) Log.i(TAG, "onReceivedError=" + request.url);
-            mWebViewClient.onReceivedError(mWebView, new WebResourceRequestImpl(request),
-                    new WebResourceErrorImpl(error));
-        } finally {
-            TraceEvent.end("WebViewContentsClientAdapter.onReceivedError");
-        }
-    }
-
-    @Override
-    public void onSafeBrowsingHit(AwWebResourceRequest request, int threatType,
-            final Callback<AwSafeBrowsingResponse> callback) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O_MR1) {
-            callback.onResult(new AwSafeBrowsingResponse(SafeBrowsingAction.SHOW_INTERSTITIAL,
-                    /* reporting */ true));
-            return;
-        }
-        mWebViewClient.onSafeBrowsingHit(mWebView, new WebResourceRequestImpl(request), threatType,
-                new SafeBrowsingResponse() {
-                    @Override
-                    public void showInterstitial(boolean allowReporting) {
-                        callback.onResult(new AwSafeBrowsingResponse(
-                                SafeBrowsingAction.SHOW_INTERSTITIAL, allowReporting));
-                    }
-
-                    @Override
-                    public void proceed(boolean report) {
-                        callback.onResult(
-                                new AwSafeBrowsingResponse(SafeBrowsingAction.PROCEED, report));
-                    }
-
-                    @Override
-                    public void backToSafety(boolean report) {
-                        callback.onResult(new AwSafeBrowsingResponse(
-                                SafeBrowsingAction.BACK_TO_SAFETY, report));
-                    }
-                });
-    }
-
-    @Override
-    public void onReceivedHttpError(AwWebResourceRequest request, AwWebResourceResponse response) {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return;
-        try {
-            TraceEvent.begin("WebViewContentsClientAdapter.onReceivedHttpError");
-            if (TRACE) Log.i(TAG, "onReceivedHttpError=" + request.url);
-            mWebViewClient.onReceivedHttpError(mWebView, new WebResourceRequestImpl(request),
-                    new WebResourceResponse(true, response.getMimeType(), response.getCharset(),
-                            response.getStatusCode(), response.getReasonPhrase(),
-                            response.getResponseHeaders(), response.getData()));
-        } finally {
-            TraceEvent.end("WebViewContentsClientAdapter.onReceivedHttpError");
         }
     }
 
@@ -1257,30 +1031,18 @@ class WebViewContentsClientAdapter extends AwContentsClient {
     }
 
     @Override
-    @TargetApi(Build.VERSION_CODES.O)
     public boolean onRenderProcessGone(final AwRenderProcessGoneDetail detail) {
         // WebViewClient.onRenderProcessGone was added in O.
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return false;
 
         try {
             TraceEvent.begin("WebViewContentsClientAdapter.onRenderProcessGone");
-            return mWebViewClient.onRenderProcessGone(mWebView, new RenderProcessGoneDetail() {
-                @Override
-                public boolean didCrash() {
-                    return detail.didCrash();
-                }
-
-                @Override
-                public int rendererPriorityAtExit() {
-                    return detail.rendererPriority();
-                }
-            });
+            return GlueApiHelperForO.onRenderProcessGone(mWebViewClient, mWebView, detail);
         } finally {
             TraceEvent.end("WebViewContentsClientAdapter.onRenderProcessGone");
         }
     }
 
-    // TODO: Move to upstream.
     private static class AwHttpAuthHandlerAdapter extends android.webkit.HttpAuthHandler {
         private AwHttpAuthHandler mAwHandler;
 
@@ -1313,7 +1075,6 @@ class WebViewContentsClientAdapter extends AwContentsClient {
 
     /**
      * Type adaptation class for PermissionRequest.
-     * TODO: Move to the upstream once the PermissionRequest is part of SDK.
      */
     public static class PermissionRequestAdapter extends PermissionRequest {
 

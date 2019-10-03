@@ -5,15 +5,13 @@
 #include "chrome/browser/page_load_metrics/observers/local_network_requests_page_load_metrics_observer.h"
 
 #include "base/lazy_instance.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/histogram_macros.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/page_load_metrics/page_load_metrics_util.h"
-#include "net/base/host_port_pair.h"
-#include "net/base/ip_address.h"
+#include "net/base/ip_endpoint.h"
 #include "net/base/net_errors.h"
 #include "net/base/url_util.h"
-#include "services/metrics/public/cpp/ukm_entry_builder.h"
+#include "services/metrics/public/cpp/ukm_builders.h"
 #include "services/metrics/public/cpp/ukm_recorder.h"
 #include "url/gurl.h"
 
@@ -106,7 +104,7 @@ bool IsLikelyRouterIP(net::IPAddress ip_address) {
 }
 
 // Attempts to get the IP address of a resource request from
-// |extra_request_info.host_port_pair|, trying to get it from the URL string in
+// |extra_request_info.remote_endpoint|, trying to get it from the URL string in
 // |extra_request_info.url| if that fails.
 // Sets the values of |resource_ip| and |port| with the extracted IP address and
 // port, respectively.
@@ -117,9 +115,9 @@ bool GetIPAndPort(
     int* resource_port) {
   // If the request was successful, then the IP address should be in
   // |extra_request_info|.
-  bool ip_exists = net::ParseURLHostnameToAddress(
-      extra_request_info.host_port_pair.host(), resource_ip);
-  *resource_port = extra_request_info.host_port_pair.port();
+  bool ip_exists = extra_request_info.remote_endpoint.address().IsValid();
+  *resource_ip = extra_request_info.remote_endpoint.address();
+  *resource_port = extra_request_info.remote_endpoint.port();
 
   // If the request failed, it's possible we didn't receive the IP address,
   // possibly because domain resolution failed. As a backup, try getting the IP
@@ -127,7 +125,7 @@ bool GetIPAndPort(
   // itself as it might be an IP address if it is a local network request, which
   // is what we care about.
   if (!ip_exists && extra_request_info.url.is_valid()) {
-    if (net::IsLocalhost(extra_request_info.url.HostNoBrackets())) {
+    if (net::IsLocalhost(extra_request_info.url)) {
       *resource_ip = net::IPAddress::IPv4Localhost();
       ip_exists = true;
     } else {
@@ -137,7 +135,7 @@ bool GetIPAndPort(
     *resource_port = extra_request_info.url.EffectiveIntPort();
   }
 
-  if (net::IsLocalhost(resource_ip->ToString())) {
+  if (net::HostStringIsLocalhost(resource_ip->ToString())) {
     *resource_ip = net::IPAddress::IPv4Localhost();
     ip_exists = true;
   }
@@ -173,17 +171,6 @@ const std::map<uint16_t, internal::PortType>& GetLocalhostPortCategories() {
 }  // namespace
 
 namespace internal {
-
-// UKM event names
-const char kUkmPageDomainEventName[] = "PageDomainInfo";
-const char kUkmLocalNetworkRequestsEventName[] = "LocalNetworkRequests";
-
-// UKM metric names
-const char kUkmDomainTypeName[] = "DomainType";
-const char kUkmResourceTypeName[] = "ResourceType";
-const char kUkmPortTypeName[] = "PortType";
-const char kUkmSuccessfulCountName[] = "Count.Successful";
-const char kUkmFailedCountName[] = "Count.Failed";
 
 // Definitions of getters for the histogram names maps.
 const std::map<internal::DomainType,
@@ -319,24 +306,19 @@ LocalNetworkRequestsPageLoadMetricsObserver::OnCommit(
     ukm::SourceId source_id) {
   // Upon page load, we want to determine whether the page loaded was a public
   // domain or private domain and generate an event describing the domain type.
-  net::HostPortPair address = navigation_handle->GetSocketAddress();
+  net::IPEndPoint remote_endpoint = navigation_handle->GetSocketAddress();
+  page_ip_address_ = remote_endpoint.address();
 
   // In cases where the page loaded does not have a socket address or was not a
   // network resource, we don't want to track the page load. Such resources will
   // fail to parse or return an empty IP address.
-  if (!net::ParseURLHostnameToAddress(address.host(), &page_ip_address_) ||
-      page_ip_address_.IsZero()) {
+  if (!page_ip_address_.IsValid()) {
     return STOP_OBSERVING;
   }
 
-  // |IsLocalhost| assumes (and doesn't verify) that any IPv6 address passed
-  // to it does not have square brackets around it, but |HostPortPair::host|
-  // retains the brackets, so we need to separately check for IPv6 localhost
-  // here.
-  if (net::IsLocalhost(address.host()) ||
-      page_ip_address_ == net::IPAddress::IPv6Localhost()) {
+  if (page_ip_address_.IsLoopback()) {
     page_domain_type_ = internal::DOMAIN_TYPE_LOCALHOST;
-  } else if (page_ip_address_.IsReserved()) {
+  } else if (!page_ip_address_.IsPubliclyRoutable()) {
     page_domain_type_ = internal::DOMAIN_TYPE_PRIVATE;
     // Maps from first byte of an IPv4 address to the number of bits in the
     // reserved prefix. This table contains the subset of prefixes defined in
@@ -389,7 +371,7 @@ void LocalNetworkRequestsPageLoadMetricsObserver::OnLoadedResource(
   // We can't track anything if we don't have an IP address for the resource.
   // We also don't want to track any requests to the page's IP address itself.
   if (!GetIPAndPort(extra_request_info, &resource_ip, &resource_port) ||
-      resource_ip.IsZero() || resource_ip == page_ip_address_) {
+      !resource_ip.IsValid() || resource_ip == page_ip_address_) {
     return;
   }
 
@@ -401,10 +383,9 @@ void LocalNetworkRequestsPageLoadMetricsObserver::OnLoadedResource(
     } else {
       localhost_request_counts_[resource_port].first++;
     }
-  }
   // We only track public resource requests for private pages.
-  else if (resource_ip.IsReserved() ||
-           page_domain_type_ == internal::DOMAIN_TYPE_PRIVATE) {
+  } else if (!resource_ip.IsPubliclyRoutable() ||
+             page_domain_type_ == internal::DOMAIN_TYPE_PRIVATE) {
     if (extra_request_info.net_error != net::OK) {
       resource_request_counts_[resource_ip].second++;
     } else {
@@ -487,13 +468,13 @@ internal::ResourceType
 LocalNetworkRequestsPageLoadMetricsObserver::DetermineResourceType(
     net::IPAddress resource_ip) {
   if (page_domain_type_ == internal::DOMAIN_TYPE_PUBLIC) {
-    DCHECK(resource_ip.IsReserved());
+    DCHECK(!resource_ip.IsPubliclyRoutable());
     return IsLikelyRouterIP(resource_ip) ? internal::RESOURCE_TYPE_ROUTER
                                          : internal::RESOURCE_TYPE_PRIVATE;
   }
 
   DCHECK_EQ(internal::DOMAIN_TYPE_PRIVATE, page_domain_type_);
-  if (resource_ip.IsReserved()) {  // PRIVATE
+  if (!resource_ip.IsPubliclyRoutable()) {  // PRIVATE
     const bool is_same_subnet =
         net::CommonPrefixLength(page_ip_address_, resource_ip) >=
         page_ip_prefix_length_;
@@ -520,7 +501,7 @@ void LocalNetworkRequestsPageLoadMetricsObserver::ResolveResourceTypes() {
   }
 
   requested_resource_types_ =
-      base::MakeUnique<std::map<net::IPAddress, internal::ResourceType>>();
+      std::make_unique<std::map<net::IPAddress, internal::ResourceType>>();
   for (const auto& entry : resource_request_counts_) {
     requested_resource_types_->insert(
         {entry.first, DetermineResourceType(entry.first)});
@@ -538,41 +519,28 @@ void LocalNetworkRequestsPageLoadMetricsObserver::RecordUkmMetrics(
 
   // Log an entry for each non-localhost resource (one per IP address).
   for (const auto& entry : resource_request_counts_) {
-    ukm::UkmRecorder* ukm_recorder = ukm::UkmRecorder::Get();
-    std::unique_ptr<ukm::UkmEntryBuilder> builder =
-        ukm_recorder->GetEntryBuilder(
-            source_id, internal::kUkmLocalNetworkRequestsEventName);
-    builder->AddMetric(
-        internal::kUkmResourceTypeName,
-        static_cast<int>(requested_resource_types_->at(entry.first)));
-    builder->AddMetric(internal::kUkmSuccessfulCountName, entry.second.first);
-    builder->AddMetric(internal::kUkmFailedCountName, entry.second.second);
+    ukm::builders::LocalNetworkRequests(source_id)
+        .SetResourceType(
+            static_cast<int>(requested_resource_types_->at(entry.first)))
+        .SetCount_Successful(entry.second.first)
+        .SetCount_Failed(entry.second.second)
+        .Record(ukm::UkmRecorder::Get());
   }
 
   // Log an entry for each localhost resource (one per port).
   for (const auto& entry : localhost_request_counts_) {
-    ukm::UkmRecorder* ukm_recorder = ukm::UkmRecorder::Get();
-    std::unique_ptr<ukm::UkmEntryBuilder> builder =
-        ukm_recorder->GetEntryBuilder(
-            source_id, internal::kUkmLocalNetworkRequestsEventName);
-    builder->AddMetric(internal::kUkmResourceTypeName,
-                       static_cast<int>(internal::RESOURCE_TYPE_LOCALHOST));
-    builder->AddMetric(internal::kUkmPortTypeName,
-                       static_cast<int>(DeterminePortType(entry.first)));
-    builder->AddMetric(internal::kUkmSuccessfulCountName, entry.second.first);
-    builder->AddMetric(internal::kUkmFailedCountName, entry.second.second);
+    ukm::builders::LocalNetworkRequests(source_id)
+        .SetResourceType(static_cast<int>(internal::RESOURCE_TYPE_LOCALHOST))
+        .SetPortType(static_cast<int>(DeterminePortType(entry.first)))
+        .SetCount_Successful(entry.second.first)
+        .SetCount_Failed(entry.second.second)
+        .Record(ukm::UkmRecorder::Get());
   }
 }
 
 void LocalNetworkRequestsPageLoadMetricsObserver::RecordUkmDomainType(
     ukm::SourceId source_id) {
-  ukm::UkmRecorder* ukm_recorder = ukm::UkmRecorder::Get();
-  if (!ukm_recorder) {
-    return;
-  }
-
-  std::unique_ptr<ukm::UkmEntryBuilder> builder = ukm_recorder->GetEntryBuilder(
-      source_id, internal::kUkmPageDomainEventName);
-  builder->AddMetric(internal::kUkmDomainTypeName,
-                     static_cast<int>(page_domain_type_));
+  ukm::builders::PageDomainInfo(source_id)
+      .SetDomainType(static_cast<int>(page_domain_type_))
+      .Record(ukm::UkmRecorder::Get());
 }

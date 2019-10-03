@@ -9,6 +9,7 @@
 #include <unordered_set>
 
 #include "base/base64.h"
+#include "base/containers/span.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
 #include "base/rand_util.h"
@@ -73,8 +74,76 @@ struct MimeInfo {
   const char* const extensions;
 };
 
-// Order of entries in the following mapping lists matters only when the same
-// extension is shared between multiple MIME types.
+// How to use the MIME maps
+// ------------------------
+// READ THIS BEFORE MODIFYING THE MIME MAPPINGS BELOW.
+//
+// There are two hardcoded mappings from MIME types: kPrimaryMappings and
+// kSecondaryMappings.
+//
+// kPrimaryMappings:
+//
+//   Use this for mappings that are critical to the web platform.  Mappings you
+//   add to this list take priority over the underlying platform when converting
+//   from file extension -> MIME type.  Thus file extensions listed here will
+//   work consistently across platforms.
+//
+// kSecondaryMappings:
+//
+//   Use this for mappings that must exist, but can be overridden by user
+//   preferences.
+//
+// The following applies to both lists:
+//
+// * The same extension can appear multiple times in the same list under
+//   different MIME types.  Extensions that appear earlier take precedence over
+//   those that appear later.
+//
+// * A MIME type must not appear more than once in a single list.  It is valid
+//   for the same MIME type to appear in kPrimaryMappings and
+//   kSecondaryMappings.
+//
+// The MIME maps are used for three types of lookups:
+//
+// 1) MIME type -> file extension.  Implemented as
+//    GetPreferredExtensionForMimeType().
+//
+//    Sources are consulted in the following order:
+//
+//    a) As a special case application/octet-stream is mapped to nothing.  Web
+//       sites are supposed to use this MIME type to indicate that the content
+//       is opaque and shouldn't be parsed as any specific type of content.  It
+//       doesn't make sense to map this to anything.
+//
+//    b) The underlying platform.  If the operating system has a mapping from
+//       the MIME type to a file extension, then that takes priority.  The
+//       platform is assumed to represent the user's preference.
+//
+//    c) kPrimaryMappings.  Order doesn't matter since there should only be at
+//       most one entry per MIME type.
+//
+//    d) kSecondaryMappings.  Again, order doesn't matter.
+//
+// 2) File extension -> MIME type.  Implemented in GetMimeTypeFromExtension().
+//
+//    Sources are considered in the following order:
+//
+//    a) kPrimaryMappings.  Order matters here since file extensions can appear
+//       multiple times on these lists.  The first mapping in order of
+//       appearance in the list wins.
+//
+//    b) Underlying platform.
+//
+//    c) kSecondaryMappings.  Again, the order matters.
+//
+// 3) File extension -> Well known MIME type.  Implemented as
+//    GetWellKnownMimeTypeFromExtension().
+//
+//    This is similar to 2), with the exception that b) is skipped.  I.e.  Only
+//    considers the hardcoded mappings in kPrimaryMappings and
+//    kSecondaryMappings.
+
+// See comments above for details on how this list is used.
 static const MimeInfo kPrimaryMappings[] = {
     // Must precede audio/webm .
     {"video/webm", "webm"},
@@ -91,15 +160,18 @@ static const MimeInfo kPrimaryMappings[] = {
     {"image/gif", "gif"},
     {"image/jpeg", "jpeg,jpg"},
     {"image/png", "png"},
+    {"image/apng", "png"},
     {"image/webp", "webp"},
     {"multipart/related", "mht,mhtml"},
     {"text/css", "css"},
     {"text/html", "html,htm,shtml,shtm"},
+    {"text/javascript", "js,mjs"},
     {"text/xml", "xml"},
     {"video/mp4", "mp4,m4v"},
     {"video/ogg", "ogv,ogm"},
 };
 
+// See comments above for details on how this list is used.
 static const MimeInfo kSecondaryMappings[] = {
     // Must precede image/vnd.microsoft.icon .
     {"image/x-icon", "ico"},
@@ -108,6 +180,7 @@ static const MimeInfo kSecondaryMappings[] = {
     {"application/font-woff", "woff"},
     {"application/gzip", "gz,tgz"},
     {"application/javascript", "js"},
+    {"application/json", "json"},  // Per http://www.ietf.org/rfc/rfc4627.txt.
     {"application/octet-stream", "bin,exe,com"},
     {"application/pdf", "pdf"},
     {"application/pkcs7-mime", "p7m,p7c,p7z"},
@@ -121,8 +194,11 @@ static const MimeInfo kSecondaryMappings[] = {
     {"application/x-mpegurl", "m3u8"},
     {"application/x-shockwave-flash", "swf,swl"},
     {"application/x-tar", "tar"},
+    {"application/x-x509-ca-cert", "cer,crt"},
     {"application/zip", "zip"},
     {"audio/mpeg", "mp3"},
+    // This is the platform mapping on recent versions of Windows 10.
+    {"audio/webm", "weba"},
     {"image/bmp", "bmp"},
     {"image/jpeg", "jfif,pjpeg,pjp"},
     {"image/svg+xml", "svg,svgz"},
@@ -160,7 +236,7 @@ static const char* FindMimeType(const MimeInfo (&mappings)[num_mappings],
       extensions += 1;  // skip over comma
     }
   }
-  return NULL;
+  return nullptr;
 }
 
 static base::FilePath::StringType StringToFilePathStringType(
@@ -186,7 +262,8 @@ static bool FindPreferredExtension(const MimeInfo (&mappings)[num_mappings],
     if (mapping.mime_type == mime_type) {
       const char* extensions = mapping.extensions;
       const char* extension_end = strchr(extensions, ',');
-      int len = extension_end ? extension_end - extensions : strlen(extensions);
+      size_t len =
+          extension_end ? extension_end - extensions : strlen(extensions);
       *result = StringToFilePathStringType(base::StringPiece(extensions, len));
       return true;
     }
@@ -227,6 +304,9 @@ bool MimeUtil::GetMimeTypeFromExtensionHelper(
     const base::FilePath::StringType& ext,
     bool include_platform_types,
     string* result) const {
+  DCHECK(ext.empty() || ext[0] != '.')
+      << "extension passed in must not include leading dot";
+
   // Avoids crash when unable to handle a long file path. See crbug.com/48733.
   const unsigned kMaxFilePathSize = 65536;
   if (ext.length() > kMaxFilePathSize)
@@ -366,16 +446,9 @@ bool MimeUtil::MatchesMimeType(const std::string& mime_type_pattern,
 }
 
 // See http://www.iana.org/assignments/media-types/media-types.xhtml
-static const char* const legal_top_level_types[] = {
-  "application",
-  "audio",
-  "example",
-  "image",
-  "message",
-  "model",
-  "multipart",
-  "text",
-  "video",
+static const char* const kLegalTopLevelTypes[] = {
+    "application", "audio",     "example", "image", "message",
+    "model",       "multipart", "text",    "video",
 };
 
 bool MimeUtil::ParseMimeTypeWithoutParameter(
@@ -383,10 +456,12 @@ bool MimeUtil::ParseMimeTypeWithoutParameter(
     std::string* top_level_type,
     std::string* subtype) const {
   std::vector<std::string> components = base::SplitString(
-      type_string, "/", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL);
-  if (components.size() != 2 ||
-      !HttpUtil::IsToken(components[0]) ||
-      !HttpUtil::IsToken(components[1]))
+      type_string, "/", base::KEEP_WHITESPACE, base::SPLIT_WANT_ALL);
+  if (components.size() != 2)
+    return false;
+  TrimWhitespaceASCII(components[0], base::TRIM_LEADING, &components[0]);
+  TrimWhitespaceASCII(components[1], base::TRIM_TRAILING, &components[1]);
+  if (!HttpUtil::IsToken(components[0]) || !HttpUtil::IsToken(components[1]))
     return false;
 
   if (top_level_type)
@@ -398,8 +473,8 @@ bool MimeUtil::ParseMimeTypeWithoutParameter(
 
 bool MimeUtil::IsValidTopLevelMimeType(const std::string& type_string) const {
   std::string lower_type = base::ToLowerASCII(type_string);
-  for (size_t i = 0; i < arraysize(legal_top_level_types); ++i) {
-    if (lower_type.compare(legal_top_level_types[i]) == 0)
+  for (const char* const legal_type : kLegalTopLevelTypes) {
+    if (lower_type.compare(legal_type) == 0)
       return true;
   }
 
@@ -517,15 +592,12 @@ static const char* const kStandardVideoTypes[] = {
 
 struct StandardType {
   const char* const leading_mime_type;
-  const char* const* standard_types;
-  size_t standard_types_len;
+  base::span<const char* const> standard_types;
 };
-static const StandardType kStandardTypes[] = {
-  { "image/", kStandardImageTypes, arraysize(kStandardImageTypes) },
-  { "audio/", kStandardAudioTypes, arraysize(kStandardAudioTypes) },
-  { "video/", kStandardVideoTypes, arraysize(kStandardVideoTypes) },
-  { NULL, NULL, 0 }
-};
+static const StandardType kStandardTypes[] = {{"image/", kStandardImageTypes},
+                                              {"audio/", kStandardAudioTypes},
+                                              {"video/", kStandardVideoTypes},
+                                              {nullptr, {}}};
 
 // GetExtensionsFromHardCodedMappings() adds file extensions (without a leading
 // dot) to the set |extensions|, for all MIME types matching |mime_type|.
@@ -537,9 +609,8 @@ static const StandardType kStandardTypes[] = {
 //
 //  * If |prefix_match = true| then |mime_type| is treated as the prefix for a
 //    (case-insensitive) string. For instance "Text/" would match "text/plain".
-template <size_t N>
 void GetExtensionsFromHardCodedMappings(
-    const MimeInfo (&mappings)[N],
+    base::span<const MimeInfo> mappings,
     const std::string& mime_type,
     bool prefix_match,
     std::unordered_set<base::FilePath::StringType>* extensions) {
@@ -559,12 +630,11 @@ void GetExtensionsFromHardCodedMappings(
 }
 
 void GetExtensionsHelper(
-    const char* const* standard_types,
-    size_t standard_types_len,
+    base::span<const char* const> standard_types,
     const std::string& leading_mime_type,
     std::unordered_set<base::FilePath::StringType>* extensions) {
-  for (size_t i = 0; i < standard_types_len; ++i) {
-    g_mime_util.Get().GetPlatformExtensionsForMimeType(standard_types[i],
+  for (auto* standard_type : standard_types) {
+    g_mime_util.Get().GetPlatformExtensionsForMimeType(standard_type,
                                                        extensions);
   }
 
@@ -585,8 +655,7 @@ void UnorderedSetToVector(std::unordered_set<T>* source,
   size_t old_target_size = target->size();
   target->resize(old_target_size + source->size());
   size_t i = 0;
-  for (typename std::unordered_set<T>::iterator iter = source->begin();
-       iter != source->end(); ++iter, ++i)
+  for (auto iter = source->begin(); iter != source->end(); ++iter, ++i)
     (*target)[old_target_size + i] = *iter;
 }
 
@@ -597,8 +666,8 @@ void UnorderedSetToVector(std::unordered_set<T>* source,
 // following characters are legal for boundaries:  '()+_,-./:=?
 // However the following characters, though legal, cause some sites
 // to fail: (),./:=+
-const char kMimeBoundaryCharacters[] =
-    "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+constexpr base::StringPiece kMimeBoundaryCharacters(
+    "0123456789abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ");
 
 // Size of mime multipart boundary.
 const size_t kMimeBoundarySize = 69;
@@ -619,16 +688,16 @@ void GetExtensionsForMimeType(
 
     // Find the matching StandardType from within kStandardTypes, or fall
     // through to the last (default) StandardType.
-    const StandardType* type = NULL;
-    for (size_t i = 0; i < arraysize(kStandardTypes); ++i) {
-      type = &(kStandardTypes[i]);
+    const StandardType* type = nullptr;
+    for (const StandardType& standard_type : kStandardTypes) {
+      type = &standard_type;
       if (type->leading_mime_type &&
-          leading_mime_type == type->leading_mime_type)
+          leading_mime_type == type->leading_mime_type) {
         break;
+      }
     }
     DCHECK(type);
     GetExtensionsHelper(type->standard_types,
-                        type->standard_types_len,
                         leading_mime_type,
                         &unique_extensions);
   } else {
@@ -669,10 +738,8 @@ NET_EXPORT std::string GenerateMimeMultipartBoundary() {
   result.reserve(kMimeBoundarySize);
   result.append("----MultipartBoundary--");
   while (result.size() < (kMimeBoundarySize - 4)) {
-    // Subtract 2 from the array size to 1) exclude '\0', and 2) turn the size
-    // into the last index.
-    const int last_char_index = sizeof(kMimeBoundaryCharacters) - 2;
-    char c = kMimeBoundaryCharacters[base::RandInt(0, last_char_index)];
+    char c = kMimeBoundaryCharacters[base::RandInt(
+        0, kMimeBoundaryCharacters.size() - 1)];
     result.push_back(c);
   }
   result.append("----");
@@ -694,6 +761,26 @@ void AddMultipartValueForUpload(const std::string& value_name,
   // Next line is the Content-disposition.
   post_data->append("Content-Disposition: form-data; name=\"" +
                     value_name + "\"\r\n");
+  if (!content_type.empty()) {
+    // If Content-type is specified, the next line is that.
+    post_data->append("Content-Type: " + content_type + "\r\n");
+  }
+  // Leave an empty line and append the value.
+  post_data->append("\r\n" + value + "\r\n");
+}
+
+void AddMultipartValueForUploadWithFileName(const std::string& value_name,
+                                            const std::string& file_name,
+                                            const std::string& value,
+                                            const std::string& mime_boundary,
+                                            const std::string& content_type,
+                                            std::string* post_data) {
+  DCHECK(post_data);
+  // First line is the boundary.
+  post_data->append("--" + mime_boundary + "\r\n");
+  // Next line is the Content-disposition.
+  post_data->append("Content-Disposition: form-data; name=\"" + value_name +
+                    "\"; filename=\"" + file_name + "\"\r\n");
   if (!content_type.empty()) {
     // If Content-type is specified, the next line is that.
     post_data->append("Content-Type: " + content_type + "\r\n");

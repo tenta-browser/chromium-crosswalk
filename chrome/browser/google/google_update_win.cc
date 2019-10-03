@@ -4,8 +4,6 @@
 
 #include "chrome/browser/google/google_update_win.h"
 
-#include <atlbase.h>
-#include <atlcom.h>
 #include <objbase.h>
 #include <stdint.h>
 #include <string.h>
@@ -18,22 +16,24 @@
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/location.h"
-#include "base/macros.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
-#include "base/metrics/sparse_histogram.h"
 #include "base/path_service.h"
 #include "base/sequenced_task_runner.h"
 #include "base/sequenced_task_runner_helpers.h"
 #include "base/single_thread_task_runner.h"
+#include "base/stl_util.h"
 #include "base/strings/string_util.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/task_scheduler/task_traits.h"
+#include "base/task/post_task.h"
+#include "base/task/task_traits.h"
 #include "base/threading/sequenced_task_runner_handle.h"
 #include "base/time/time.h"
 #include "base/version.h"
+#include "base/win/atl.h"
 #include "base/win/scoped_bstr.h"
+#include "base/win/win_util.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/generated_resources.h"
 #include "chrome/install_static/install_util.h"
@@ -138,11 +138,10 @@ HRESULT CoGetClassObjectAsAdmin(gfx::AcceleratedWidget hwnd,
 
   // For Vista+, need to instantiate the class factory via the elevation
   // moniker. This ensures that the UAC dialog shows up.
-  wchar_t class_id_as_string[MAX_PATH] = {};
-  StringFromGUID2(class_id, class_id_as_string, arraysize(class_id_as_string));
+  auto class_id_as_string = base::win::String16FromGUID(class_id);
 
   base::string16 elevation_moniker_name = base::StringPrintf(
-      L"Elevation:Administrator!clsid:%ls", class_id_as_string);
+      L"Elevation:Administrator!clsid:%ls", class_id_as_string.c_str());
 
   BIND_OPTS3 bind_opts;
   // An explicit memset is needed rather than relying on value initialization
@@ -375,8 +374,8 @@ void UpdateCheckDriver::RunUpdateCheck(
     driver_ = new UpdateCheckDriver(locale, install_update_if_possible,
                                     elevation_window, delegate);
     driver_->task_runner_->PostTask(
-        FROM_HERE, base::Bind(&UpdateCheckDriver::BeginUpdateCheck,
-                              base::Unretained(driver_)));
+        FROM_HERE, base::BindOnce(&UpdateCheckDriver::BeginUpdateCheck,
+                                  base::Unretained(driver_)));
   } else {
     driver_->AddDelegate(delegate);
   }
@@ -416,10 +415,10 @@ UpdateCheckDriver::~UpdateCheckDriver() {
     UMA_HISTOGRAM_ENUMERATION("GoogleUpdate.UpdateErrorCode", error_code_,
                               NUM_ERROR_CODES);
     if (FAILED(hresult_))
-      UMA_HISTOGRAM_SPARSE_SLOWLY("GoogleUpdate.ErrorHresult", hresult_);
+      base::UmaHistogramSparse("GoogleUpdate.ErrorHresult", hresult_);
     if (installer_exit_code_ != -1) {
-      UMA_HISTOGRAM_SPARSE_SLOWLY("GoogleUpdate.InstallerExitCode",
-                                  installer_exit_code_);
+      base::UmaHistogramSparse("GoogleUpdate.InstallerExitCode",
+                               installer_exit_code_);
     }
   }
 
@@ -463,8 +462,8 @@ void UpdateCheckDriver::BeginUpdateCheck() {
   if (SUCCEEDED(hresult)) {
     // Start polling.
     task_runner_->PostTask(FROM_HERE,
-                           base::Bind(&UpdateCheckDriver::PollGoogleUpdate,
-                                      base::Unretained(this)));
+                           base::BindOnce(&UpdateCheckDriver::PollGoogleUpdate,
+                                          base::Unretained(this)));
     return;
   }
   if (hresult == GOOPDATE_E_APP_USING_EXTERNAL_UPDATER) {
@@ -472,8 +471,9 @@ void UpdateCheckDriver::BeginUpdateCheck() {
     if (allowed_retries_) {
       --allowed_retries_;
       task_runner_->PostDelayedTask(
-          FROM_HERE, base::Bind(&UpdateCheckDriver::BeginUpdateCheck,
-                                base::Unretained(this)),
+          FROM_HERE,
+          base::BindOnce(&UpdateCheckDriver::BeginUpdateCheck,
+                         base::Unretained(this)),
           base::TimeDelta::FromSeconds(kGoogleRetryIntervalSeconds));
       return;
     }
@@ -490,7 +490,7 @@ HRESULT UpdateCheckDriver::BeginUpdateCheckInternal(
   // Instantiate GoogleUpdate3Web{Machine,User}Class.
   if (!google_update_) {
     base::FilePath chrome_exe;
-    if (!PathService::Get(base::DIR_EXE, &chrome_exe))
+    if (!base::PathService::Get(base::DIR_EXE, &chrome_exe))
       NOTREACHED();
 
     system_level_install_ = !InstallUtil::IsPerUserInstall();
@@ -535,7 +535,7 @@ HRESULT UpdateCheckDriver::BeginUpdateCheckInternal(
       // nice to have, a failure to do so does not affect the likelihood that
       // the update check and/or install will succeed.
       app_bundle->put_displayLanguage(
-          base::win::ScopedBstr(base::UTF8ToUTF16(locale_).c_str()));
+          base::win::ScopedBstr(base::UTF8ToUTF16(locale_)));
     }
 
     hresult = app_bundle->initialize();
@@ -755,7 +755,7 @@ bool UpdateCheckDriver::IsIntermediateState(
     case STATE_ERROR:
     default:
       NOTREACHED();
-      UMA_HISTOGRAM_SPARSE_SLOWLY("GoogleUpdate.UnexpectedState", state_value);
+      base::UmaHistogramSparse("GoogleUpdate.UnexpectedState", state_value);
       return false;
   }
   return true;
@@ -797,15 +797,16 @@ void UpdateCheckDriver::PollGoogleUpdate() {
       // It is safe to post this task with an unretained pointer since the task
       // is guaranteed to run before a subsequent DeleteSoon is handled.
       result_runner_->PostTask(
-          FROM_HERE, base::Bind(&UpdateCheckDriver::NotifyUpgradeProgress,
-                                base::Unretained(this), last_reported_progress_,
-                                new_version_));
+          FROM_HERE, base::BindOnce(&UpdateCheckDriver::NotifyUpgradeProgress,
+                                    base::Unretained(this),
+                                    last_reported_progress_, new_version_));
     }
 
     // Schedule the next check.
     task_runner_->PostDelayedTask(
-        FROM_HERE, base::Bind(&UpdateCheckDriver::PollGoogleUpdate,
-                              base::Unretained(this)),
+        FROM_HERE,
+        base::BindOnce(&UpdateCheckDriver::PollGoogleUpdate,
+                       base::Unretained(this)),
         base::TimeDelta::FromMilliseconds(kGoogleUpdatePollIntervalMs));
     // Early return for this non-terminal state.
     return;

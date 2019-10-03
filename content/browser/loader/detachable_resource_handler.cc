@@ -7,7 +7,6 @@
 #include <utility>
 
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/time/time.h"
 #include "content/browser/loader/null_resource_controller.h"
 #include "content/browser/loader/resource_controller.h"
@@ -29,7 +28,7 @@ namespace content {
 class DetachableResourceHandler::Controller : public ResourceController {
  public:
   explicit Controller(DetachableResourceHandler* detachable_handler)
-      : detachable_handler_(detachable_handler){};
+      : detachable_handler_(detachable_handler) {}
 
   ~Controller() override {}
 
@@ -37,6 +36,13 @@ class DetachableResourceHandler::Controller : public ResourceController {
   void Resume() override {
     MarkAsUsed();
     detachable_handler_->ResumeInternal();
+  }
+
+  void ResumeForRedirect(
+      const std::vector<std::string>& removed_headers,
+      const net::HttpRequestHeaders& modified_headers) override {
+    MarkAsUsed();
+    detachable_handler_->ResumeForRedirect(removed_headers, modified_headers);
   }
 
   void Cancel() override {
@@ -154,7 +160,7 @@ void DetachableResourceHandler::Detach() {
 
 void DetachableResourceHandler::OnRequestRedirected(
     const net::RedirectInfo& redirect_info,
-    ResourceResponse* response,
+    network::ResourceResponse* response,
     std::unique_ptr<ResourceController> controller) {
   DCHECK(!has_controller());
 
@@ -169,7 +175,7 @@ void DetachableResourceHandler::OnRequestRedirected(
 }
 
 void DetachableResourceHandler::OnResponseStarted(
-    ResourceResponse* response,
+    network::ResourceResponse* response,
     std::unique_ptr<ResourceController> controller) {
   DCHECK(!has_controller());
 
@@ -203,7 +209,7 @@ void DetachableResourceHandler::OnWillRead(
     std::unique_ptr<ResourceController> controller) {
   if (!next_handler_) {
     if (!read_buffer_.get())
-      read_buffer_ = new net::IOBuffer(kReadBufSize);
+      read_buffer_ = base::MakeRefCounted<net::IOBuffer>(kReadBufSize);
     *buf = read_buffer_;
     *buf_size = kReadBufSize;
     controller->Resume();
@@ -248,13 +254,6 @@ void DetachableResourceHandler::OnResponseCompleted(
   HoldController(std::move(controller));
   next_handler_->OnResponseCompleted(status,
                                      std::make_unique<Controller>(this));
-}
-
-void DetachableResourceHandler::OnDataDownloaded(int bytes_downloaded) {
-  if (!next_handler_)
-    return;
-
-  next_handler_->OnDataDownloaded(bytes_downloaded);
 }
 
 void DetachableResourceHandler::ResumeInternal() {

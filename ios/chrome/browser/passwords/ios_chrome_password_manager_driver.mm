@@ -7,6 +7,7 @@
 #include "base/strings/string16.h"
 #include "components/autofill/core/common/password_form.h"
 #include "components/autofill/core/common/password_form_fill_data.h"
+#include "components/password_manager/core/browser/password_generation_frame_helper.h"
 #include "components/password_manager/core/browser/password_manager.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -14,7 +15,6 @@
 #endif
 
 using password_manager::PasswordAutofillManager;
-using password_manager::PasswordGenerationManager;
 using password_manager::PasswordManager;
 
 IOSChromePasswordManagerDriver::IOSChromePasswordManagerDriver(
@@ -28,9 +28,17 @@ void IOSChromePasswordManagerDriver::FillPasswordForm(
   [delegate_ fillPasswordForm:form_data completionHandler:nil];
 }
 
-void IOSChromePasswordManagerDriver::FormsEligibleForGenerationFound(
-    const std::vector<autofill::PasswordFormGenerationData>& forms) {
-  // TODO(crbug.com/569579): Implement.
+void IOSChromePasswordManagerDriver::InformNoSavedCredentials() {
+  [delegate_ onNoSavedCredentials];
+}
+
+void IOSChromePasswordManagerDriver::FormEligibleForGenerationFound(
+    const autofill::PasswordFormGenerationData& form) {
+  if (GetPasswordGenerationHelper() &&
+      GetPasswordGenerationHelper()->IsGenerationEnabled(
+          /*log_debug_data*/ true)) {
+    [delegate_ formEligibleForGenerationFound:form];
+  }
 }
 
 void IOSChromePasswordManagerDriver::GeneratedPasswordAccepted(
@@ -60,17 +68,13 @@ void IOSChromePasswordManagerDriver::ClearPreviewedForm() {
   NOTIMPLEMENTED();
 }
 
-PasswordGenerationManager*
-IOSChromePasswordManagerDriver::GetPasswordGenerationManager() {
-  return nullptr;
+password_manager::PasswordGenerationFrameHelper*
+IOSChromePasswordManagerDriver::GetPasswordGenerationHelper() {
+  return [delegate_ passwordGenerationHelper];
 }
 
 PasswordManager* IOSChromePasswordManagerDriver::GetPasswordManager() {
   return [delegate_ passwordManager];
-}
-
-void IOSChromePasswordManagerDriver::AllowPasswordGenerationForForm(
-    const autofill::PasswordForm& form) {
 }
 
 PasswordAutofillManager*
@@ -78,10 +82,6 @@ IOSChromePasswordManagerDriver::GetPasswordAutofillManager() {
   // TODO(crbug.com/341877): Use PasswordAutofillManager to implement password
   // autofill on iOS.
   return nullptr;
-}
-
-void IOSChromePasswordManagerDriver::ForceSavePassword() {
-  NOTIMPLEMENTED();
 }
 
 autofill::AutofillDriver* IOSChromePasswordManagerDriver::GetAutofillDriver() {
@@ -94,10 +94,6 @@ bool IOSChromePasswordManagerDriver::IsMainFrame() const {
   return true;
 }
 
-void IOSChromePasswordManagerDriver::MatchingBlacklistedFormFound() {
-  NOTIMPLEMENTED();
-}
-
-void IOSChromePasswordManagerDriver::UserSelectedManualGenerationOption() {
-  NOTIMPLEMENTED();
+const GURL& IOSChromePasswordManagerDriver::GetLastCommittedURL() const {
+  return delegate_.lastCommittedURL;
 }

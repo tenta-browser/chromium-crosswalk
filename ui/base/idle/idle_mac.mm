@@ -7,6 +7,8 @@
 #include <ApplicationServices/ApplicationServices.h>
 #import <Cocoa/Cocoa.h>
 
+#include "ui/base/idle/idle_internal.h"
+
 @interface MacScreenMonitor : NSObject {
  @private
   BOOL screensaverRunning_;
@@ -25,7 +27,7 @@
 @synthesize screensaverRunning = screensaverRunning_;
 @synthesize screenLocked = screenLocked_;
 
-- (id)init {
+- (instancetype)init {
   if ((self = [super init])) {
     NSDistributedNotificationCenter* distCenter =
           [NSDistributedNotificationCenter defaultCenter];
@@ -84,14 +86,17 @@ void InitIdleMonitor() {
     g_screenMonitor = [[MacScreenMonitor alloc] init];
 }
 
-void CalculateIdleTime(IdleTimeCallback notify) {
+int CalculateIdleTime() {
   CFTimeInterval idle_time = CGEventSourceSecondsSinceLastEventType(
       kCGEventSourceStateCombinedSessionState,
       kCGAnyInputEventType);
-  notify.Run(static_cast<int>(idle_time));
+  return static_cast<int>(idle_time);
 }
 
 bool CheckIdleStateIsLocked() {
+  if (IdleStateForTesting().has_value())
+    return IdleStateForTesting().value() == IDLE_STATE_LOCKED;
+
   return [g_screenMonitor isScreensaverRunning] ||
       [g_screenMonitor isScreenLocked];
 }

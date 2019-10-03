@@ -15,6 +15,7 @@
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/sequenced_task_runner.h"
 #include "components/feedback/anonymizer_tool.h"
 #include "components/feedback/feedback_common.h"
 #include "components/feedback/system_logs/system_logs_source.h"
@@ -23,7 +24,7 @@ namespace system_logs {
 
 // Callback that the SystemLogsFetcher uses to return data.
 using SysLogsFetcherCallback =
-    base::Callback<void(std::unique_ptr<SystemLogsResponse>)>;
+    base::OnceCallback<void(std::unique_ptr<SystemLogsResponse>)>;
 
 // The SystemLogsFetcher fetches key-value data from a list of log sources.
 //
@@ -35,15 +36,19 @@ using SysLogsFetcherCallback =
 //   }
 //   void GetLogs() {
 //     SystemLogsFetcher* fetcher = new SystemLogsFetcher(/*scrub_data=*/ true);
-//     fetcher->AddSource(base::MakeUnique<LogSourceOne>());
-//     fetcher->AddSource(base::MakeUnique<LogSourceTwo>());
+//     fetcher->AddSource(std::make_unique<LogSourceOne>());
+//     fetcher->AddSource(std::make_unique<LogSourceTwo>());
 //     fetcher->Fetch(base::Bind(&Example::ProcessLogs, this));
 //   }
 // };
 class SystemLogsFetcher {
  public:
-  // If scrub_data is true, logs will be anonymized.
-  explicit SystemLogsFetcher(bool scrub_data);
+  // If |scrub_data| is true, logs will be anonymized.
+  // |first_party_extension_ids| is a null terminated array of all the 1st
+  // party extension IDs whose URLs won't be redacted. It is OK to pass null for
+  // that value if it's OK to redact those URLs or they won't be present.
+  explicit SystemLogsFetcher(bool scrub_data,
+                             const char* const first_party_extension_ids[]);
   ~SystemLogsFetcher();
 
   // Adds a source to use when fetching.
@@ -51,7 +56,7 @@ class SystemLogsFetcher {
 
   // Starts the fetch process. After the fetch completes, this instance calls
   // |callback|, then schedules itself to be deleted.
-  void Fetch(const SysLogsFetcherCallback& callback);
+  void Fetch(SysLogsFetcherCallback callback);
 
  private:
   // Callback passed to all the data sources. May call Scrub(), then calls
@@ -72,8 +77,9 @@ class SystemLogsFetcher {
   size_t num_pending_requests_;  // The number of callbacks it should get.
 
   std::unique_ptr<feedback::AnonymizerTool> anonymizer_;
+  scoped_refptr<base::SequencedTaskRunner> task_runner_for_anonymizer_;
 
-  base::WeakPtrFactory<SystemLogsFetcher> weak_ptr_factory_;
+  base::WeakPtrFactory<SystemLogsFetcher> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(SystemLogsFetcher);
 };

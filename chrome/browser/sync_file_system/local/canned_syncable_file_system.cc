@@ -19,7 +19,6 @@
 #include "base/single_thread_task_runner.h"
 #include "base/task_runner_util.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "base/trace_event/trace_event.h"
 #include "chrome/browser/sync_file_system/file_change.h"
 #include "chrome/browser/sync_file_system/local/local_file_change_tracker.h"
 #include "chrome/browser/sync_file_system/local/local_file_sync_context.h"
@@ -36,6 +35,7 @@
 #include "storage/browser/test/mock_special_storage_policy.h"
 #include "storage/browser/test/test_file_system_options.h"
 #include "testing/gtest/include/gtest/gtest.h"
+#include "url/origin.h"
 
 using base::File;
 using storage::FileSystemContext;
@@ -193,20 +193,20 @@ class WriteHelper {
   DISALLOW_COPY_AND_ASSIGN(WriteHelper);
 };
 
-void DidGetUsageAndQuota(const storage::StatusCallback& callback,
+void DidGetUsageAndQuota(storage::StatusCallback callback,
                          int64_t* usage_out,
                          int64_t* quota_out,
-                         storage::QuotaStatusCode status,
+                         blink::mojom::QuotaStatusCode status,
                          int64_t usage,
                          int64_t quota) {
   *usage_out = usage;
   *quota_out = quota;
-  callback.Run(status);
+  std::move(callback).Run(status);
 }
 
 void EnsureLastTaskRuns(base::SingleThreadTaskRunner* runner) {
   base::RunLoop run_loop;
-  runner->PostTaskAndReply(FROM_HERE, base::BindOnce(&base::DoNothing),
+  runner->PostTaskAndReply(FROM_HERE, base::DoNothing(),
                            run_loop.QuitClosure());
   run_loop.Run();
 }
@@ -215,20 +215,19 @@ void EnsureLastTaskRuns(base::SingleThreadTaskRunner* runner) {
 
 CannedSyncableFileSystem::CannedSyncableFileSystem(
     const GURL& origin,
-    leveldb::Env* env_override,
+    bool in_memory_file_system,
     const scoped_refptr<base::SingleThreadTaskRunner>& io_task_runner,
     const scoped_refptr<base::SingleThreadTaskRunner>& file_task_runner)
     : origin_(origin),
       type_(storage::kFileSystemTypeSyncable),
       result_(base::File::FILE_OK),
       sync_status_(sync_file_system::SYNC_STATUS_OK),
-      env_override_(env_override),
+      in_memory_file_system_(in_memory_file_system),
       io_task_runner_(io_task_runner),
       file_task_runner_(file_task_runner),
       is_filesystem_set_up_(false),
       is_filesystem_opened_(false),
-      sync_status_observers_(new ObserverList) {
-}
+      sync_status_observers_(new ObserverList) {}
 
 CannedSyncableFileSystem::~CannedSyncableFileSystem() {}
 
@@ -248,9 +247,8 @@ void CannedSyncableFileSystem::SetUp(QuotaMode quota_mode) {
   std::vector<std::string> additional_allowed_schemes;
   additional_allowed_schemes.push_back(origin_.scheme());
   storage::FileSystemOptions options(
-      storage::FileSystemOptions::PROFILE_MODE_NORMAL,
-      additional_allowed_schemes,
-      env_override_);
+      storage::FileSystemOptions::PROFILE_MODE_NORMAL, in_memory_file_system_,
+      additional_allowed_schemes);
 
   std::vector<std::unique_ptr<storage::FileSystemBackend>> additional_backends;
   additional_backends.push_back(SyncFileSystemBackend::CreateForTesting());
@@ -439,13 +437,12 @@ File::Error CannedSyncableFileSystem::ReadDirectory(
 }
 
 int64_t CannedSyncableFileSystem::Write(
-    net::URLRequestContext* url_request_context,
     const FileSystemURL& url,
     std::unique_ptr<storage::BlobDataHandle> blob_data_handle) {
   return RunOnThread<int64_t>(
       io_task_runner_.get(), FROM_HERE,
       base::BindOnce(&CannedSyncableFileSystem::DoWrite, base::Unretained(this),
-                     url_request_context, url, std::move(blob_data_handle)));
+                     url, std::move(blob_data_handle)));
 }
 
 int64_t CannedSyncableFileSystem::WriteString(const FileSystemURL& url,
@@ -464,10 +461,10 @@ File::Error CannedSyncableFileSystem::DeleteFileSystem() {
                      origin_, type_));
 }
 
-storage::QuotaStatusCode CannedSyncableFileSystem::GetUsageAndQuota(
+blink::mojom::QuotaStatusCode CannedSyncableFileSystem::GetUsageAndQuota(
     int64_t* usage,
     int64_t* quota) {
-  return RunOnThread<storage::QuotaStatusCode>(
+  return RunOnThread<blink::mojom::QuotaStatusCode>(
       io_task_runner_.get(), FROM_HERE,
       base::BindOnce(&CannedSyncableFileSystem::DoGetUsageAndQuota,
                      base::Unretained(this), usage, quota));
@@ -638,7 +635,6 @@ void CannedSyncableFileSystem::DoReadDirectory(
 }
 
 void CannedSyncableFileSystem::DoWrite(
-    net::URLRequestContext* url_request_context,
     const FileSystemURL& url,
     std::unique_ptr<storage::BlobDataHandle> blob_data_handle,
     const WriteCallback& callback) {
@@ -646,7 +642,7 @@ void CannedSyncableFileSystem::DoWrite(
   EXPECT_TRUE(is_filesystem_opened_);
   WriteHelper* helper = new WriteHelper;
   operation_runner()->Write(
-      url_request_context, url, std::move(blob_data_handle), 0,
+      url, std::move(blob_data_handle), 0,
       base::Bind(&WriteHelper::DidWrite, base::Owned(helper), callback));
 }
 
@@ -659,25 +655,22 @@ void CannedSyncableFileSystem::DoWriteString(
   MockBlobURLRequestContext* url_request_context(
       new MockBlobURLRequestContext());
   WriteHelper* helper = new WriteHelper(url_request_context, data);
-  operation_runner()->Write(url_request_context, url,
+  operation_runner()->Write(url,
                             helper->scoped_text_blob()->GetBlobDataHandle(), 0,
-                            base::Bind(&WriteHelper::DidWrite,
-                                       base::Owned(helper), callback));
+                            base::BindRepeating(&WriteHelper::DidWrite,
+                                                base::Owned(helper), callback));
 }
 
 void CannedSyncableFileSystem::DoGetUsageAndQuota(
     int64_t* usage,
     int64_t* quota,
-    const storage::StatusCallback& callback) {
-  // crbug.com/349708
-  TRACE_EVENT0("io", "CannedSyncableFileSystem::DoGetUsageAndQuota");
-
+    storage::StatusCallback callback) {
   EXPECT_TRUE(io_task_runner_->RunsTasksInCurrentSequence());
   EXPECT_TRUE(is_filesystem_opened_);
   DCHECK(quota_manager_.get());
   quota_manager_->GetUsageAndQuota(
-      origin_, storage_type(),
-      base::Bind(&DidGetUsageAndQuota, callback, usage, quota));
+      url::Origin::Create(origin_), storage_type(),
+      base::BindOnce(&DidGetUsageAndQuota, std::move(callback), usage, quota));
 }
 
 void CannedSyncableFileSystem::DidOpenFileSystem(

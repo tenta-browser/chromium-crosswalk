@@ -32,7 +32,8 @@ class ContactInfoEditorViewController : public EditorViewController {
       BackNavigationType back_navigation_type,
       base::OnceClosure on_edited,
       base::OnceCallback<void(const autofill::AutofillProfile&)> on_added,
-      autofill::AutofillProfile* profile);
+      autofill::AutofillProfile* profile,
+      bool is_incognito);
   ~ContactInfoEditorViewController() override;
 
   // EditorViewController:
@@ -55,6 +56,8 @@ class ContactInfoEditorViewController : public EditorViewController {
   // |profile|.
   void PopulateProfile(autofill::AutofillProfile* profile);
   bool GetSheetId(DialogViewID* sheet_id) override;
+  base::string16 GetValueForType(const autofill::AutofillProfile& profile,
+                                 autofill::ServerFieldType type);
 
   autofill::AutofillProfile* profile_to_edit_;
 
@@ -68,7 +71,7 @@ class ContactInfoEditorViewController : public EditorViewController {
    public:
     ContactInfoValidationDelegate(const EditorField& field,
                                   const std::string& locale,
-                                  EditorViewController* controller);
+                                  ContactInfoEditorViewController* controller);
     ~ContactInfoValidationDelegate() override;
 
     // ValidationDelegate:
@@ -89,7 +92,7 @@ class ContactInfoEditorViewController : public EditorViewController {
 
     EditorField field_;
     // Outlives this class. Never null.
-    EditorViewController* controller_;
+    ContactInfoEditorViewController* controller_;
     const std::string& locale_;
   };
 };

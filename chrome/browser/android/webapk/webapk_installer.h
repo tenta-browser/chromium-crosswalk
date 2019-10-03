@@ -8,6 +8,7 @@
 #include <jni.h>
 #include <map>
 #include <memory>
+#include <string>
 
 #include "base/android/scoped_java_ref.h"
 #include "base/callback.h"
@@ -18,8 +19,6 @@
 #include "chrome/browser/android/shortcut_info.h"
 #include "chrome/browser/android/webapk/webapk_install_service.h"
 #include "chrome/browser/android/webapk/webapk_types.h"
-#include "net/url_request/url_fetcher.h"
-#include "net/url_request/url_fetcher_delegate.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 
 namespace base {
@@ -31,14 +30,29 @@ namespace content {
 class BrowserContext;
 }
 
+namespace network {
+class SimpleURLLoader;
+}
+
+// The enum values are persisted to logs |WebApkInstallSpaceStatus| in
+// enums.xml, therefore they should never be reused nor renumbered.
+// A Java counterpart will be generated for this enum.
+// GENERATED_JAVA_ENUM_PACKAGE: org.chromium.chrome.browser.webapps
+enum class SpaceStatus {
+  ENOUGH_SPACE = 0,
+  ENOUGH_SPACE_AFTER_FREE_UP_CACHE = 1,
+  NOT_ENOUGH_SPACE = 2,
+  COUNT = 3,
+};
+
 // Talks to Chrome WebAPK server to download metadata about a WebAPK and issue
 // a request for it to be installed. The native WebApkInstaller owns the Java
 // WebApkInstaller counterpart.
-class WebApkInstaller : public net::URLFetcherDelegate {
+class WebApkInstaller {
  public:
   using FinishCallback = WebApkInstallService::FinishCallback;
 
-  ~WebApkInstaller() override;
+  virtual ~WebApkInstaller();
 
   // Creates a self-owned WebApkInstaller instance and talks to the Chrome
   // WebAPK server to generate a WebAPK on the server and locally requests the
@@ -46,8 +60,9 @@ class WebApkInstaller : public net::URLFetcherDelegate {
   static void InstallAsync(content::BrowserContext* context,
                            const ShortcutInfo& shortcut_info,
                            const SkBitmap& primary_icon,
+                           bool is_primary_icon_maskable,
                            const SkBitmap& badge_icon,
-                           const FinishCallback& finish_callback);
+                           FinishCallback finish_callback);
 
   // Creates a self-owned WebApkInstaller instance and talks to the Chrome
   // WebAPK server to update a WebAPK on the server and locally requests the
@@ -55,21 +70,22 @@ class WebApkInstaller : public net::URLFetcherDelegate {
   // |update_request_path| is the path of the file with the update request.
   static void UpdateAsync(content::BrowserContext* context,
                           const base::FilePath& update_request_path,
-                          const FinishCallback& callback);
+                          FinishCallback callback);
 
   // Calls the private function |InstallAsync| for testing.
   // Should be used only for testing.
   static void InstallAsyncForTesting(WebApkInstaller* installer,
                                      const ShortcutInfo& shortcut_info,
                                      const SkBitmap& primary_icon,
+                                     bool is_primary_icon_maskable,
                                      const SkBitmap& badge_icon,
-                                     const FinishCallback& callback);
+                                     FinishCallback callback);
 
   // Calls the private function |UpdateAsync| for testing.
   // Should be used only for testing.
   static void UpdateAsyncForTesting(WebApkInstaller* installer,
                                     const base::FilePath& update_request_path,
-                                    const FinishCallback& callback);
+                                    FinishCallback callback);
 
   // Sets the timeout for the server requests.
   void SetTimeoutMs(int timeout_ms);
@@ -79,17 +95,27 @@ class WebApkInstaller : public net::URLFetcherDelegate {
                          const base::android::JavaParamRef<jobject>& obj,
                          jint result);
 
+  // Checks if there is enough space to install a WebAPK.
+  // If yes, continue the WebAPK installation process. If there is not enough
+  // space to install (even after clearing Chrome's cache), fails the
+  // installation process immediately.
+  void OnGotSpaceStatus(JNIEnv* env,
+                        const base::android::JavaParamRef<jobject>& obj,
+                        jint status);
+
   // Asynchronously builds the WebAPK proto on a background thread for an update
   // or install request. Runs |callback| on the calling thread when complete.
   static void BuildProto(
       const ShortcutInfo& shortcut_info,
       const SkBitmap& primary_icon,
+      bool is_primary_icon_maskable,
+
       const SkBitmap& badge_icon,
       const std::string& package_name,
       const std::string& version,
       const std::map<std::string, std::string>& icon_url_to_murmur2_hash,
       bool is_manifest_stale,
-      const base::Callback<void(std::unique_ptr<std::string>)>& callback);
+      base::OnceCallback<void(std::unique_ptr<std::string>)> callback);
 
   // Builds the WebAPK proto for an update or an install request and stores it
   // to |update_request_path|. Runs |callback| with a boolean indicating
@@ -98,13 +124,14 @@ class WebApkInstaller : public net::URLFetcherDelegate {
       const base::FilePath& update_request_path,
       const ShortcutInfo& shortcut_info,
       const SkBitmap& primary_icon,
+      bool is_primary_icon_maskable,
       const SkBitmap& badge_icon,
       const std::string& package_name,
       const std::string& version,
       const std::map<std::string, std::string>& icon_url_to_murmur2_hash,
       bool is_manifest_stale,
       WebApkUpdateReason update_reason,
-      const base::Callback<void(bool)> callback);
+      base::OnceCallback<void(bool)> callback);
 
  protected:
   explicit WebApkInstaller(content::BrowserContext* browser_context);
@@ -114,6 +141,9 @@ class WebApkInstaller : public net::URLFetcherDelegate {
   virtual void InstallOrUpdateWebApk(const std::string& package_name,
                                      int version,
                                      const std::string& token);
+
+  // Checks if there is enough space to install a WebAPK.
+  virtual void CheckFreeSpace();
 
   // Called when the install or update process has completed or failed.
   void OnResult(WebApkInstallResult result);
@@ -133,21 +163,27 @@ class WebApkInstaller : public net::URLFetcherDelegate {
   // install completed or failed.
   void InstallAsync(const ShortcutInfo& shortcut_info,
                     const SkBitmap& primary_icon,
+                    bool is_primary_icon_maskable,
                     const SkBitmap& badge_icon,
-                    const FinishCallback& finish_callback);
+                    FinishCallback finish_callback);
 
   // Talks to the Chrome WebAPK server to update a WebAPK on the server and to
   // the Google Play server to install the downloaded WebAPK.
   // |update_request_path| is the path of the file with the update request.
   // Calls |finish_callback| once the update completed or failed.
   void UpdateAsync(const base::FilePath& update_request_path,
-                   const FinishCallback& finish_callback);
+                   FinishCallback finish_callback);
+
+  // Called once there is sufficient space on the user's device to install a
+  // WebAPK. The user may already have had sufficient space on their device
+  // prior to initiating the install process. This method might be called as a
+  // result of freeing up memory by clearing Chrome's cache.
+  void OnHaveSufficientSpaceForInstall();
 
   // Called with the contents of the update request file.
   void OnReadUpdateRequest(std::unique_ptr<std::string> update_request);
 
-  // net::URLFetcherDelegate:
-  void OnURLFetchComplete(const net::URLFetcher* source) override;
+  void OnURLLoaderComplete(std::unique_ptr<std::string> response_body);
 
   // Called with the computed Murmur2 hash for the primary icon.
   void OnGotPrimaryIconMurmur2Hash(const std::string& primary_icon_hash);
@@ -164,10 +200,10 @@ class WebApkInstaller : public net::URLFetcherDelegate {
   // Google Play.
   void SendRequest(std::unique_ptr<std::string> serialized_proto);
 
-  net::URLRequestContextGetter* request_context_getter_;
+  content::BrowserContext* browser_context_;
 
   // Sends HTTP request to WebAPK server.
-  std::unique_ptr<net::URLFetcher> url_fetcher_;
+  std::unique_ptr<network::SimpleURLLoader> loader_;
 
   // Fails WebApkInstaller if WebAPK server takes too long to respond or if the
   // download takes too long.
@@ -183,6 +219,8 @@ class WebApkInstaller : public net::URLFetcherDelegate {
   std::unique_ptr<ShortcutInfo> install_shortcut_info_;
   SkBitmap install_primary_icon_;
   SkBitmap install_badge_icon_;
+
+  bool is_primary_icon_maskable_;
 
   base::string16 short_name_;
 

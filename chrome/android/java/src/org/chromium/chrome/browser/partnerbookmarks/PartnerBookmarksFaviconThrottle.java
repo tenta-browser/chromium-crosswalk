@@ -4,16 +4,15 @@
 
 package org.chromium.chrome.browser.partnerbookmarks;
 
-import android.content.Context;
 import android.content.SharedPreferences;
 import android.content.SharedPreferences.Editor;
+import android.text.format.DateUtils;
 
+import org.chromium.base.ContextUtils;
 import org.chromium.base.VisibleForTesting;
-import org.chromium.base.metrics.RecordHistogram;
 
 import java.util.HashMap;
 import java.util.Map;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Stores failed favicon loads along with a timestamp determining what point we can attempt
@@ -22,20 +21,20 @@ import java.util.concurrent.TimeUnit;
  */
 public class PartnerBookmarksFaviconThrottle {
     private static final String PREFERENCES_NAME = "partner_bookmarks_favicon_throttle";
-    private static final long FAVICON_RETRIEVAL_TIMEOUT_MS = TimeUnit.DAYS.toMillis(30);
+    private static final long FAVICON_RETRIEVAL_TIMEOUT_MS = DateUtils.DAY_IN_MILLIS * 30;
 
     private final SharedPreferences mSharedPreferences;
 
     private Map<String, Long> mCurrentEntries;
     private Map<String, Long> mNewEntries;
 
-    public PartnerBookmarksFaviconThrottle(Context context) {
-        this(context, PREFERENCES_NAME);
+    public PartnerBookmarksFaviconThrottle() {
+        this(PREFERENCES_NAME);
     }
 
     @VisibleForTesting
-    PartnerBookmarksFaviconThrottle(Context context, String name) {
-        mSharedPreferences = context.getSharedPreferences(name, 0);
+    PartnerBookmarksFaviconThrottle(String name) {
+        mSharedPreferences = ContextUtils.getApplicationContext().getSharedPreferences(name, 0);
         init();
     }
 
@@ -48,9 +47,7 @@ public class PartnerBookmarksFaviconThrottle {
     @VisibleForTesting
     void init() {
         mCurrentEntries = (Map<String, Long>) mSharedPreferences.getAll();
-        RecordHistogram.recordCount100Histogram(
-                "PartnerBookmarksFaviconThrottle.NumEntries", mCurrentEntries.size());
-        mNewEntries = new HashMap<String, Long>();
+        mNewEntries = new HashMap<>();
     }
 
     /**

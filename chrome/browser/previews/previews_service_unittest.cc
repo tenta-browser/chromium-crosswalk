@@ -4,159 +4,160 @@
 
 #include "chrome/browser/previews/previews_service.h"
 
-#include <initializer_list>
 #include <map>
-#include <memory>
 #include <string>
 
-#include "base/files/file_path.h"
-#include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/metrics/field_trial.h"
 #include "base/metrics/field_trial_params.h"
-#include "base/run_loop.h"
-#include "base/single_thread_task_runner.h"
 #include "base/test/scoped_feature_list.h"
+#include "base/time/default_clock.h"
+#include "build/build_config.h"
+#include "components/blacklist/opt_out_blacklist/opt_out_blacklist_data.h"
 #include "components/data_reduction_proxy/core/common/data_reduction_proxy_features.h"
-#include "components/previews/content/previews_io_data.h"
-#include "components/previews/content/previews_optimization_guide.h"
-#include "components/previews/content/previews_ui_service.h"
+#include "components/previews/core/previews_experiments.h"
 #include "components/previews/core/previews_features.h"
 #include "components/variations/variations_associated_data.h"
-#include "content/public/browser/browser_thread.h"
-#include "content/public/test/test_browser_thread_bundle.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
 
-// This test class intercepts the |is_enabled_callback| and is used to test its
-// validity.
-class TestPreviewsIOData : public previews::PreviewsIOData {
- public:
-  TestPreviewsIOData()
-      : previews::PreviewsIOData(content::BrowserThread::GetTaskRunnerForThread(
-                                     content::BrowserThread::UI),
-                                 content::BrowserThread::GetTaskRunnerForThread(
-                                     content::BrowserThread::UI)) {}
-  ~TestPreviewsIOData() override {}
-
-  void Initialize(
-      base::WeakPtr<previews::PreviewsUIService> previews_ui_service,
-      std::unique_ptr<previews::PreviewsOptOutStore> previews_opt_out_store,
-      std::unique_ptr<previews::PreviewsOptimizationGuide> previews_opt_guide,
-      const previews::PreviewsIsEnabledCallback& is_enabled_callback) override {
-    enabled_callback_ = is_enabled_callback;
-  }
-
-  bool IsPreviewEnabled(previews::PreviewsType type) {
-    return enabled_callback_.Run(type);
-  }
-
- private:
-  previews::PreviewsIsEnabledCallback enabled_callback_;
-};
-
-// Class to test the validity of the callback passed to PreviewsIOData from
+// Class to test the validity of the callback passed to PreviewsDeciderImpl from
 // PreviewsService.
 class PreviewsServiceTest : public testing::Test {
  public:
-  PreviewsServiceTest()
-
-      : field_trial_list_(nullptr), scoped_feature_list_() {}
-
-  void SetUp() override {
-    io_data_ = base::MakeUnique<TestPreviewsIOData>();
-
-    service_ = base::MakeUnique<PreviewsService>();
-    base::FilePath file_path;
-    service_->Initialize(io_data_.get(),
-                         nullptr /* optimization_guide_service */,
-                         content::BrowserThread::GetTaskRunnerForThread(
-                             content::BrowserThread::UI),
-                         file_path);
-    scoped_feature_list_.InitAndDisableFeature(
-        data_reduction_proxy::features::kDataReductionProxyDecidesTransform);
-  }
-
-  void TearDown() override { variations::testing::ClearAllVariationParams(); }
-
+  PreviewsServiceTest() {}
   ~PreviewsServiceTest() override {}
 
-  TestPreviewsIOData* io_data() const { return io_data_.get(); }
-
- private:
-  content::TestBrowserThreadBundle threads_;
-  base::FieldTrialList field_trial_list_;
-  std::unique_ptr<TestPreviewsIOData> io_data_;
-  std::unique_ptr<PreviewsService> service_;
-  base::test::ScopedFeatureList scoped_feature_list_;
+  void TearDown() override { variations::testing::ClearAllVariationParams(); }
 };
 
 }  // namespace
 
 TEST_F(PreviewsServiceTest, TestOfflineFieldTrialNotSet) {
-  EXPECT_TRUE(io_data()->IsPreviewEnabled(previews::PreviewsType::OFFLINE));
+  blacklist::BlacklistData::AllowedTypesAndVersions allowed_types_and_versions =
+      PreviewsService::GetAllowedPreviews();
+  EXPECT_NE(allowed_types_and_versions.find(
+                static_cast<int>(previews::PreviewsType::OFFLINE)),
+            allowed_types_and_versions.end());
 }
 
 TEST_F(PreviewsServiceTest, TestOfflineFeatureDisabled) {
-  std::unique_ptr<base::FeatureList> feature_list =
-      base::MakeUnique<base::FeatureList>();
-
-  // The feature is explicitly enabled on the command-line.
-  feature_list->InitializeFromCommandLine("", "OfflinePreviews");
-  base::FeatureList::ClearInstanceForTesting();
-  base::FeatureList::SetInstance(std::move(feature_list));
-
-  EXPECT_FALSE(io_data()->IsPreviewEnabled(previews::PreviewsType::OFFLINE));
-  base::FeatureList::ClearInstanceForTesting();
-}
-
-TEST_F(PreviewsServiceTest, TestClientLoFiFieldTrialEnabled) {
-  base::FieldTrialList::CreateFieldTrial("PreviewsClientLoFi", "Enabled");
-  EXPECT_TRUE(io_data()->IsPreviewEnabled(previews::PreviewsType::LOFI));
-}
-
-TEST_F(PreviewsServiceTest, TestClientLoFiFieldTrialDisabled) {
-  base::FieldTrialList::CreateFieldTrial("PreviewsClientLoFi", "Disabled");
-  EXPECT_FALSE(io_data()->IsPreviewEnabled(previews::PreviewsType::LOFI));
-}
-
-TEST_F(PreviewsServiceTest, TestClientLoFiFieldTrialNotSet) {
-  EXPECT_FALSE(io_data()->IsPreviewEnabled(previews::PreviewsType::LOFI));
-}
-
-TEST_F(PreviewsServiceTest, TestServerLoFiNotEnabled) {
   base::test::ScopedFeatureList scoped_feature_list;
   scoped_feature_list.InitAndDisableFeature(
-      data_reduction_proxy::features::kDataReductionProxyDecidesTransform);
-  EXPECT_FALSE(io_data()->IsPreviewEnabled(previews::PreviewsType::LOFI));
+      previews::features::kOfflinePreviews);
+
+  blacklist::BlacklistData::AllowedTypesAndVersions allowed_types_and_versions =
+      PreviewsService::GetAllowedPreviews();
+  EXPECT_EQ(allowed_types_and_versions.find(
+                static_cast<int>(previews::PreviewsType::OFFLINE)),
+            allowed_types_and_versions.end());
 }
 
 TEST_F(PreviewsServiceTest, TestLitePageNotEnabled) {
   base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndDisableFeature(
-      data_reduction_proxy::features::kDataReductionProxyDecidesTransform);
-  EXPECT_FALSE(io_data()->IsPreviewEnabled(previews::PreviewsType::LITE_PAGE));
-}
-
-TEST_F(PreviewsServiceTest, TestServerLoFiProxyDecidesTransform) {
-  base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(
-      data_reduction_proxy::features::kDataReductionProxyDecidesTransform);
-  EXPECT_TRUE(io_data()->IsPreviewEnabled(previews::PreviewsType::LOFI));
+  scoped_feature_list.InitWithFeatures(
+      {previews::features::kPreviews} /* enabled features */,
+      {data_reduction_proxy::features::
+           kDataReductionProxyDecidesTransform} /* disabled features */);
+  blacklist::BlacklistData::AllowedTypesAndVersions allowed_types_and_versions =
+      PreviewsService::GetAllowedPreviews();
+  EXPECT_EQ(allowed_types_and_versions.find(
+                static_cast<int>(previews::PreviewsType::LITE_PAGE)),
+            allowed_types_and_versions.end());
 }
 
 TEST_F(PreviewsServiceTest, TestLitePageProxyDecidesTransform) {
   base::test::ScopedFeatureList scoped_feature_list;
-  scoped_feature_list.InitAndEnableFeature(
-      data_reduction_proxy::features::kDataReductionProxyDecidesTransform);
-  EXPECT_TRUE(io_data()->IsPreviewEnabled(previews::PreviewsType::LITE_PAGE));
+  scoped_feature_list.InitWithFeatures(
+      {previews::features::kPreviews,
+       data_reduction_proxy::features::kDataReductionProxyDecidesTransform},
+      {});
+  blacklist::BlacklistData::AllowedTypesAndVersions allowed_types_and_versions =
+      PreviewsService::GetAllowedPreviews();
+  EXPECT_NE(allowed_types_and_versions.find(
+                static_cast<int>(previews::PreviewsType::LITE_PAGE)),
+            allowed_types_and_versions.end());
 }
 
 TEST_F(PreviewsServiceTest, TestNoScriptPreviewsEnabledByFeature) {
-  EXPECT_FALSE(io_data()->IsPreviewEnabled(previews::PreviewsType::NOSCRIPT));
+#if !defined(OS_ANDROID)
+  // For non-android, default is disabled.
+  blacklist::BlacklistData::AllowedTypesAndVersions allowed_types_and_versions =
+      PreviewsService::GetAllowedPreviews();
+  EXPECT_EQ(allowed_types_and_versions.find(
+                static_cast<int>(previews::PreviewsType::NOSCRIPT)),
+            allowed_types_and_versions.end());
+#endif  // defined(OS_ANDROID)
+
   base::test::ScopedFeatureList scoped_feature_list;
   scoped_feature_list.InitAndEnableFeature(
       previews::features::kNoScriptPreviews);
-  EXPECT_TRUE(io_data()->IsPreviewEnabled(previews::PreviewsType::NOSCRIPT));
+  blacklist::BlacklistData::AllowedTypesAndVersions
+      allowed_types_and_versions2 = PreviewsService::GetAllowedPreviews();
+  EXPECT_NE(allowed_types_and_versions2.find(
+                static_cast<int>(previews::PreviewsType::NOSCRIPT)),
+            allowed_types_and_versions2.end());
+}
+
+TEST_F(PreviewsServiceTest, TestDeferAllScriptPreviewsEnabledByFeature) {
+#if !defined(OS_ANDROID)
+  // For non-android, default is disabled.
+  blacklist::BlacklistData::AllowedTypesAndVersions allowed_types_and_versions =
+      PreviewsService::GetAllowedPreviews();
+  EXPECT_EQ(allowed_types_and_versions.find(
+                static_cast<int>(previews::PreviewsType::DEFER_ALL_SCRIPT)),
+            allowed_types_and_versions.end());
+#endif  // defined(OS_ANDROID)
+
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndEnableFeature(
+      previews::features::kDeferAllScriptPreviews);
+  blacklist::BlacklistData::AllowedTypesAndVersions
+      allowed_types_and_versions2 = PreviewsService::GetAllowedPreviews();
+  EXPECT_NE(allowed_types_and_versions2.find(
+                static_cast<int>(previews::PreviewsType::DEFER_ALL_SCRIPT)),
+            allowed_types_and_versions2.end());
+}
+
+TEST_F(PreviewsServiceTest, HasURLRedirectCycle) {
+  base::MRUCache<GURL, GURL> redirect_history(100u);
+
+  // URL redirect cycle of length 3.
+  redirect_history.Put(GURL("https://a.com/"), GURL("https://b.com/"));
+  redirect_history.Put(GURL("https://b.com/"), GURL("https://c.com/"));
+  redirect_history.Put(GURL("https://c.com/"), GURL("https://a.com/"));
+
+  // Not a cycle.
+  redirect_history.Put(GURL("https://m.com/"), GURL("https://n.com/"));
+  redirect_history.Put(GURL("https://n.com/"), GURL("https://o.com/"));
+  redirect_history.Put(GURL("https://o.com/"), GURL("https://p.com/"));
+
+  // URL redirect cycle of length 3.
+  redirect_history.Put(GURL("https://q.com/"), GURL("https://r.com/"));
+  redirect_history.Put(GURL("https://r.com/"), GURL("https://s.com/"));
+  redirect_history.Put(GURL("https://s.com/"), GURL("https://s.com/"));
+
+  // URL redirect cycle of length 2.
+  redirect_history.Put(GURL("https://x.com/"), GURL("https://y.com/"));
+  redirect_history.Put(GURL("https://y.com/"), GURL("https://x.com/"));
+
+  const struct {
+    const char* start_url;
+    bool expect_redirect_cycle;
+  } kTestCases[] = {
+      {"https://a.com/", true},  {"https://b.com/", true},
+      {"https://c.com/", true},  {"https://d.com/", false},
+      {"https://m.com/", false}, {"https://n.com/", false},
+      {"https://o.com/", false}, {"https://p.com/", false},
+      {"https://q.com/", true},  {"https://r.com/", true},
+      {"https://s.com/", true},  {"https://x.com/", true},
+      {"https://y.com/", true},
+  };
+
+  for (const auto& test : kTestCases) {
+    EXPECT_EQ(test.expect_redirect_cycle,
+              PreviewsService::HasURLRedirectCycle(GURL(test.start_url),
+                                                   redirect_history))
+        << " test.start_url=" << test.start_url;
+  }
 }

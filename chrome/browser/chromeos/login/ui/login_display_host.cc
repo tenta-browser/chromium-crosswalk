@@ -9,4 +9,13 @@ namespace chromeos {
 // static
 LoginDisplayHost* LoginDisplayHost::default_host_ = nullptr;
 
+LoginDisplayHost::LoginDisplayHost() {
+  DCHECK(default_host() == nullptr);
+  default_host_ = this;
+}
+
+LoginDisplayHost::~LoginDisplayHost() {
+  default_host_ = nullptr;
+}
+
 }  // namespace chromeos

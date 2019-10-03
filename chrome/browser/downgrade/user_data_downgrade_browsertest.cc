@@ -7,34 +7,51 @@
 #include "base/files/file_util.h"
 #include "base/path_service.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/task_scheduler/task_scheduler.h"
+#include "base/task/thread_pool/thread_pool.h"
 #include "base/test/test_reg_util_win.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/version.h"
 #include "base/win/registry.h"
+#include "chrome/browser/chrome_browser_main.h"
+#include "chrome/browser/chrome_browser_main_extra_parts.h"
 #include "chrome/common/chrome_constants.h"
 #include "chrome/common/chrome_paths.h"
-#include "chrome/installer/util/browser_distribution.h"
-#include "chrome/installer/util/google_update_constants.h"
+#include "chrome/install_static/install_util.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "content/public/browser/browser_thread.h"
+#include "content/public/test/test_utils.h"
 
 namespace downgrade {
 
 class UserDataDowngradeBrowserTestBase : public InProcessBrowserTest {
  protected:
+  // DeleteMovedUserDataSoon() is called after the test is run, and will post a
+  // task to perform the actual deletion. Make sure this task gets a chance to
+  // run, so that the check in TearDownInProcessBrowserTestFixture() works.
+  class RunAllPendingTasksPostMainMessageLoopRunExtraParts
+      : public ChromeBrowserMainExtraParts {
+   public:
+    void PostMainMessageLoopRun() override { content::RunAllTasksUntilIdle(); }
+  };
+
+  void CreatedBrowserMainParts(content::BrowserMainParts* parts) override {
+    InProcessBrowserTest::CreatedBrowserMainParts(parts);
+    static_cast<ChromeBrowserMainParts*>(parts)->AddParts(
+        new RunAllPendingTasksPostMainMessageLoopRunExtraParts());
+  }
+
   // content::BrowserTestBase:
   void SetUpInProcessBrowserTestFixture() override {
     HKEY root = HKEY_CURRENT_USER;
     ASSERT_NO_FATAL_FAILURE(registry_override_manager_.OverrideRegistry(root));
     key_.Create(root,
-                BrowserDistribution::GetDistribution()->GetStateKey().c_str(),
+                install_static::GetClientStateKeyPath().c_str(),
                 KEY_SET_VALUE | KEY_WOW64_32KEY);
   }
 
   // InProcessBrowserTest:
   bool SetUpUserDataDirectory() override {
-    if (!PathService::Get(chrome::DIR_USER_DATA, &user_data_dir_))
+    if (!base::PathService::Get(chrome::DIR_USER_DATA, &user_data_dir_))
       return false;
     if (!CreateTemporaryFileInDir(user_data_dir_, &other_file_))
       return false;
@@ -79,7 +96,6 @@ class UserDataDowngradeBrowserCopyAndCleanTest
     UserDataDowngradeBrowserTestBase::SetUpInProcessBrowserTestFixture();
     key_.WriteValue(L"DowngradeVersion",
                     base::ASCIIToUTF16(GetNextChromeVersion()).c_str());
-    key_.WriteValue(google_update::kRegMSIField, 1);
   }
 
   // InProcessBrowserTest:
@@ -96,28 +112,13 @@ class UserDataDowngradeBrowserCopyAndCleanTest
 
 class UserDataDowngradeBrowserNoResetTest
     : public UserDataDowngradeBrowserTestBase {
- protected:
-  // content::BrowserTestBase:
-  void SetUpInProcessBrowserTestFixture() override {
-    UserDataDowngradeBrowserTestBase::SetUpInProcessBrowserTestFixture();
-    key_.WriteValue(google_update::kRegMSIField, 1);
-  }
-};
-
-class UserDataDowngradeBrowserNoMSITest
-    : public UserDataDowngradeBrowserTestBase {
- protected:
-  // InProcessBrowserTest:
-  bool SetUpUserDataDirectory() override {
-    return CreateTemporaryFileInDir(user_data_dir_, &other_file_);
-  }
 };
 
 // Verify the user data directory has been renamed and created again after
 // downgrade.
 IN_PROC_BROWSER_TEST_F(UserDataDowngradeBrowserCopyAndCleanTest, Test) {
   base::ScopedAllowBlockingForTesting allow_blocking;
-  base::TaskScheduler::GetInstance()->FlushForTesting();
+  base::ThreadPoolInstance::Get()->FlushForTesting();
   EXPECT_EQ(chrome::kChromeVersion, GetLastVersion(user_data_dir_).GetString());
   ASSERT_FALSE(base::PathExists(other_file_));
 }
@@ -126,13 +127,6 @@ IN_PROC_BROWSER_TEST_F(UserDataDowngradeBrowserCopyAndCleanTest, Test) {
 IN_PROC_BROWSER_TEST_F(UserDataDowngradeBrowserNoResetTest, Test) {
   base::ScopedAllowBlockingForTesting allow_blocking;
   EXPECT_EQ(chrome::kChromeVersion, GetLastVersion(user_data_dir_).GetString());
-  ASSERT_TRUE(base::PathExists(other_file_));
-}
-
-// Verify the "Last Version" file won't be created for non-msi install.
-IN_PROC_BROWSER_TEST_F(UserDataDowngradeBrowserNoMSITest, Test) {
-  base::ScopedAllowBlockingForTesting allow_blocking;
-  ASSERT_FALSE(base::PathExists(last_version_file_path_));
   ASSERT_TRUE(base::PathExists(other_file_));
 }
 

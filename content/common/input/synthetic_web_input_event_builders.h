@@ -7,11 +7,11 @@
 
 #include "base/time/time.h"
 #include "content/common/content_export.h"
-#include "third_party/WebKit/public/platform/WebGestureEvent.h"
-#include "third_party/WebKit/public/platform/WebInputEvent.h"
-#include "third_party/WebKit/public/platform/WebKeyboardEvent.h"
-#include "third_party/WebKit/public/platform/WebMouseWheelEvent.h"
-#include "third_party/WebKit/public/platform/WebTouchEvent.h"
+#include "third_party/blink/public/platform/web_gesture_event.h"
+#include "third_party/blink/public/platform/web_input_event.h"
+#include "third_party/blink/public/platform/web_keyboard_event.h"
+#include "third_party/blink/public/platform/web_mouse_wheel_event.h"
+#include "third_party/blink/public/platform/web_touch_event.h"
 
 // Provides sensible creation of default WebInputEvents for testing purposes.
 
@@ -38,7 +38,8 @@ class CONTENT_EXPORT SyntheticWebMouseWheelEventBuilder {
                                          float dx,
                                          float dy,
                                          int modifiers,
-                                         bool precise);
+                                         bool precise,
+                                         bool scroll_by_page = false);
   static blink::WebMouseWheelEvent Build(float x,
                                          float y,
                                          float global_x,
@@ -46,7 +47,8 @@ class CONTENT_EXPORT SyntheticWebMouseWheelEventBuilder {
                                          float dx,
                                          float dy,
                                          int modifiers,
-                                         bool precise);
+                                         bool precise,
+                                         bool scroll_by_page = false);
 };
 
 class CONTENT_EXPORT SyntheticWebKeyboardEventBuilder {
@@ -89,14 +91,30 @@ class CONTENT_EXPORT SyntheticWebTouchEvent : public blink::WebTouchEvent {
   void ResetPoints();
 
   // Adds an additional point to the touch list, returning the point's index.
-  int PressPoint(float x, float y);
-  void MovePoint(int index, float x, float y);
+  int PressPoint(float x,
+                 float y,
+                 float radius_x = 20.f,
+                 float radius_y = 20.f,
+                 float rotation_angle = 0.f,
+                 float force = 1.f);
+  void MovePoint(int index,
+                 float x,
+                 float y,
+                 float radius_x = 20.f,
+                 float radius_y = 20.f,
+                 float rotation_angle = 0.f,
+                 float force = 1.f);
   void ReleasePoint(int index);
   void CancelPoint(int index);
 
   void SetTimestamp(base::TimeTicks timestamp);
 
   int FirstFreeIndex();
+
+ private:
+  // A pointer id of each touch pointer. Every time when a pointer is pressed
+  // the screen, it will be assigned to a new pointer id.
+  unsigned pointer_id_;
 };
 
 }  // namespace content

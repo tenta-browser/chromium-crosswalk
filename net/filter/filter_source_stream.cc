@@ -4,8 +4,9 @@
 
 #include "net/filter/filter_source_stream.h"
 
+#include <utility>
+
 #include "base/bind.h"
-#include "base/callback_helpers.h"
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/numerics/safe_conversions.h"
@@ -40,14 +41,14 @@ FilterSourceStream::~FilterSourceStream() = default;
 
 int FilterSourceStream::Read(IOBuffer* read_buffer,
                              int read_buffer_size,
-                             const CompletionCallback& callback) {
+                             CompletionOnceCallback callback) {
   DCHECK_EQ(STATE_NONE, next_state_);
   DCHECK(read_buffer);
   DCHECK_LT(0, read_buffer_size);
 
   // Allocate a BlockBuffer during first Read().
   if (!input_buffer_) {
-    input_buffer_ = new IOBufferWithSize(kBufferSize);
+    input_buffer_ = base::MakeRefCounted<IOBufferWithSize>(kBufferSize);
     // This is first Read(), start with reading data from |upstream_|.
     next_state_ = STATE_READ_DATA;
   } else {
@@ -61,7 +62,7 @@ int FilterSourceStream::Read(IOBuffer* read_buffer,
   int rv = DoLoop(OK);
 
   if (rv == ERR_IO_PENDING)
-    callback_ = callback;
+    callback_ = std::move(callback);
   return rv;
 }
 
@@ -86,10 +87,6 @@ FilterSourceStream::SourceType FilterSourceStream::ParseEncodingType(
   } else {
     return TYPE_UNKNOWN;
   }
-}
-
-void FilterSourceStream::ReportContentDecodingFailed(SourceType type) {
-  UMA_HISTOGRAM_ENUMERATION("Net.ContentDecodingFailed2", type, TYPE_MAX);
 }
 
 int FilterSourceStream::DoLoop(int result) {
@@ -139,7 +136,7 @@ int FilterSourceStream::DoReadDataComplete(int result) {
 
   if (result >= OK) {
     drainable_input_buffer_ =
-        new DrainableIOBuffer(input_buffer_.get(), result);
+        base::MakeRefCounted<DrainableIOBuffer>(input_buffer_, result);
     next_state_ = STATE_FILTER_DATA;
   }
   if (result <= OK)
@@ -160,9 +157,6 @@ int FilterSourceStream::DoFilterData() {
   DCHECK(bytes_output != 0 ||
          consumed_bytes == drainable_input_buffer_->BytesRemaining());
 
-  if (bytes_output == ERR_CONTENT_DECODING_FAILED) {
-    ReportContentDecodingFailed(type());
-  }
   // FilterData() is not allowed to return ERR_IO_PENDING.
   DCHECK_NE(ERR_IO_PENDING, bytes_output);
 
@@ -190,7 +184,7 @@ void FilterSourceStream::OnIOComplete(int result) {
   output_buffer_ = nullptr;
   output_buffer_size_ = 0;
 
-  base::ResetAndReturn(&callback_).Run(rv);
+  std::move(callback_).Run(rv);
 }
 
 bool FilterSourceStream::NeedMoreData() const {

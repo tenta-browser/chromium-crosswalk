@@ -4,7 +4,7 @@
 
 #include <jni.h>
 
-#include "android_webview/test/jni/AwEmbeddedTestServerImpl_jni.h"
+#include "android_webview/test/embedded_test_server/aw_net_jni_headers/AwEmbeddedTestServerImpl_jni.h"
 #include "base/android/jni_array.h"
 #include "base/base64.h"
 #include "base/strings/stringprintf.h"
@@ -219,8 +219,7 @@ std::unique_ptr<HttpResponse> HandleImageOnloadHtml(
 
 // static
 ScopedJavaLocalRef<jlongArray> JNI_AwEmbeddedTestServerImpl_GetHandlers(
-    JNIEnv* env,
-    const JavaParamRef<jclass>&) {
+    JNIEnv* env) {
   std::vector<int64_t> handlers = {
       reinterpret_cast<int64_t>(&HandleClickRedirect),
       reinterpret_cast<int64_t>(&HandleEchoHeaderAndSetData),

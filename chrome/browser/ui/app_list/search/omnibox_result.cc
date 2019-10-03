@@ -6,19 +6,21 @@
 
 #include <stddef.h>
 
+#include "ash/public/cpp/app_list/app_list_config.h"
+#include "ash/public/cpp/app_list/vector_icons/vector_icons.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_split.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/bookmarks/bookmark_model_factory.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/app_list/app_list_controller_delegate.h"
-#include "chrome/browser/ui/app_list/search/search_util.h"
+#include "chrome/grit/generated_resources.h"
 #include "components/bookmarks/browser/bookmark_model.h"
 #include "components/omnibox/browser/autocomplete_controller.h"
 #include "components/omnibox/browser/autocomplete_match_type.h"
 #include "components/omnibox/browser/vector_icons.h"
-#include "ui/app_list/app_list_constants.h"
-#include "ui/app_list/app_list_features.h"
-#include "ui/app_list/vector_icons/vector_icons.h"
+#include "ui/base/l10n/l10n_util.h"
+#include "ui/gfx/color_palette.h"
 #include "ui/gfx/paint_vector_icon.h"
 #include "url/gurl.h"
 #include "url/url_canon.h"
@@ -29,36 +31,35 @@ namespace app_list {
 
 namespace {
 
-// #000 at 87% opacity.
-constexpr SkColor kListIconColor = SkColorSetARGBMacro(0xDE, 0x00, 0x00, 0x00);
+constexpr SkColor kListIconColor = gfx::kGoogleGrey700;
 
 int ACMatchStyleToTagStyle(int styles) {
   int tag_styles = 0;
   if (styles & ACMatchClassification::URL)
-    tag_styles |= SearchResult::Tag::URL;
+    tag_styles |= ash::SearchResultTag::URL;
   if (styles & ACMatchClassification::MATCH)
-    tag_styles |= SearchResult::Tag::MATCH;
+    tag_styles |= ash::SearchResultTag::MATCH;
   if (styles & ACMatchClassification::DIM)
-    tag_styles |= SearchResult::Tag::DIM;
+    tag_styles |= ash::SearchResultTag::DIM;
 
   return tag_styles;
 }
 
-// Translates ACMatchClassifications into SearchResult tags.
+// Translates ACMatchClassifications into ChromeSearchResult tags.
 void ACMatchClassificationsToTags(const base::string16& text,
                                   const ACMatchClassifications& text_classes,
-                                  SearchResult::Tags* tags) {
-  int tag_styles = SearchResult::Tag::NONE;
+                                  ChromeSearchResult::Tags* tags) {
+  int tag_styles = ash::SearchResultTag::NONE;
   size_t tag_start = 0;
 
   for (size_t i = 0; i < text_classes.size(); ++i) {
     const ACMatchClassification& text_class = text_classes[i];
 
     // Closes current tag.
-    if (tag_styles != SearchResult::Tag::NONE) {
+    if (tag_styles != ash::SearchResultTag::NONE) {
       tags->push_back(
-          SearchResult::Tag(tag_styles, tag_start, text_class.offset));
-      tag_styles = SearchResult::Tag::NONE;
+          ash::SearchResultTag(tag_styles, tag_start, text_class.offset));
+      tag_styles = ash::SearchResultTag::NONE;
     }
 
     if (text_class.style == ACMatchClassification::NONE)
@@ -68,42 +69,9 @@ void ACMatchClassificationsToTags(const base::string16& text,
     tag_styles = ACMatchStyleToTagStyle(text_class.style);
   }
 
-  if (tag_styles != SearchResult::Tag::NONE) {
-    tags->push_back(SearchResult::Tag(tag_styles, tag_start, text.length()));
+  if (tag_styles != ash::SearchResultTag::NONE) {
+    tags->push_back(ash::SearchResultTag(tag_styles, tag_start, text.length()));
   }
-}
-
-// Returns true if |url| is on a Google Search domain. May return false
-// positives.
-bool IsUrlGoogleSearch(const GURL& url) {
-  // Just return true if the second or third level domain is "google". This may
-  // result in false positives (e.g. "google.example.com"), but since we are
-  // only using this to decide when to add the spoken feedback query parameter,
-  // this doesn't have any bad consequences.
-  const char kGoogleDomainLabel[] = "google";
-
-  std::vector<std::string> pieces = base::SplitString(
-      url.host(), ".", base::KEEP_WHITESPACE, base::SPLIT_WANT_ALL);
-
-  size_t num_pieces = pieces.size();
-
-  if (num_pieces >= 2 && pieces[num_pieces - 2] == kGoogleDomainLabel)
-    return true;
-
-  if (num_pieces >= 3 && pieces[num_pieces - 3] == kGoogleDomainLabel)
-    return true;
-
-  return false;
-}
-
-// Converts a Google Search URL into a spoken feedback URL, by adding query
-// parameters. |search_url| must be a Google Search URL.
-GURL MakeGoogleSearchSpokenFeedbackUrl(const GURL& search_url) {
-  std::string query = search_url.query();
-  query += "&gs_ivs=1";
-  GURL::Replacements replacements;
-  replacements.SetQueryStr(query);
-  return search_url.ReplaceComponents(replacements);
 }
 
 // AutocompleteMatchType::Type to vector icon, used for app list.
@@ -117,11 +85,13 @@ const gfx::VectorIcon& TypeToVectorIcon(AutocompleteMatchType::Type type) {
     case AutocompleteMatchType::NAVSUGGEST:
     case AutocompleteMatchType::BOOKMARK_TITLE:
     case AutocompleteMatchType::NAVSUGGEST_PERSONALIZED:
-    case AutocompleteMatchType::CLIPBOARD:
-    case AutocompleteMatchType::PHYSICAL_WEB:
-    case AutocompleteMatchType::PHYSICAL_WEB_OVERFLOW:
-    case AutocompleteMatchType::TAB_SEARCH:
-      return kIcDomainIcon;
+    case AutocompleteMatchType::CLIPBOARD_URL:
+    case AutocompleteMatchType::PHYSICAL_WEB_DEPRECATED:
+    case AutocompleteMatchType::PHYSICAL_WEB_OVERFLOW_DEPRECATED:
+    case AutocompleteMatchType::TAB_SEARCH_DEPRECATED:
+    case AutocompleteMatchType::DOCUMENT_SUGGESTION:
+    case AutocompleteMatchType::PEDAL:
+      return kDomainIcon;
 
     case AutocompleteMatchType::SEARCH_WHAT_YOU_TYPED:
     case AutocompleteMatchType::SEARCH_SUGGEST:
@@ -131,22 +101,24 @@ const gfx::VectorIcon& TypeToVectorIcon(AutocompleteMatchType::Type type) {
     case AutocompleteMatchType::SEARCH_OTHER_ENGINE:
     case AutocompleteMatchType::CONTACT_DEPRECATED:
     case AutocompleteMatchType::VOICE_SUGGEST:
-      return kIcSearchIcon;
+    case AutocompleteMatchType::CLIPBOARD_TEXT:
+    case AutocompleteMatchType::CLIPBOARD_IMAGE:
+      return kSearchIcon;
 
     case AutocompleteMatchType::SEARCH_HISTORY:
     case AutocompleteMatchType::SEARCH_SUGGEST_PERSONALIZED:
-      return kIcHistoryIcon;
+      return kHistoryIcon;
 
     case AutocompleteMatchType::CALCULATOR:
-      return kIcEqualIcon;
+      return kEqualIcon;
 
-    case AutocompleteMatchType::EXTENSION_APP:
+    case AutocompleteMatchType::EXTENSION_APP_DEPRECATED:
     case AutocompleteMatchType::NUM_TYPES:
       NOTREACHED();
       break;
   }
   NOTREACHED();
-  return kIcDomainIcon;
+  return kDomainIcon;
 }
 
 }  // namespace
@@ -154,20 +126,21 @@ const gfx::VectorIcon& TypeToVectorIcon(AutocompleteMatchType::Type type) {
 OmniboxResult::OmniboxResult(Profile* profile,
                              AppListControllerDelegate* list_controller,
                              AutocompleteController* autocomplete_controller,
-                             bool is_voice_query,
-                             const AutocompleteMatch& match)
+                             const AutocompleteMatch& match,
+                             bool is_zero_suggestion)
     : profile_(profile),
       list_controller_(list_controller),
       autocomplete_controller_(autocomplete_controller),
-      is_voice_query_(is_voice_query),
-      match_(match) {
+      match_(match),
+      is_zero_suggestion_(is_zero_suggestion) {
   if (match_.search_terms_args && autocomplete_controller_) {
     match_.search_terms_args->from_app_list = true;
     autocomplete_controller_->UpdateMatchDestinationURL(
         *match_.search_terms_args, &match_);
   }
-  set_id(match_.destination_url.spec());
-  set_comparable_id(match_.stripped_destination_url.spec());
+  set_id(match_.stripped_destination_url.spec());
+  SetResultType(ash::SearchResultType::kOmnibox);
+  set_result_subtype(static_cast<int>(match_.type));
 
   // Derive relevance from omnibox relevance and normalize it to [0, 1].
   // The magic number 1500 is the highest score of an omnibox result.
@@ -175,40 +148,91 @@ OmniboxResult::OmniboxResult(Profile* profile,
   set_relevance(match_.relevance / 1500.0);
 
   if (AutocompleteMatch::IsSearchType(match_.type))
-    set_is_omnibox_search(true);
-
+    SetIsOmniboxSearch(true);
   UpdateIcon();
   UpdateTitleAndDetails();
 
-  // The raw "what you typed" search results should be promoted and
-  // automatically selected by voice queries. If a "history" result exactly
-  // matches what you typed, then the omnibox will not produce a "what you
-  // typed" result; therefore, we must also flag "history" results as voice
-  // results if they exactly match the query.
-  if (match_.type == AutocompleteMatchType::SEARCH_WHAT_YOU_TYPED ||
-      (match_.type == AutocompleteMatchType::SEARCH_HISTORY &&
-       match_.search_terms_args &&
-       match_.contents == match_.search_terms_args->original_query)) {
-    set_voice_result(true);
-  }
+  if (is_zero_suggestion_)
+    SetZeroSuggestionActions();
 }
 
 OmniboxResult::~OmniboxResult() = default;
 
 void OmniboxResult::Open(int event_flags) {
-  RecordHistogram(OMNIBOX_SEARCH_RESULT);
-  GURL url = match_.destination_url;
-  if (is_voice_query_ && IsUrlGoogleSearch(url)) {
-    url = MakeGoogleSearchSpokenFeedbackUrl(url);
-  }
-  list_controller_->OpenURL(profile_, url, match_.transition,
+  RecordOmniboxResultHistogram();
+  list_controller_->OpenURL(profile_, match_.destination_url, match_.transition,
                             ui::DispositionFromEventFlags(event_flags));
 }
 
-std::unique_ptr<SearchResult> OmniboxResult::Duplicate() const {
-  return std::unique_ptr<SearchResult>(
-      new OmniboxResult(profile_, list_controller_, autocomplete_controller_,
-                        is_voice_query_, match_));
+void OmniboxResult::Remove() {
+  // TODO(jennyz): add RecordHistogram.
+  autocomplete_controller_->DeleteMatch(match_);
+}
+
+void OmniboxResult::InvokeAction(int action_index, int event_flags) {
+  DCHECK(is_zero_suggestion_);
+  switch (ash::GetOmniBoxZeroStateAction(action_index)) {
+    case ash::OmniBoxZeroStateAction::kRemoveSuggestion:
+      Remove();
+      break;
+    default:
+      NOTREACHED();
+  }
+}
+
+SearchResultType OmniboxResult::GetSearchResultType() const {
+  switch (match_.type) {
+    case AutocompleteMatchType::URL_WHAT_YOU_TYPED:
+      return OMNIBOX_URL_WHAT_YOU_TYPED;
+    case AutocompleteMatchType::HISTORY_URL: {
+      BookmarkModel* bookmark_model =
+          BookmarkModelFactory::GetForBrowserContext(profile_);
+      if (bookmark_model &&
+          bookmark_model->IsBookmarked(match_.destination_url)) {
+        return OMNIBOX_BOOKMARK;
+      }
+      return OMNIBOX_RECENTLY_VISITED_WEBSITE;
+    }
+    case AutocompleteMatchType::HISTORY_TITLE:
+      return OMNIBOX_RECENT_DOC_IN_DRIVE;
+    case AutocompleteMatchType::SEARCH_WHAT_YOU_TYPED:
+      return OMNIBOX_WEB_QUERY;
+    case AutocompleteMatchType::SEARCH_HISTORY:
+      return OMNIBOX_SEARCH_HISTORY;
+    case AutocompleteMatchType::SEARCH_SUGGEST:
+      return OMNIBOX_SEARCH_SUGGEST;
+    case AutocompleteMatchType::SEARCH_SUGGEST_PERSONALIZED:
+      return OMNIBOX_SUGGEST_PERSONALIZED;
+
+    case AutocompleteMatchType::HISTORY_KEYWORD:
+    case AutocompleteMatchType::NAVSUGGEST:
+    case AutocompleteMatchType::SEARCH_SUGGEST_ENTITY:
+    case AutocompleteMatchType::SEARCH_SUGGEST_TAIL:
+    case AutocompleteMatchType::SEARCH_SUGGEST_PROFILE:
+    case AutocompleteMatchType::SEARCH_OTHER_ENGINE:
+    case AutocompleteMatchType::CONTACT_DEPRECATED:
+    case AutocompleteMatchType::BOOKMARK_TITLE:
+    case AutocompleteMatchType::NAVSUGGEST_PERSONALIZED:
+    case AutocompleteMatchType::CALCULATOR:
+    case AutocompleteMatchType::CLIPBOARD_URL:
+    case AutocompleteMatchType::VOICE_SUGGEST:
+    case AutocompleteMatchType::PHYSICAL_WEB_DEPRECATED:
+    case AutocompleteMatchType::PHYSICAL_WEB_OVERFLOW_DEPRECATED:
+    case AutocompleteMatchType::EXTENSION_APP_DEPRECATED:
+    case AutocompleteMatchType::TAB_SEARCH_DEPRECATED:
+    case AutocompleteMatchType::DOCUMENT_SUGGESTION:
+    case AutocompleteMatchType::PEDAL:
+    case AutocompleteMatchType::CLIPBOARD_TEXT:
+    case AutocompleteMatchType::CLIPBOARD_IMAGE:
+    case AutocompleteMatchType::NUM_TYPES:
+    case AutocompleteMatchType::HISTORY_BODY:
+      NOTREACHED();
+      return SEARCH_RESULT_TYPE_BOUNDARY;
+  }
+}
+
+GURL OmniboxResult::DestinationURL() const {
+  return match_.destination_url;
 }
 
 void OmniboxResult::UpdateIcon() {
@@ -218,8 +242,10 @@ void OmniboxResult::UpdateIcon() {
       bookmark_model && bookmark_model->IsBookmarked(match_.destination_url);
 
   const gfx::VectorIcon& icon =
-      is_bookmarked ? kIcBookmarkIcon : TypeToVectorIcon(match_.type);
-  SetIcon(gfx::CreateVectorIcon(icon, kListIconSize, kListIconColor));
+      is_bookmarked ? kBookmarkIcon : TypeToVectorIcon(match_.type);
+  SetIcon(gfx::CreateVectorIcon(
+      icon, AppListConfig::instance().search_list_icon_dimension(),
+      kListIconColor));
 }
 
 void OmniboxResult::UpdateTitleAndDetails() {
@@ -227,34 +253,79 @@ void OmniboxResult::UpdateTitleAndDetails() {
   // the url description is presented as title, and url itself is presented as
   // details.
   const bool use_directly = !IsUrlResultWithDescription();
-  SearchResult::Tags title_tags;
+  ChromeSearchResult::Tags title_tags;
   if (use_directly) {
-    set_title(match_.contents);
+    SetTitle(match_.contents);
     ACMatchClassificationsToTags(match_.contents, match_.contents_class,
                                  &title_tags);
   } else {
-    set_title(match_.description);
+    SetTitle(match_.description);
     ACMatchClassificationsToTags(match_.description, match_.description_class,
                                  &title_tags);
   }
-  set_title_tags(title_tags);
+  SetTitleTags(title_tags);
 
-  SearchResult::Tags details_tags;
+  ChromeSearchResult::Tags details_tags;
   if (use_directly) {
-    set_details(match_.description);
+    SetDetails(match_.description);
     ACMatchClassificationsToTags(match_.description, match_.description_class,
                                  &details_tags);
   } else {
-    set_details(match_.contents);
+    SetDetails(match_.contents);
     ACMatchClassificationsToTags(match_.contents, match_.contents_class,
                                  &details_tags);
   }
-  set_details_tags(details_tags);
+  SetDetailsTags(details_tags);
 }
 
 bool OmniboxResult::IsUrlResultWithDescription() const {
   return !AutocompleteMatch::IsSearchType(match_.type) &&
          !match_.description.empty();
+}
+
+void OmniboxResult::SetZeroSuggestionActions() {
+  Actions zero_suggestion_actions;
+
+  constexpr int kMaxButtons = ash::OmniBoxZeroStateAction::kZeroStateActionMax;
+  for (int i = 0; i < kMaxButtons; ++i) {
+    ash::OmniBoxZeroStateAction button_action =
+        ash::GetOmniBoxZeroStateAction(i);
+    gfx::ImageSkia button_image;
+    base::string16 button_tooltip;
+    bool visible_on_hover = false;
+    const int kImageButtonIconSize =
+        AppListConfig::instance().search_list_badge_icon_dimension();
+
+    switch (button_action) {
+      case ash::OmniBoxZeroStateAction::kRemoveSuggestion:
+        button_image = gfx::CreateVectorIcon(
+            kSearchResultRemoveIcon, kImageButtonIconSize, kListIconColor);
+        button_tooltip = l10n_util::GetStringFUTF16(
+            IDS_APP_LIST_REMOVE_SUGGESTION_ACCESSIBILITY_NAME, title());
+        visible_on_hover = true;  // visible upon hovering
+        break;
+      case ash::OmniBoxZeroStateAction::kAppendSuggestion:
+        button_image = gfx::CreateVectorIcon(
+            kSearchResultAppendIcon, kImageButtonIconSize, kListIconColor);
+        button_tooltip = l10n_util::GetStringFUTF16(
+            IDS_APP_LIST_APPEND_SUGGESTION_ACCESSIBILITY_NAME, title());
+        visible_on_hover = false;  // always visible
+        break;
+      default:
+        NOTREACHED();
+    }
+    Action search_action(button_image, button_tooltip, visible_on_hover);
+    zero_suggestion_actions.emplace_back(search_action);
+  }
+
+  SetActions(zero_suggestion_actions);
+}
+
+void OmniboxResult::RecordOmniboxResultHistogram() {
+  UMA_HISTOGRAM_ENUMERATION("Apps.AppListSearchOmniboxResultOpenType",
+                            is_zero_suggestion_
+                                ? OmniboxResultType::kZeroStateSuggestion
+                                : OmniboxResultType::kQuerySuggestion);
 }
 
 }  // namespace app_list

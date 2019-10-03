@@ -7,7 +7,8 @@
 
 namespace prefs {
 
-extern const char kAcceptLanguages[];
+// Boolean controlling whether history saving is disabled.
+extern const char kSavingBrowserHistoryDisabled[];
 
 }  // namespace prefs
 

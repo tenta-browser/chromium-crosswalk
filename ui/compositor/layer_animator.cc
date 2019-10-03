@@ -9,12 +9,13 @@
 #include <memory>
 
 #include "base/logging.h"
+#include "base/stl_util.h"
 #include "base/trace_event/trace_event.h"
 #include "cc/animation/animation_host.h"
 #include "cc/animation/animation_id_provider.h"
-#include "cc/animation/animation_player.h"
 #include "cc/animation/animation_timeline.h"
 #include "cc/animation/element_animations.h"
+#include "cc/animation/single_keyframe_effect_animation.h"
 #include "components/viz/common/frame_sinks/begin_frame_args.h"
 #include "ui/compositor/compositor.h"
 #include "ui/compositor/layer.h"
@@ -39,7 +40,7 @@ namespace ui {
 
 namespace {
 
-const int kDefaultTransitionDurationMs = 120;
+const int kLayerAnimatorDefaultTransitionDurationMs = 120;
 
 }  // namespace
 
@@ -55,8 +56,8 @@ LayerAnimator::LayerAnimator(base::TimeDelta transition_duration)
       disable_timer_for_test_(false),
       adding_animations_(false),
       animation_metrics_reporter_(nullptr) {
-  animation_player_ =
-      cc::AnimationPlayer::Create(cc::AnimationIdProvider::NextPlayerId());
+  animation_ = cc::SingleKeyframeEffectAnimation::Create(
+      cc::AnimationIdProvider::NextAnimationId());
 }
 
 LayerAnimator::~LayerAnimator() {
@@ -66,7 +67,7 @@ LayerAnimator::~LayerAnimator() {
   }
   ClearAnimationsInternal();
   delegate_ = NULL;
-  DCHECK(!animation_player_->animation_timeline());
+  DCHECK(!animation_->animation_timeline());
 }
 
 // static
@@ -76,8 +77,8 @@ LayerAnimator* LayerAnimator::CreateDefaultAnimator() {
 
 // static
 LayerAnimator* LayerAnimator::CreateImplicitAnimator() {
-  return new LayerAnimator(
-      base::TimeDelta::FromMilliseconds(kDefaultTransitionDurationMs));
+  return new LayerAnimator(base::TimeDelta::FromMilliseconds(
+      kLayerAnimatorDefaultTransitionDurationMs));
 }
 
 // This macro provides the implementation for the setter and getter (well,
@@ -108,15 +109,25 @@ LayerAnimator* LayerAnimator::CreateImplicitAnimator() {
     return target.member;                                              \
   }
 
-ANIMATED_PROPERTY(
-    const gfx::Transform&, TRANSFORM, Transform, gfx::Transform, transform);
-ANIMATED_PROPERTY(const gfx::Rect&, BOUNDS, Bounds, gfx::Rect, bounds);
-ANIMATED_PROPERTY(float, OPACITY, Opacity, float, opacity);
-ANIMATED_PROPERTY(bool, VISIBILITY, Visibility, bool, visibility);
-ANIMATED_PROPERTY(float, BRIGHTNESS, Brightness, float, brightness);
-ANIMATED_PROPERTY(float, GRAYSCALE, Grayscale, float, grayscale);
-ANIMATED_PROPERTY(SkColor, COLOR, Color, SkColor, color);
-ANIMATED_PROPERTY(float, TEMPERATURE, Temperature, float, temperature);
+ANIMATED_PROPERTY(const gfx::Transform&,
+                  TRANSFORM,
+                  Transform,
+                  gfx::Transform,
+                  transform)
+ANIMATED_PROPERTY(const gfx::Rect&, BOUNDS, Bounds, gfx::Rect, bounds)
+ANIMATED_PROPERTY(float, OPACITY, Opacity, float, opacity)
+ANIMATED_PROPERTY(bool, VISIBILITY, Visibility, bool, visibility)
+ANIMATED_PROPERTY(float, BRIGHTNESS, Brightness, float, brightness)
+ANIMATED_PROPERTY(float, GRAYSCALE, Grayscale, float, grayscale)
+ANIMATED_PROPERTY(SkColor, COLOR, Color, SkColor, color)
+ANIMATED_PROPERTY(const gfx::Rect&, CLIP, ClipRect, gfx::Rect, clip_rect)
+ANIMATED_PROPERTY(const gfx::RoundedCornersF&,
+                  ROUNDED_CORNERS,
+                  RoundedCorners,
+                  gfx::RoundedCornersF,
+                  rounded_corners)
+
+#undef ANIMATED_PROPERTY
 
 base::TimeDelta LayerAnimator::GetTransitionDuration() const {
   return transition_duration_;
@@ -139,9 +150,9 @@ void LayerAnimator::SetDelegate(LayerAnimationDelegate* delegate) {
 
 void LayerAnimator::SwitchToLayer(scoped_refptr<cc::Layer> new_layer) {
   if (delegate_)
-    DetachLayerFromAnimationPlayer();
+    DetachLayerFromAnimation();
   if (new_layer)
-    AttachLayerToAnimationPlayer(new_layer->id());
+    AttachLayerToAnimation(new_layer->id());
 }
 
 void LayerAnimator::AttachLayerAndTimeline(Compositor* compositor) {
@@ -149,10 +160,10 @@ void LayerAnimator::AttachLayerAndTimeline(Compositor* compositor) {
 
   cc::AnimationTimeline* timeline = compositor->GetAnimationTimeline();
   DCHECK(timeline);
-  timeline->AttachPlayer(animation_player_);
+  timeline->AttachAnimation(animation_);
 
   DCHECK(delegate_->GetCcLayer());
-  AttachLayerToAnimationPlayer(delegate_->GetCcLayer()->id());
+  AttachLayerToAnimation(delegate_->GetCcLayer()->id());
 }
 
 void LayerAnimator::DetachLayerAndTimeline(Compositor* compositor) {
@@ -161,39 +172,40 @@ void LayerAnimator::DetachLayerAndTimeline(Compositor* compositor) {
   cc::AnimationTimeline* timeline = compositor->GetAnimationTimeline();
   DCHECK(timeline);
 
-  DetachLayerFromAnimationPlayer();
-  timeline->DetachPlayer(animation_player_);
+  DetachLayerFromAnimation();
+  timeline->DetachAnimation(animation_);
 }
 
-void LayerAnimator::AttachLayerToAnimationPlayer(int layer_id) {
+void LayerAnimator::AttachLayerToAnimation(int layer_id) {
   // For ui, layer and element ids are equivalent.
   cc::ElementId element_id(layer_id);
-  if (!animation_player_->element_id())
-    animation_player_->AttachElement(element_id);
+  if (!animation_->element_id())
+    animation_->AttachElement(element_id);
   else
-    DCHECK_EQ(animation_player_->element_id(), element_id);
+    DCHECK_EQ(animation_->element_id(), element_id);
 
-  animation_player_->set_animation_delegate(this);
+  animation_->set_animation_delegate(this);
 }
 
-void LayerAnimator::DetachLayerFromAnimationPlayer() {
-  animation_player_->set_animation_delegate(nullptr);
+void LayerAnimator::DetachLayerFromAnimation() {
+  animation_->set_animation_delegate(nullptr);
 
-  if (animation_player_->element_id())
-    animation_player_->DetachElement();
+  if (animation_->element_id())
+    animation_->DetachElement();
 }
 
 void LayerAnimator::AddThreadedAnimation(
-    std::unique_ptr<cc::Animation> animation) {
-  animation_player_->AddAnimation(std::move(animation));
+    std::unique_ptr<cc::KeyframeModel> animation) {
+  animation_->AddKeyframeModel(std::move(animation));
 }
 
-void LayerAnimator::RemoveThreadedAnimation(int animation_id) {
-  animation_player_->RemoveAnimation(animation_id);
+void LayerAnimator::RemoveThreadedAnimation(int keyframe_model_id) {
+  animation_->RemoveKeyframeModel(keyframe_model_id);
 }
 
-cc::AnimationPlayer* LayerAnimator::GetAnimationPlayerForTesting() const {
-  return animation_player_.get();
+cc::SingleKeyframeEffectAnimation* LayerAnimator::GetAnimationForTesting()
+    const {
+  return animation_.get();
 }
 
 void LayerAnimator::StartAnimation(LayerAnimationSequence* animation) {
@@ -226,7 +238,8 @@ void LayerAnimator::ScheduleAnimation(LayerAnimationSequence* animation) {
   scoped_refptr<LayerAnimator> retain(this);
   OnScheduled(animation);
   if (is_animating()) {
-    animation_queue_.push_back(make_linked_ptr(animation));
+    animation_queue_.push_back(
+        std::unique_ptr<LayerAnimationSequence>(animation));
     ProcessQueue();
   } else {
     StartSequenceImmediately(animation);
@@ -380,14 +393,10 @@ void LayerAnimator::AddOwnedObserver(
 
 void LayerAnimator::RemoveAndDestroyOwnedObserver(
     ImplicitAnimationObserver* animation_observer) {
-  owned_observer_list_.erase(
-      std::remove_if(
-          owned_observer_list_.begin(), owned_observer_list_.end(),
-          [animation_observer](
-              const std::unique_ptr<ImplicitAnimationObserver>& other) {
-            return other.get() == animation_observer;
-          }),
-      owned_observer_list_.end());
+  base::EraseIf(owned_observer_list_,[animation_observer](
+      const std::unique_ptr<ImplicitAnimationObserver>& other) {
+    return other.get() == animation_observer;
+  });
 }
 
 void LayerAnimator::OnThreadedAnimationStarted(
@@ -417,7 +426,7 @@ void LayerAnimator::OnThreadedAnimationStarted(
   // The call to GetRunningAnimation made above already purged deleted
   // animations, so we are guaranteed that all the animations we iterate
   // over now are alive.
-  for (RunningAnimations::iterator iter = running_animations_.begin();
+  for (auto iter = running_animations_.begin();
        iter != running_animations_.end(); ++iter) {
     // Ensure that each sequence is only Started once, regardless of the
     // number of sequences in the group that have threaded first elements.
@@ -539,12 +548,12 @@ void LayerAnimator::UpdateAnimationState() {
 
 LayerAnimationSequence* LayerAnimator::RemoveAnimation(
     LayerAnimationSequence* sequence) {
-  linked_ptr<LayerAnimationSequence> to_return;
+  std::unique_ptr<LayerAnimationSequence> to_return;
 
   bool is_running = false;
 
   // First remove from running animations
-  for (RunningAnimations::iterator iter = running_animations_.begin();
+  for (auto iter = running_animations_.begin();
        iter != running_animations_.end(); ++iter) {
     if ((*iter).sequence() == sequence) {
       running_animations_.erase(iter);
@@ -556,8 +565,8 @@ LayerAnimationSequence* LayerAnimator::RemoveAnimation(
   // Then remove from the queue
   for (AnimationQueue::iterator queue_iter = animation_queue_.begin();
        queue_iter != animation_queue_.end(); ++queue_iter) {
-    if ((*queue_iter) == sequence) {
-      to_return = *queue_iter;
+    if (queue_iter->get() == sequence) {
+      to_return = std::move(*queue_iter);
       animation_queue_.erase(queue_iter);
       break;
     }
@@ -641,7 +650,7 @@ void LayerAnimator::ClearAnimations() {
 LayerAnimator::RunningAnimation* LayerAnimator::GetRunningAnimation(
     LayerAnimationElement::AnimatableProperty property) {
   PurgeDeletedAnimations();
-  for (RunningAnimations::iterator iter = running_animations_.begin();
+  for (auto iter = running_animations_.begin();
        iter != running_animations_.end(); ++iter) {
     if ((*iter).sequence()->properties() & property)
       return &(*iter);
@@ -654,14 +663,16 @@ void LayerAnimator::AddToQueueIfNotPresent(LayerAnimationSequence* animation) {
   bool found_sequence = false;
   for (AnimationQueue::iterator queue_iter = animation_queue_.begin();
        queue_iter != animation_queue_.end(); ++queue_iter) {
-    if ((*queue_iter) == animation) {
+    if (queue_iter->get() == animation) {
       found_sequence = true;
       break;
     }
   }
 
-  if (!found_sequence)
-    animation_queue_.push_front(make_linked_ptr(animation));
+  if (!found_sequence) {
+    animation_queue_.push_front(
+        std::unique_ptr<LayerAnimationSequence>(animation));
+  }
 }
 
 void LayerAnimator::RemoveAllAnimationsWithACommonProperty(
@@ -752,7 +763,7 @@ void LayerAnimator::EnqueueNewAnimation(LayerAnimationSequence* sequence) {
   // It is assumed that if there was no conflicting animation, we would
   // not have been called. No need to check for a collision; just
   // add to the queue.
-  animation_queue_.push_back(make_linked_ptr(sequence));
+  animation_queue_.push_back(std::unique_ptr<LayerAnimationSequence>(sequence));
   ProcessQueue();
 }
 
@@ -785,7 +796,7 @@ void LayerAnimator::ReplaceQueuedAnimations(LayerAnimationSequence* sequence) {
     else
       ++i;
   }
-  animation_queue_.push_back(make_linked_ptr(sequence));
+  animation_queue_.push_back(std::unique_ptr<LayerAnimationSequence>(sequence));
   ProcessQueue();
 }
 

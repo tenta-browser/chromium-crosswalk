@@ -44,7 +44,7 @@ class ScriptContextSet;
 class TestIPCMessageSender : public IPCMessageSender {
  public:
   TestIPCMessageSender();
-  ~TestIPCMessageSender();
+  ~TestIPCMessageSender() override;
 
   // IPCMessageSender:
   void SendRequestIPC(ScriptContext* context,
@@ -86,10 +86,8 @@ class TestIPCMessageSender : public IPCMessageSender {
                void(int routing_id, const PortId& port_id));
   MOCK_METHOD3(SendCloseMessagePort,
                void(int routing_id, const PortId& port_id, bool close_channel));
-  MOCK_METHOD3(SendPostMessageToPort,
-               void(int routing_id,
-                    const PortId& port_id,
-                    const Message& message));
+  MOCK_METHOD2(SendPostMessageToPort,
+               void(const PortId& port_id, const Message& message));
 
   const ExtensionHostMsg_Request_Params* last_params() const {
     return last_params_.get();
@@ -118,7 +116,7 @@ class NativeExtensionBindingsSystemUnittest : public APIBindingTest {
   std::unique_ptr<TestJSRunner::Scope> CreateTestJSRunner() override;
 
   ScriptContext* CreateScriptContext(v8::Local<v8::Context> v8_context,
-                                     Extension* extension,
+                                     const Extension* extension,
                                      Feature::Context context_type);
 
   void RegisterExtension(scoped_refptr<const Extension> extension);
@@ -137,6 +135,9 @@ class NativeExtensionBindingsSystemUnittest : public APIBindingTest {
   StringSourceMap* source_map() { return &source_map_; }
   TestIPCMessageSender* ipc_message_sender() { return ipc_message_sender_; }
   ScriptContextSet* script_context_set() { return script_context_set_.get(); }
+  void set_allow_unregistered_contexts(bool allow_unregistered_contexts) {
+    allow_unregistered_contexts_ = allow_unregistered_contexts;
+  }
 
  private:
   ExtensionIdSet extension_ids_;
@@ -151,6 +152,10 @@ class NativeExtensionBindingsSystemUnittest : public APIBindingTest {
 
   StringSourceMap source_map_;
   TestExtensionsRendererClient renderer_client_;
+
+  // True if we allow some v8::Contexts to avoid registration as a
+  // ScriptContext.
+  bool allow_unregistered_contexts_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(NativeExtensionBindingsSystemUnittest);
 };

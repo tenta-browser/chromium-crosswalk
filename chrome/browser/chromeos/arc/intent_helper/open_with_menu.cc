@@ -5,15 +5,12 @@
 #include "chrome/browser/chromeos/arc/intent_helper/open_with_menu.h"
 
 #include <algorithm>
-#include <memory>
-#include <unordered_map>
-#include <utility>
-#include <vector>
 
 #include "base/strings/string_util.h"
 #include "chrome/app/chrome_command_ids.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/renderer_context_menu/render_view_context_menu_proxy.h"
+#include "content/public/browser/browser_context.h"
 #include "content/public/common/context_menu_params.h"
 #include "ui/base/l10n/l10n_util.h"
 
@@ -45,6 +42,10 @@ OpenWithMenu::OpenWithMenu(content::BrowserContext* context,
 OpenWithMenu::~OpenWithMenu() = default;
 
 void OpenWithMenu::InitMenu(const content::ContextMenuParams& params) {
+  // Enforcing no items are added to the context menu during incognito mode.
+  if (context_->IsOffTheRecord())
+    return;
+
   menu_model_ = LinkHandlerModel::Create(context_, params.link_url);
   if (!menu_model_)
     return;
@@ -93,7 +94,7 @@ void OpenWithMenu::ModelChanged(const std::vector<LinkHandlerInfo>& handlers) {
       proxy_->UpdateMenuItem(command_id, true, false, more_apps_label_);
     } else if (it == handlers_.end()) {
       // Hide the menu or submenu parent.
-      proxy_->UpdateMenuItem(command_id, false, true, base::EmptyString16());
+      proxy_->UpdateMenuItem(command_id, false, true, base::string16());
     } else {
       // Update the menu with the new model.
       const base::string16 label = l10n_util::GetStringFUTF16(
@@ -122,14 +123,14 @@ void OpenWithMenu::AddPlaceholderItems(RenderViewContextMenuProxy* proxy,
   for (int i = 0; i < kNumSubMenuCommands; ++i) {
     const int command_id =
         IDC_CONTENT_CONTEXT_OPEN_WITH1 + kNumMainMenuCommands + i;
-    submenu->AddItem(command_id, base::EmptyString16());
+    submenu->AddItem(command_id, base::string16());
   }
   int command_id;
   for (int i = 0; i < kNumMainMenuCommands - 1; ++i) {
     command_id = IDC_CONTENT_CONTEXT_OPEN_WITH1 + i;
-    proxy->AddMenuItem(command_id, base::EmptyString16());
+    proxy->AddMenuItem(command_id, base::string16());
   }
-  proxy->AddSubMenu(++command_id, base::EmptyString16(), submenu);
+  proxy->AddSubMenu(++command_id, base::string16(), submenu);
 }
 
 std::pair<OpenWithMenu::HandlerMap, int> OpenWithMenu::BuildHandlersMap(

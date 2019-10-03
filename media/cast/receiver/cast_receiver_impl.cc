@@ -13,7 +13,6 @@
 #include "base/callback.h"
 #include "base/logging.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/trace_event/trace_event.h"
 #include "media/cast/net/rtcp/rtcp_utility.h"
 #include "media/cast/receiver/audio_decoder.h"
@@ -198,11 +197,11 @@ void CastReceiverImpl::EmitDecodedVideoFrame(
     FrameId frame_id,
     RtpTimeTicks rtp_timestamp,
     const base::TimeTicks& playout_time,
-    const scoped_refptr<VideoFrame>& video_frame,
+    scoped_refptr<VideoFrame> video_frame,
     bool is_continuous) {
   DCHECK(cast_environment->CurrentlyOn(CastEnvironment::MAIN));
 
-  if (video_frame.get()) {
+  if (video_frame) {
     // TODO(miu): This is reporting incorrect timestamp and delay.
     // http://crbug.com/547251
     std::unique_ptr<FrameEvent> playout_event(new FrameEvent());
@@ -221,7 +220,7 @@ void CastReceiverImpl::EmitDecodedVideoFrame(
                          (playout_time - base::TimeTicks()).InMicroseconds());
   }
 
-  callback.Run(video_frame, playout_time, is_continuous);
+  callback.Run(std::move(video_frame), playout_time, is_continuous);
 }
 
 }  // namespace cast

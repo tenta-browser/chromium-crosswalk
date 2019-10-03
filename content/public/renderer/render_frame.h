@@ -8,21 +8,25 @@
 #include <stddef.h>
 
 #include <memory>
+#include <string>
 
 #include "base/callback_forward.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string16.h"
 #include "content/common/content_export.h"
-#include "content/public/common/console_message_level.h"
 #include "content/public/common/previews_state.h"
 #include "ipc/ipc_listener.h"
 #include "ipc/ipc_sender.h"
-#include "ppapi/features/features.h"
+#include "ppapi/buildflags/buildflags.h"
+#include "services/network/public/mojom/url_loader_factory.mojom.h"
 #include "services/service_manager/public/cpp/binder_registry.h"
-#include "third_party/WebKit/common/page/page_visibility_state.mojom.h"
-#include "third_party/WebKit/public/platform/TaskType.h"
-#include "third_party/WebKit/public/web/WebNavigationPolicy.h"
-#include "third_party/WebKit/public/web/WebTriggeringEventInfo.h"
+#include "third_party/blink/public/common/loader/url_loader_factory_bundle.h"
+#include "third_party/blink/public/mojom/devtools/console_message.mojom.h"
+#include "third_party/blink/public/mojom/frame/document_interface_broker.mojom.h"
+#include "third_party/blink/public/platform/task_type.h"
+#include "third_party/blink/public/web/web_navigation_policy.h"
+#include "third_party/blink/public/web/web_triggering_event_info.h"
+#include "ui/accessibility/ax_mode.h"
 
 namespace blink {
 class AssociatedInterfaceProvider;
@@ -38,6 +42,10 @@ class Range;
 class Size;
 }
 
+namespace network {
+class SharedURLLoaderFactory;
+}
+
 namespace service_manager {
 class InterfaceProvider;
 }
@@ -46,17 +54,11 @@ namespace url {
 class Origin;
 }
 
-namespace v8 {
-template <typename T> class Local;
-class Context;
-class Isolate;
-}
-
 namespace content {
-class ChildURLLoaderFactoryGetter;
 class ContextMenuClient;
 class PluginInstanceThrottler;
 class RenderAccessibility;
+struct RenderFrameMediaPlaybackOptions;
 class RenderFrameVisitor;
 class RenderView;
 struct ContextMenuParams;
@@ -165,6 +167,11 @@ class CONTENT_EXPORT RenderFrame : public IPC::Listener,
   // interfaces exposed to it by the application running in this frame.
   virtual service_manager::InterfaceProvider* GetRemoteInterfaces() = 0;
 
+  // Returns the DocumentInterfaceBroker that this process can use to bind
+  // interfaces exposed to it by the application running in this frame.
+  virtual blink::mojom::DocumentInterfaceBroker*
+  GetDocumentInterfaceBroker() = 0;
+
   // Returns the AssociatedInterfaceRegistry this frame can use to expose
   // frame-specific Channel-associated interfaces to the remote RenderFrameHost.
   virtual blink::AssociatedInterfaceRegistry*
@@ -182,7 +189,7 @@ class CONTENT_EXPORT RenderFrame : public IPC::Listener,
   // |unthrottle_callback| will be called.
   virtual void RegisterPeripheralPlugin(
       const url::Origin& content_origin,
-      const base::Closure& unthrottle_callback) = 0;
+      base::OnceClosure unthrottle_callback) = 0;
 
   // Returns the peripheral content heuristic decision.
   //
@@ -204,7 +211,7 @@ class CONTENT_EXPORT RenderFrame : public IPC::Listener,
       const url::Origin& main_frame_origin,
       const url::Origin& content_origin,
       const gfx::Size& unobscured_size,
-      RecordPeripheralDecision record_decision) const = 0;
+      RecordPeripheralDecision record_decision) = 0;
 
   // Whitelists a |content_origin| so its content will never be throttled in
   // this RenderFrame. Whitelist is cleared by top level navigation.
@@ -232,16 +239,15 @@ class CONTENT_EXPORT RenderFrame : public IPC::Listener,
                                size_t offset,
                                const gfx::Range& range) = 0;
 
-  // Ensures that builtin mojo bindings modules are available in |context|.
-  virtual void EnsureMojoBuiltinsAreAvailable(
-      v8::Isolate* isolate,
-      v8::Local<v8::Context> context) = 0;
+  // Notifies the frame's RenderView that the zoom has changed.
+  virtual void SetZoomLevel(double zoom_level) = 0;
+
+  // Returns the page's zoom level from the frame's RenderView.
+  virtual double GetZoomLevel() = 0;
 
   // Adds |message| to the DevTools console.
-  virtual void AddMessageToConsole(ConsoleMessageLevel level,
+  virtual void AddMessageToConsole(blink::mojom::ConsoleMessageLevel level,
                                    const std::string& message) = 0;
-  // Forcefully detaches all connected DevTools clients.
-  virtual void DetachDevToolsForTest() = 0;
 
   // Sets the PreviewsState of this frame, a bitmask of potentially several
   // Previews optimizations.
@@ -249,13 +255,21 @@ class CONTENT_EXPORT RenderFrame : public IPC::Listener,
 
   // Returns the PreviewsState of this frame, a bitmask of potentially several
   // Previews optimizations.
-  virtual PreviewsState GetPreviewsState() const = 0;
+  virtual PreviewsState GetPreviewsState() = 0;
 
   // Whether or not this frame is currently pasting.
-  virtual bool IsPasting() const = 0;
+  virtual bool IsPasting() = 0;
 
-  // Returns the current visibility of the frame.
-  virtual blink::mojom::PageVisibilityState GetVisibilityState() const = 0;
+  // Loads specified |html| to this frame. |base_url| is used to resolve
+  // relative urls in the document.
+  // |replace_current_item| should be true if we load html instead of the
+  // existing page. In this case |unreachable_url| might be the original url
+  // which did fail loading.
+  virtual void LoadHTMLString(const std::string& html,
+                              const GURL& base_url,
+                              const std::string& text_encoding,
+                              const GURL& unreachable_url,
+                              bool replace_current_item) = 0;
 
   // If PlzNavigate is enabled, returns true in between teh time that Blink
   // requests navigation until the browser responds with the result.
@@ -268,11 +282,35 @@ class CONTENT_EXPORT RenderFrame : public IPC::Listener,
 
   // Bitwise-ORed set of extra bindings that have been enabled.  See
   // BindingsPolicy for details.
-  virtual int GetEnabledBindings() const = 0;
+  virtual int GetEnabledBindings() = 0;
 
-  // Returns a default ChildURLLoaderFactoryGetter for the RenderFrame.
-  // Used to obtain a right mojom::URLLoaderFactory.
-  virtual ChildURLLoaderFactoryGetter* GetDefaultURLLoaderFactoryGetter() = 0;
+  // Set the accessibility mode to force creation of RenderAccessibility.
+  virtual void SetAccessibilityModeForTest(ui::AXMode new_mode) = 0;
+
+  virtual scoped_refptr<network::SharedURLLoaderFactory>
+  GetURLLoaderFactory() = 0;
+
+  // Per-frame media playback options passed to each WebMediaPlayer.
+  virtual const RenderFrameMediaPlaybackOptions&
+  GetRenderFrameMediaPlaybackOptions() = 0;
+  virtual void SetRenderFrameMediaPlaybackOptions(
+      const RenderFrameMediaPlaybackOptions& opts) = 0;
+
+  // Requests that fetches initiated by |initiator_origin| should go through the
+  // provided |url_loader_factory|.  This method should be called before
+  // executing scripts in a isolated world - such scripts are typically
+  // associated with a security origin different from the main world (and
+  // therefore fetches from such scripts set |request_initiator| that is
+  // incompatible with |request_initiator_site_lock|.
+  virtual void MarkInitiatorAsRequiringSeparateURLLoaderFactory(
+      const url::Origin& initiator_origin,
+      network::mojom::URLLoaderFactoryPtr url_loader_factory) = 0;
+
+  // Synchronously performs the complete set of document lifecycle phases,
+  // including updates to the compositor state and rasterization, then sending
+  // a frame to the viz display compositor. Does nothing if RenderFrame is not
+  // a local root.
+  virtual void UpdateAllLifecyclePhasesAndCompositeForTesting() = 0;
 
  protected:
   ~RenderFrame() override {}

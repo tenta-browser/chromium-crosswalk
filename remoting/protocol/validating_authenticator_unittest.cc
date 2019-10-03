@@ -4,14 +4,15 @@
 
 #include <memory>
 #include <string>
+#include <tuple>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/callback.h"
 #include "base/macros.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "remoting/protocol/authenticator.h"
 #include "remoting/protocol/protocol_mock_objects.h"
 #include "remoting/protocol/validating_authenticator.h"
@@ -37,7 +38,7 @@ constexpr char kRemoteTestJid[] = "ficticious_jid_for_testing";
 ACTION_TEMPLATE(InvokeCallbackArgument,
                 HAS_1_TEMPLATE_PARAMS(int, k),
                 AND_0_VALUE_PARAMS()) {
-  ::std::tr1::get<k>(args).Run();
+  std::get<k>(args).Run();
 }
 
 }  // namespace
@@ -76,7 +77,7 @@ class ValidatingAuthenticatorTest : public testing::Test {
   std::unique_ptr<ValidatingAuthenticator> validating_authenticator_;
 
  private:
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
 
   DISALLOW_COPY_AND_ASSIGN(ValidatingAuthenticatorTest);
 };
@@ -104,7 +105,7 @@ void ValidatingAuthenticatorTest::SetUp() {
 
 void ValidatingAuthenticatorTest::SendMessageAndWaitForCallback() {
   base::RunLoop run_loop;
-  std::unique_ptr<buzz::XmlElement> first_message(
+  std::unique_ptr<jingle_xmpp::XmlElement> first_message(
       Authenticator::CreateEmptyAuthenticatorMessage());
   validating_authenticator_->ProcessMessage(first_message.get(),
                                             run_loop.QuitClosure());
@@ -145,7 +146,7 @@ TEST_F(ValidatingAuthenticatorTest, ValidConnection_TwoMessages) {
   // This dance is needed because GMock doesn't handle unique_ptrs very well.
   // The mock method receives a raw pointer which it wraps and returns when
   // GetNextMessage() is called.
-  std::unique_ptr<buzz::XmlElement> next_message(
+  std::unique_ptr<jingle_xmpp::XmlElement> next_message(
       Authenticator::CreateEmptyAuthenticatorMessage());
   EXPECT_CALL(*mock_authenticator_, GetNextMessagePtr())
       .Times(1)
@@ -177,7 +178,7 @@ TEST_F(ValidatingAuthenticatorTest, ValidConnection_SendBeforeAccept) {
   // This dance is needed because GMock doesn't handle unique_ptrs very well.
   // The mock method receives a raw pointer which it wraps and returns when
   // GetNextMessage() is called.
-  std::unique_ptr<buzz::XmlElement> next_message(
+  std::unique_ptr<jingle_xmpp::XmlElement> next_message(
       Authenticator::CreateEmptyAuthenticatorMessage());
   EXPECT_CALL(*mock_authenticator_, GetNextMessagePtr())
       .Times(1)

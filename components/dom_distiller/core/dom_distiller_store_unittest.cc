@@ -6,20 +6,19 @@
 
 #include <stdint.h>
 
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/files/scoped_temp_dir.h"
 #include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/time/time.h"
 #include "components/dom_distiller/core/article_entry.h"
 #include "components/dom_distiller/core/dom_distiller_test_util.h"
 #include "components/leveldb_proto/testing/fake_db.h"
-#include "components/sync/model/attachments/attachment_id.h"
-#include "components/sync/model/attachments/attachment_service_proxy_for_test.h"
 #include "components/sync/protocol/sync.pb.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -35,17 +34,15 @@ using syncer::SyncData;
 using syncer::SyncDataList;
 using syncer::SyncError;
 using syncer::SyncErrorFactory;
+using testing::_;
 using testing::AssertionFailure;
 using testing::AssertionResult;
 using testing::AssertionSuccess;
 using testing::SaveArgPointee;
-using testing::_;
 
 namespace dom_distiller {
 
 namespace {
-
-const ModelType kDomDistillerModelType = syncer::ARTICLES;
 
 typedef std::map<std::string, ArticleEntry> EntryMap;
 
@@ -72,8 +69,7 @@ class FakeSyncChangeProcessor : public syncer::SyncChangeProcessor {
 
   SyncError ProcessSyncChanges(const base::Location&,
                                const syncer::SyncChangeList& changes) override {
-    for (SyncChangeList::const_iterator it = changes.begin();
-         it != changes.end(); ++it) {
+    for (auto it = changes.begin(); it != changes.end(); ++it) {
       AddEntry(GetEntryFromChange(*it), model_);
     }
     return SyncError();
@@ -123,7 +119,7 @@ ArticleEntry GetSampleEntry(int id) {
 class MockDistillerObserver : public DomDistillerObserver {
  public:
   MOCK_METHOD1(ArticleEntriesUpdated, void(const std::vector<ArticleUpdate>&));
-  virtual ~MockDistillerObserver() {}
+  ~MockDistillerObserver() override {}
 };
 
 }  // namespace
@@ -140,7 +136,6 @@ class DomDistillerStoreTest : public testing::Test {
   void TearDown() override {
     store_.reset();
     fake_db_ = nullptr;
-    fake_sync_processor_ = nullptr;
   }
 
   // Creates a simple DomDistillerStore initialized with |store_model_| and
@@ -150,33 +145,21 @@ class DomDistillerStoreTest : public testing::Test {
     store_.reset(test::util::CreateStoreWithFakeDB(fake_db_, store_model_));
   }
 
-  void StartSyncing() {
-    fake_sync_processor_ = new FakeSyncChangeProcessor(&sync_model_);
-
-    store_->MergeDataAndStartSyncing(
-        kDomDistillerModelType, SyncDataFromEntryMap(sync_model_),
-        base::WrapUnique<SyncChangeProcessor>(fake_sync_processor_),
-        std::unique_ptr<SyncErrorFactory>(new FakeSyncErrorFactory()));
-  }
-
  protected:
   SyncData CreateSyncData(const ArticleEntry& entry) {
     EntitySpecifics specifics = SpecificsFromEntry(entry);
-    return SyncData::CreateRemoteData(
-        next_sync_id_++, specifics, Time::UnixEpoch(),
-        syncer::AttachmentIdList(),
-        syncer::AttachmentServiceProxyForTest::Create());
+    return SyncData::CreateRemoteData(next_sync_id_++, specifics);
   }
 
   SyncDataList SyncDataFromEntryMap(const EntryMap& model) {
     SyncDataList data;
-    for (EntryMap::const_iterator it = model.begin(); it != model.end(); ++it) {
+    for (auto it = model.begin(); it != model.end(); ++it) {
       data.push_back(CreateSyncData(it->second));
     }
     return data;
   }
 
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment task_environment_;
 
   EntryMap db_model_;
   EntryMap sync_model_;
@@ -186,7 +169,6 @@ class DomDistillerStoreTest : public testing::Test {
 
   // Both owned by |store_|.
   FakeDB<ArticleEntry>* fake_db_;
-  FakeSyncChangeProcessor* fake_sync_processor_;
 
   int64_t next_sync_id_;
 };
@@ -197,16 +179,15 @@ AssertionResult AreEntriesEqual(const DomDistillerStore::EntryVector& entries,
     return AssertionFailure() << "Expected " << expected_entries.size()
                               << " entries but found " << entries.size();
 
-  for (DomDistillerStore::EntryVector::const_iterator it = entries.begin();
-       it != entries.end(); ++it) {
-    EntryMap::iterator expected_it = expected_entries.find(it->entry_id());
+  for (auto it = entries.begin(); it != entries.end(); ++it) {
+    auto expected_it = expected_entries.find(it->entry_id());
     if (expected_it == expected_entries.end()) {
-      return AssertionFailure() << "Found unexpected entry with id <"
-                                << it->entry_id() << ">";
+      return AssertionFailure()
+             << "Found unexpected entry with id <" << it->entry_id() << ">";
     }
     if (!AreEntriesEqual(expected_it->second, *it)) {
-      return AssertionFailure() << "Mismatched entry with id <"
-                                << it->entry_id() << ">";
+      return AssertionFailure()
+             << "Mismatched entry with id <" << it->entry_id() << ">";
     }
     expected_entries.erase(expected_it);
   }
@@ -215,7 +196,7 @@ AssertionResult AreEntriesEqual(const DomDistillerStore::EntryVector& entries,
 
 AssertionResult AreEntryMapsEqual(const EntryMap& left, const EntryMap& right) {
   DomDistillerStore::EntryVector entries;
-  for (EntryMap::const_iterator it = left.begin(); it != left.end(); ++it) {
+  for (auto it = left.begin(); it != left.end(); ++it) {
     entries.push_back(it->second);
   }
   return AreEntriesEqual(entries, right);
@@ -228,9 +209,7 @@ TEST_F(DomDistillerStoreTest, TestDatabaseLoad) {
 
   CreateStore();
 
-  fake_db_->InitCallback(true);
-  EXPECT_EQ(fake_db_->GetDirectory(),
-            FakeDB<ArticleEntry>::DirectoryForTestDB());
+  fake_db_->InitStatusCallback(leveldb_proto::Enums::InitStatus::kOK);
 
   fake_db_->LoadCallback(true);
   EXPECT_TRUE(AreEntriesEqual(store_->GetEntries(), db_model_));
@@ -250,7 +229,7 @@ TEST_F(DomDistillerStoreTest, TestDatabaseLoadMerge) {
   AddEntry(GetSampleEntry(4), &expected_model);
 
   CreateStore();
-  fake_db_->InitCallback(true);
+  fake_db_->InitStatusCallback(leveldb_proto::Enums::InitStatus::kOK);
   fake_db_->LoadCallback(true);
 
   EXPECT_TRUE(AreEntriesEqual(store_->GetEntries(), expected_model));
@@ -259,7 +238,7 @@ TEST_F(DomDistillerStoreTest, TestDatabaseLoadMerge) {
 
 TEST_F(DomDistillerStoreTest, TestAddAndRemoveEntry) {
   CreateStore();
-  fake_db_->InitCallback(true);
+  fake_db_->InitStatusCallback(leveldb_proto::Enums::InitStatus::kOK);
   fake_db_->LoadCallback(true);
 
   EXPECT_TRUE(store_->GetEntries().empty());
@@ -282,7 +261,7 @@ TEST_F(DomDistillerStoreTest, TestAddAndRemoveEntry) {
 
 TEST_F(DomDistillerStoreTest, TestAddAndUpdateEntry) {
   CreateStore();
-  fake_db_->InitCallback(true);
+  fake_db_->InitStatusCallback(leveldb_proto::Enums::InitStatus::kOK);
   fake_db_->LoadCallback(true);
 
   EXPECT_TRUE(store_->GetEntries().empty());
@@ -312,232 +291,11 @@ TEST_F(DomDistillerStoreTest, TestAddAndUpdateEntry) {
   EXPECT_FALSE(store_->UpdateEntry(GetSampleEntry(0)));
 }
 
-class MockAttachmentsCallbacks {
- public:
-  MOCK_METHOD2(Get, void(bool, ArticleAttachmentsData*));
-  MOCK_METHOD1(Update, void(bool));
-
-  void GetImpl(bool success,
-               std::unique_ptr<ArticleAttachmentsData> attachments) {
-    Get(success, attachments.get());
-  }
-
-  DomDistillerStore::UpdateAttachmentsCallback UpdateCallback() {
-    return base::Bind(&MockAttachmentsCallbacks::Update,
-                      base::Unretained(this));
-  }
-
-  DomDistillerStore::GetAttachmentsCallback GetCallback() {
-    return base::Bind(&MockAttachmentsCallbacks::GetImpl,
-                      base::Unretained(this));
-  }
-};
-
-TEST_F(DomDistillerStoreTest, TestAttachments) {
-  ArticleEntry entry(GetSampleEntry(0));
-  AddEntry(entry, &db_model_);
-  CreateStore();
-  fake_db_->InitCallback(true);
-  fake_db_->LoadCallback(true);
-  ASSERT_TRUE(AreEntriesEqual(store_->GetEntries(), db_model_));
-
-  MockAttachmentsCallbacks callbacks;
-
-  store_->GetAttachments(entry.entry_id(), callbacks.GetCallback());
-  EXPECT_CALL(callbacks, Get(false, _));
-  base::RunLoop().RunUntilIdle();
-
-  ArticleAttachmentsData attachments, got_attachments;
-  DistilledArticleProto article_proto;
-  article_proto.set_title("A title");
-  attachments.set_distilled_article(article_proto);
-  store_->UpdateAttachments(
-      entry.entry_id(), base::MakeUnique<ArticleAttachmentsData>(attachments),
-      callbacks.UpdateCallback());
-  EXPECT_CALL(callbacks, Update(true));
-  base::RunLoop().RunUntilIdle();
-
-  store_->GetAttachments(entry.entry_id(), callbacks.GetCallback());
-  EXPECT_CALL(callbacks, Get(true, _))
-      .WillOnce(SaveArgPointee<1>(&got_attachments));
-  base::RunLoop().RunUntilIdle();
-
-  EXPECT_EQ(attachments.ToString(),
-            got_attachments.ToString());
-}
-
-TEST_F(DomDistillerStoreTest, TestSyncMergeWithEmptyDatabase) {
-  AddEntry(GetSampleEntry(0), &sync_model_);
-  AddEntry(GetSampleEntry(1), &sync_model_);
-  AddEntry(GetSampleEntry(2), &sync_model_);
-
-  CreateStore();
-  fake_db_->InitCallback(true);
-  fake_db_->LoadCallback(true);
-
-  StartSyncing();
-
-  EXPECT_TRUE(AreEntriesEqual(store_->GetEntries(), sync_model_));
-  EXPECT_TRUE(AreEntryMapsEqual(db_model_, sync_model_));
-}
-
-TEST_F(DomDistillerStoreTest, TestSyncMergeAfterDatabaseLoad) {
-  AddEntry(GetSampleEntry(0), &db_model_);
-  AddEntry(GetSampleEntry(1), &db_model_);
-  AddEntry(GetSampleEntry(2), &db_model_);
-
-  AddEntry(GetSampleEntry(2), &sync_model_);
-  AddEntry(GetSampleEntry(3), &sync_model_);
-  AddEntry(GetSampleEntry(4), &sync_model_);
-
-  EntryMap expected_model(db_model_);
-  AddEntry(GetSampleEntry(3), &expected_model);
-  AddEntry(GetSampleEntry(4), &expected_model);
-
-  CreateStore();
-  fake_db_->InitCallback(true);
-  fake_db_->LoadCallback(true);
-
-  EXPECT_TRUE(AreEntriesEqual(store_->GetEntries(), db_model_));
-
-  StartSyncing();
-
-  EXPECT_TRUE(AreEntriesEqual(store_->GetEntries(), expected_model));
-  EXPECT_TRUE(AreEntryMapsEqual(db_model_, expected_model));
-  EXPECT_TRUE(AreEntryMapsEqual(sync_model_, expected_model));
-}
-
-TEST_F(DomDistillerStoreTest, TestDatabaseLoadAfterSyncMerge) {
-  AddEntry(GetSampleEntry(0), &db_model_);
-  AddEntry(GetSampleEntry(1), &db_model_);
-  AddEntry(GetSampleEntry(2), &db_model_);
-
-  AddEntry(GetSampleEntry(2), &sync_model_);
-  AddEntry(GetSampleEntry(3), &sync_model_);
-  AddEntry(GetSampleEntry(4), &sync_model_);
-
-  EntryMap expected_model(db_model_);
-  AddEntry(GetSampleEntry(3), &expected_model);
-  AddEntry(GetSampleEntry(4), &expected_model);
-
-  CreateStore();
-  StartSyncing();
-
-  EXPECT_TRUE(AreEntriesEqual(store_->GetEntries(), sync_model_));
-
-  fake_db_->InitCallback(true);
-  fake_db_->LoadCallback(true);
-
-  EXPECT_TRUE(AreEntriesEqual(store_->GetEntries(), expected_model));
-  EXPECT_TRUE(AreEntryMapsEqual(db_model_, expected_model));
-  EXPECT_TRUE(AreEntryMapsEqual(sync_model_, expected_model));
-}
-
-TEST_F(DomDistillerStoreTest, TestGetAllSyncData) {
-  AddEntry(GetSampleEntry(0), &db_model_);
-  AddEntry(GetSampleEntry(1), &db_model_);
-  AddEntry(GetSampleEntry(2), &db_model_);
-
-  AddEntry(GetSampleEntry(2), &sync_model_);
-  AddEntry(GetSampleEntry(3), &sync_model_);
-  AddEntry(GetSampleEntry(4), &sync_model_);
-
-  EntryMap expected_model(db_model_);
-  AddEntry(GetSampleEntry(3), &expected_model);
-  AddEntry(GetSampleEntry(4), &expected_model);
-
-  CreateStore();
-
-  fake_db_->InitCallback(true);
-  fake_db_->LoadCallback(true);
-
-  StartSyncing();
-
-  SyncDataList data = store_->GetAllSyncData(kDomDistillerModelType);
-  DomDistillerStore::EntryVector entries;
-  for (SyncDataList::iterator it = data.begin(); it != data.end(); ++it) {
-    entries.push_back(EntryFromSpecifics(it->GetSpecifics()));
-  }
-  EXPECT_TRUE(AreEntriesEqual(entries, expected_model));
-}
-
-TEST_F(DomDistillerStoreTest, TestProcessSyncChanges) {
-  AddEntry(GetSampleEntry(0), &db_model_);
-  AddEntry(GetSampleEntry(1), &db_model_);
-  sync_model_ = db_model_;
-
-  EntryMap expected_model(db_model_);
-  AddEntry(GetSampleEntry(2), &expected_model);
-  AddEntry(GetSampleEntry(3), &expected_model);
-
-  CreateStore();
-
-  fake_db_->InitCallback(true);
-  fake_db_->LoadCallback(true);
-
-  StartSyncing();
-
-  SyncChangeList changes;
-  changes.push_back(SyncChange(FROM_HERE, SyncChange::ACTION_ADD,
-                               CreateSyncData(GetSampleEntry(2))));
-  changes.push_back(SyncChange(FROM_HERE, SyncChange::ACTION_ADD,
-                               CreateSyncData(GetSampleEntry(3))));
-
-  store_->ProcessSyncChanges(FROM_HERE, changes);
-
-  EXPECT_TRUE(AreEntriesEqual(store_->GetEntries(), expected_model));
-  EXPECT_TRUE(AreEntryMapsEqual(db_model_, expected_model));
-}
-
-TEST_F(DomDistillerStoreTest, TestSyncMergeWithSecondDomDistillerStore) {
-  AddEntry(GetSampleEntry(0), &db_model_);
-  AddEntry(GetSampleEntry(1), &db_model_);
-  AddEntry(GetSampleEntry(2), &db_model_);
-
-  EntryMap other_db_model;
-  AddEntry(GetSampleEntry(2), &other_db_model);
-  AddEntry(GetSampleEntry(3), &other_db_model);
-  AddEntry(GetSampleEntry(4), &other_db_model);
-
-  EntryMap expected_model(db_model_);
-  AddEntry(GetSampleEntry(3), &expected_model);
-  AddEntry(GetSampleEntry(4), &expected_model);
-
-  CreateStore();
-
-  fake_db_->InitCallback(true);
-  fake_db_->LoadCallback(true);
-
-  FakeDB<ArticleEntry>* other_fake_db =
-      new FakeDB<ArticleEntry>(&other_db_model);
-  std::unique_ptr<DomDistillerStore> owned_other_store(new DomDistillerStore(
-      std::unique_ptr<leveldb_proto::ProtoDatabase<ArticleEntry>>(
-          other_fake_db),
-      std::vector<ArticleEntry>(),
-      base::FilePath(FILE_PATH_LITERAL("/fake/other/path"))));
-  DomDistillerStore* other_store = owned_other_store.get();
-  other_fake_db->InitCallback(true);
-  other_fake_db->LoadCallback(true);
-
-  EXPECT_FALSE(AreEntriesEqual(store_->GetEntries(), expected_model));
-  EXPECT_FALSE(AreEntriesEqual(other_store->GetEntries(), expected_model));
-  ASSERT_TRUE(AreEntriesEqual(other_store->GetEntries(), other_db_model));
-
-  FakeSyncErrorFactory* other_error_factory = new FakeSyncErrorFactory();
-  store_->MergeDataAndStartSyncing(
-      kDomDistillerModelType, SyncDataFromEntryMap(other_db_model),
-      std::move(owned_other_store),
-      base::WrapUnique<SyncErrorFactory>(other_error_factory));
-
-  EXPECT_TRUE(AreEntriesEqual(store_->GetEntries(), expected_model));
-  EXPECT_TRUE(AreEntriesEqual(other_store->GetEntries(), expected_model));
-}
-
 TEST_F(DomDistillerStoreTest, TestObserver) {
   CreateStore();
   MockDistillerObserver observer;
   store_->AddObserver(&observer);
-  fake_db_->InitCallback(true);
+  fake_db_->InitStatusCallback(leveldb_proto::Enums::InitStatus::kOK);
   fake_db_->LoadCallback(true);
   std::vector<DomDistillerObserver::ArticleUpdate> expected_updates;
   DomDistillerObserver::ArticleUpdate update;
@@ -564,31 +322,6 @@ TEST_F(DomDistillerStoreTest, TestObserver) {
   EXPECT_CALL(observer, ArticleEntriesUpdated(
                             test::util::HasExpectedUpdates(expected_updates)));
   store_->RemoveEntry(GetSampleEntry(0));
-
-  // Add entry_id = 3 and update entry_id = 1.
-  expected_updates.clear();
-  SyncDataList change_data;
-  change_data.push_back(CreateSyncData(GetSampleEntry(3)));
-  ArticleEntry updated_entry(GetSampleEntry(1));
-  updated_entry.set_title("changed_title");
-  change_data.push_back(CreateSyncData(updated_entry));
-  update.entry_id = GetSampleEntry(3).entry_id();
-  update.update_type = DomDistillerObserver::ArticleUpdate::ADD;
-  expected_updates.push_back(update);
-  update.entry_id = GetSampleEntry(1).entry_id();
-  update.update_type = DomDistillerObserver::ArticleUpdate::UPDATE;
-  expected_updates.push_back(update);
-  EXPECT_CALL(observer, ArticleEntriesUpdated(
-                            test::util::HasExpectedUpdates(expected_updates)));
-
-  FakeSyncErrorFactory* fake_error_factory = new FakeSyncErrorFactory();
-  EntryMap fake_model;
-  FakeSyncChangeProcessor* fake_sync_change_processor =
-      new FakeSyncChangeProcessor(&fake_model);
-  store_->MergeDataAndStartSyncing(
-      kDomDistillerModelType, change_data,
-      base::WrapUnique<SyncChangeProcessor>(fake_sync_change_processor),
-      base::WrapUnique<SyncErrorFactory>(fake_error_factory));
 }
 
 }  // namespace dom_distiller

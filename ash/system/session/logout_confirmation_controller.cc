@@ -6,15 +6,19 @@
 
 #include <memory>
 #include <utility>
+#include <vector>
 
 #include "ash/login_status.h"
 #include "ash/public/cpp/shell_window_ids.h"
-#include "ash/session/session_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "ash/shell_observer.h"
 #include "ash/system/session/logout_confirmation_dialog.h"
+#include "ash/wm/desks/desks_util.h"
+#include "base/bind.h"
 #include "base/callback.h"
 #include "base/location.h"
+#include "base/metrics/user_metrics.h"
 #include "base/time/default_tick_clock.h"
 #include "base/time/tick_clock.h"
 #include "ui/aura/window.h"
@@ -25,11 +29,19 @@ namespace ash {
 namespace {
 const int kLogoutConfirmationDelayInSeconds = 20;
 
-// Shell window containers monitored for when the last window closes.
-const int kLastWindowClosedContainerIds[] = {
-    kShellWindowId_DefaultContainer, kShellWindowId_AlwaysOnTopContainer};
+std::vector<int> GetLastWindowClosedContainerIds() {
+  const auto& desks_ids = desks_util::GetDesksContainersIds();
+  std::vector<int> ids{desks_ids.begin(), desks_ids.end()};
+  ids.emplace_back(kShellWindowId_AlwaysOnTopContainer);
+  ids.emplace_back(kShellWindowId_PipContainer);
+  return ids;
+}
 
-void SignOut() {
+void SignOut(LogoutConfirmationController::Source source) {
+  if (Shell::Get()->session_controller()->IsDemoSession() &&
+      source == LogoutConfirmationController::Source::kShelfExitButton) {
+    base::RecordAction(base::UserMetricsAction("DemoMode.ExitFromShelf"));
+  }
   Shell::Get()->session_controller()->RequestSignOut();
 }
 
@@ -44,6 +56,7 @@ class LogoutConfirmationController::LastWindowClosedObserver
   LastWindowClosedObserver() {
     DCHECK_EQ(Shell::Get()->session_controller()->login_status(),
               LoginStatus::PUBLIC);
+    DCHECK(!Shell::Get()->session_controller()->IsDemoSession());
     Shell::Get()->AddShellObserver(this);
 
     // Observe all displays.
@@ -54,7 +67,7 @@ class LogoutConfirmationController::LastWindowClosedObserver
   ~LastWindowClosedObserver() override {
     // Stop observing all displays.
     for (aura::Window* root : Shell::GetAllRootWindows()) {
-      for (int id : kLastWindowClosedContainerIds)
+      for (int id : GetLastWindowClosedContainerIds())
         root->GetChildById(id)->RemoveObserver(this);
     }
     Shell::Get()->RemoveShellObserver(this);
@@ -64,27 +77,37 @@ class LogoutConfirmationController::LastWindowClosedObserver
   // Observes containers in the |root| window for the last browser and/or app
   // window being closed. The observers are removed automatically.
   void ObserveForLastWindowClosed(aura::Window* root) {
-    for (int id : kLastWindowClosedContainerIds)
+    for (int id : GetLastWindowClosedContainerIds())
       root->GetChildById(id)->AddObserver(this);
   }
 
   // Shows the logout confirmation dialog if the last window is closing in the
   // containers we are tracking. Called before closing instead of after closed
   // because aura::WindowObserver only provides notifications to parent windows
-  // before a child is removed, not after.
-  void ShowDialogIfLastWindowClosing() {
-    size_t window_count = 0u;
+  // before a child is removed, not after. Note that removing window deep inside
+  // tracked container also causes OnWindowHierarchyChanging calls so we check
+  // here that removing window is the last window with parent of a tracked
+  // container.
+  void ShowDialogIfLastWindowClosing(const aura::Window* closing_window) {
+    // Enumerate all root windows.
     for (aura::Window* root : Shell::GetAllRootWindows()) {
-      for (int id : kLastWindowClosedContainerIds)
-        window_count += root->GetChildById(id)->children().size();
+      // For each root window enumerate tracked containers.
+      for (int id : GetLastWindowClosedContainerIds()) {
+        // In each container try to find child window that is not equal to
+        // |closing_window| which would indicate that we have other top-level
+        // window and logout time does not apply.
+        for (const aura::Window* window : root->GetChildById(id)->children()) {
+          if (window != closing_window)
+            return;
+        }
+      }
     }
 
-    // Prompt if the last window is closing.
-    if (window_count == 1) {
-      Shell::Get()->logout_confirmation_controller()->ConfirmLogout(
-          base::TimeTicks::Now() +
-          base::TimeDelta::FromSeconds(kLogoutConfirmationDelayInSeconds));
-    }
+    // No more windows except currently removing. Show logout time.
+    Shell::Get()->logout_confirmation_controller()->ConfirmLogout(
+        base::TimeTicks::Now() +
+            base::TimeDelta::FromSeconds(kLogoutConfirmationDelayInSeconds),
+        Source::kCloseAllWindows);
   }
 
   // ShellObserver:
@@ -96,7 +119,7 @@ class LogoutConfirmationController::LastWindowClosedObserver
   void OnWindowHierarchyChanging(const HierarchyChangeParams& params) override {
     if (!params.new_parent && params.old_parent) {
       // A window is being removed (and not moved to another container).
-      ShowDialogIfLastWindowClosing();
+      ShowDialogIfLastWindowClosing(params.target);
     }
   }
 
@@ -109,17 +132,22 @@ class LogoutConfirmationController::LastWindowClosedObserver
 };
 
 LogoutConfirmationController::LogoutConfirmationController()
-    : clock_(std::make_unique<base::DefaultTickClock>()),
-      logout_closure_(base::Bind(&SignOut)),
-      logout_timer_(false, false),
-      scoped_session_observer_(this) {}
+    : clock_(base::DefaultTickClock::GetInstance()),
+      logout_callback_(base::BindRepeating(&SignOut)) {
+  if (Shell::HasInstance())  // Null in testing::Test.
+    Shell::Get()->session_controller()->AddObserver(this);
+}
 
 LogoutConfirmationController::~LogoutConfirmationController() {
   if (dialog_)
     dialog_->ControllerGone();
+
+  if (Shell::HasInstance())  // Null in testing::Test.
+    Shell::Get()->session_controller()->RemoveObserver(this);
 }
 
-void LogoutConfirmationController::ConfirmLogout(base::TimeTicks logout_time) {
+void LogoutConfirmationController::ConfirmLogout(base::TimeTicks logout_time,
+                                                 Source source) {
   if (!logout_time_.is_null() && logout_time >= logout_time_) {
     // If a confirmation dialog is already being shown and its countdown expires
     // no later than the |logout_time| requested now, keep the current dialog
@@ -136,16 +164,20 @@ void LogoutConfirmationController::ConfirmLogout(base::TimeTicks logout_time) {
     dialog_->Update(logout_time_);
   }
 
+  source_ = source;
   logout_timer_.Start(FROM_HERE, logout_time_ - clock_->NowTicks(),
-                      logout_closure_);
+                      base::BindOnce(logout_callback_, source));
+  ++confirm_logout_count_for_test_;
 }
 
 void LogoutConfirmationController::OnLoginStatusChanged(
     LoginStatus login_status) {
-  if (login_status == LoginStatus::PUBLIC)
+  if (login_status == LoginStatus::PUBLIC &&
+      !Shell::Get()->session_controller()->IsDemoSession()) {
     last_window_closed_observer_ = std::make_unique<LastWindowClosedObserver>();
-  else
+  } else {
     last_window_closed_observer_.reset();
+  }
 }
 
 void LogoutConfirmationController::OnLockStateChanged(bool locked) {
@@ -162,7 +194,7 @@ void LogoutConfirmationController::OnLockStateChanged(bool locked) {
 
 void LogoutConfirmationController::OnLogoutConfirmed() {
   logout_timer_.Stop();
-  logout_closure_.Run();
+  logout_callback_.Run(source_);
 }
 
 void LogoutConfirmationController::OnDialogClosed() {
@@ -172,13 +204,13 @@ void LogoutConfirmationController::OnDialogClosed() {
 }
 
 void LogoutConfirmationController::SetClockForTesting(
-    std::unique_ptr<base::TickClock> clock) {
-  clock_ = std::move(clock);
+    const base::TickClock* clock) {
+  clock_ = clock;
 }
 
-void LogoutConfirmationController::SetLogoutClosureForTesting(
-    const base::Closure& logout_closure) {
-  logout_closure_ = logout_closure;
+void LogoutConfirmationController::SetLogoutCallbackForTesting(
+    const base::RepeatingCallback<void(Source)>& logout_callback) {
+  logout_callback_ = logout_callback;
 }
 
 }  // namespace ash

@@ -37,86 +37,92 @@ class CommonStringPieceTest<string16> : public ::testing::Test {
 
 typedef ::testing::Types<std::string, string16> SupportedStringTypes;
 
-TYPED_TEST_CASE(CommonStringPieceTest, SupportedStringTypes);
+TYPED_TEST_SUITE(CommonStringPieceTest, SupportedStringTypes);
 
 TYPED_TEST(CommonStringPieceTest, CheckComparisonOperators) {
-#define CMP_Y(op, x, y)                                                    \
-  {                                                                        \
-    TypeParam lhs(TestFixture::as_string(x));                              \
-    TypeParam rhs(TestFixture::as_string(y));                              \
-    ASSERT_TRUE( (BasicStringPiece<TypeParam>((lhs.c_str())) op            \
-                  BasicStringPiece<TypeParam>((rhs.c_str()))));            \
-    ASSERT_TRUE( (BasicStringPiece<TypeParam>((lhs.c_str())).compare(      \
-                      BasicStringPiece<TypeParam>((rhs.c_str()))) op 0));  \
+#define CMP_Y(op, x, y)                                                   \
+  {                                                                       \
+    TypeParam lhs(TestFixture::as_string(x));                             \
+    TypeParam rhs(TestFixture::as_string(y));                             \
+    ASSERT_TRUE((BasicStringPiece<TypeParam>((lhs.c_str()))               \
+                     op BasicStringPiece<TypeParam>((rhs.c_str()))));     \
+    ASSERT_TRUE(BasicStringPiece<TypeParam>(lhs) op rhs);                 \
+    ASSERT_TRUE(lhs op BasicStringPiece<TypeParam>(rhs));                 \
+    ASSERT_TRUE((BasicStringPiece<TypeParam>((lhs.c_str()))               \
+                     .compare(BasicStringPiece<TypeParam>((rhs.c_str()))) \
+                         op 0));                                          \
   }
 
 #define CMP_N(op, x, y)                                                    \
   {                                                                        \
     TypeParam lhs(TestFixture::as_string(x));                              \
     TypeParam rhs(TestFixture::as_string(y));                              \
-    ASSERT_FALSE( (BasicStringPiece<TypeParam>((lhs.c_str())) op           \
-                  BasicStringPiece<TypeParam>((rhs.c_str()))));            \
-    ASSERT_FALSE( (BasicStringPiece<TypeParam>((lhs.c_str())).compare(     \
-                      BasicStringPiece<TypeParam>((rhs.c_str()))) op 0));  \
+    ASSERT_FALSE((BasicStringPiece<TypeParam>((lhs.c_str()))               \
+                      op BasicStringPiece<TypeParam>((rhs.c_str()))));     \
+    ASSERT_FALSE(BasicStringPiece<TypeParam>(lhs) op rhs);                 \
+    ASSERT_FALSE(lhs op BasicStringPiece<TypeParam>(rhs));                 \
+    ASSERT_FALSE((BasicStringPiece<TypeParam>((lhs.c_str()))               \
+                      .compare(BasicStringPiece<TypeParam>((rhs.c_str()))) \
+                          op 0));                                          \
   }
 
-  CMP_Y(==, "",   "");
-  CMP_Y(==, "a",  "a");
-  CMP_Y(==, "aa", "aa");
-  CMP_N(==, "a",  "");
-  CMP_N(==, "",   "a");
-  CMP_N(==, "a",  "b");
-  CMP_N(==, "a",  "aa");
-  CMP_N(==, "aa", "a");
+  CMP_Y(==, "", "")
+  CMP_Y(==, "a", "a")
+  CMP_Y(==, "aa", "aa")
+  CMP_N(==, "a", "")
+  CMP_N(==, "", "a")
+  CMP_N(==, "a", "b")
+  CMP_N(==, "a", "aa")
+  CMP_N(==, "aa", "a")
 
-  CMP_N(!=, "",   "");
-  CMP_N(!=, "a",  "a");
-  CMP_N(!=, "aa", "aa");
-  CMP_Y(!=, "a",  "");
-  CMP_Y(!=, "",   "a");
-  CMP_Y(!=, "a",  "b");
-  CMP_Y(!=, "a",  "aa");
-  CMP_Y(!=, "aa", "a");
+  CMP_N(!=, "", "")
+  CMP_N(!=, "a", "a")
+  CMP_N(!=, "aa", "aa")
+  CMP_Y(!=, "a", "")
+  CMP_Y(!=, "", "a")
+  CMP_Y(!=, "a", "b")
+  CMP_Y(!=, "a", "aa")
+  CMP_Y(!=, "aa", "a")
 
-  CMP_Y(<, "a",  "b");
-  CMP_Y(<, "a",  "aa");
-  CMP_Y(<, "aa", "b");
-  CMP_Y(<, "aa", "bb");
-  CMP_N(<, "a",  "a");
-  CMP_N(<, "b",  "a");
-  CMP_N(<, "aa", "a");
-  CMP_N(<, "b",  "aa");
-  CMP_N(<, "bb", "aa");
+  CMP_Y(<, "a", "b")
+  CMP_Y(<, "a", "aa")
+  CMP_Y(<, "aa", "b")
+  CMP_Y(<, "aa", "bb")
+  CMP_N(<, "a", "a")
+  CMP_N(<, "b", "a")
+  CMP_N(<, "aa", "a")
+  CMP_N(<, "b", "aa")
+  CMP_N(<, "bb", "aa")
 
-  CMP_Y(<=, "a",  "a");
-  CMP_Y(<=, "a",  "b");
-  CMP_Y(<=, "a",  "aa");
-  CMP_Y(<=, "aa", "b");
-  CMP_Y(<=, "aa", "bb");
-  CMP_N(<=, "b",  "a");
-  CMP_N(<=, "aa", "a");
-  CMP_N(<=, "b",  "aa");
-  CMP_N(<=, "bb", "aa");
+  CMP_Y(<=, "a", "a")
+  CMP_Y(<=, "a", "b")
+  CMP_Y(<=, "a", "aa")
+  CMP_Y(<=, "aa", "b")
+  CMP_Y(<=, "aa", "bb")
+  CMP_N(<=, "b", "a")
+  CMP_N(<=, "aa", "a")
+  CMP_N(<=, "b", "aa")
+  CMP_N(<=, "bb", "aa")
 
-  CMP_N(>=, "a",  "b");
-  CMP_N(>=, "a",  "aa");
-  CMP_N(>=, "aa", "b");
-  CMP_N(>=, "aa", "bb");
-  CMP_Y(>=, "a",  "a");
-  CMP_Y(>=, "b",  "a");
-  CMP_Y(>=, "aa", "a");
-  CMP_Y(>=, "b",  "aa");
-  CMP_Y(>=, "bb", "aa");
+  CMP_N(>=, "a", "b")
+  CMP_N(>=, "a", "aa")
+  CMP_N(>=, "aa", "b")
+  CMP_N(>=, "aa", "bb")
+  CMP_Y(>=, "a", "a")
+  CMP_Y(>=, "b", "a")
+  CMP_Y(>=, "aa", "a")
+  CMP_Y(>=, "b", "aa")
+  CMP_Y(>=, "bb", "aa")
 
-  CMP_N(>, "a",  "a");
-  CMP_N(>, "a",  "b");
-  CMP_N(>, "a",  "aa");
-  CMP_N(>, "aa", "b");
-  CMP_N(>, "aa", "bb");
-  CMP_Y(>, "b",  "a");
-  CMP_Y(>, "aa", "a");
-  CMP_Y(>, "b",  "aa");
-  CMP_Y(>, "bb", "aa");
+  CMP_N(>, "a", "a")
+  CMP_N(>, "a", "b")
+  CMP_N(>, "a", "aa")
+  CMP_N(>, "aa", "b")
+  CMP_N(>, "aa", "bb")
+  CMP_Y(>, "b", "a")
+  CMP_Y(>, "aa", "a")
+  CMP_Y(>, "b", "aa")
+  CMP_Y(>, "bb", "aa")
 
   std::string x;
   for (int i = 0; i < 256; i++) {
@@ -704,6 +710,129 @@ TYPED_TEST(CommonStringPieceTest, CheckConstructors) {
   ASSERT_EQ(empty, BasicStringPiece<TypeParam>(str.begin(), str.begin()));
   ASSERT_EQ(empty, BasicStringPiece<TypeParam>(empty));
   ASSERT_EQ(empty, BasicStringPiece<TypeParam>(empty.begin(), empty.end()));
+}
+
+TEST(StringPieceTest, ConstexprCtor) {
+  {
+    constexpr StringPiece piece;
+    std::ignore = piece;
+  }
+
+  {
+    constexpr StringPiece piece("abc");
+    std::ignore = piece;
+  }
+
+  {
+    constexpr StringPiece piece("abc", 2);
+    std::ignore = piece;
+  }
+}
+
+TEST(StringPieceTest, OutOfBoundsDeath) {
+  {
+    constexpr StringPiece piece;
+    ASSERT_DEATH_IF_SUPPORTED(piece[0], "");
+  }
+
+  {
+    constexpr StringPiece piece;
+    ASSERT_DEATH_IF_SUPPORTED(piece.front(), "");
+  }
+
+  {
+    constexpr StringPiece piece;
+    ASSERT_DEATH_IF_SUPPORTED(piece.back(), "");
+  }
+
+  {
+    StringPiece piece;
+    ASSERT_DEATH_IF_SUPPORTED(piece.remove_suffix(1), "");
+  }
+
+  {
+    StringPiece piece;
+    ASSERT_DEATH_IF_SUPPORTED(piece.remove_prefix(1), "");
+  }
+}
+
+TEST(StringPieceTest, ConstexprData) {
+  {
+    constexpr StringPiece piece;
+    static_assert(piece.data() == nullptr, "");
+  }
+
+  {
+    constexpr StringPiece piece("abc");
+    static_assert(piece.data()[0] == 'a', "");
+    static_assert(piece.data()[1] == 'b', "");
+    static_assert(piece.data()[2] == 'c', "");
+  }
+
+  {
+    constexpr StringPiece piece("def", 2);
+    static_assert(piece.data()[0] == 'd', "");
+    static_assert(piece.data()[1] == 'e', "");
+  }
+}
+
+TEST(StringPieceTest, ConstexprSize) {
+  {
+    constexpr StringPiece piece;
+    static_assert(piece.size() == 0, "");
+  }
+
+  {
+    constexpr StringPiece piece("abc");
+    static_assert(piece.size() == 3, "");
+  }
+
+  {
+    constexpr StringPiece piece("def", 2);
+    static_assert(piece.size() == 2, "");
+  }
+}
+
+TEST(StringPieceTest, Compare) {
+  constexpr StringPiece piece = "def";
+
+  static_assert(piece.compare("ab") == 1, "");
+  static_assert(piece.compare("abc") == 1, "");
+  static_assert(piece.compare("abcd") == 1, "");
+  static_assert(piece.compare("de") == 1, "");
+  static_assert(piece.compare("def") == 0, "");
+  static_assert(piece.compare("defg") == -1, "");
+  static_assert(piece.compare("gh") == -1, "");
+  static_assert(piece.compare("ghi") == -1, "");
+  static_assert(piece.compare("ghij") == -1, "");
+}
+
+TEST(StringPieceTest, StartsWith) {
+  constexpr StringPiece piece("abc");
+
+  static_assert(piece.starts_with(""), "");
+  static_assert(piece.starts_with("a"), "");
+  static_assert(piece.starts_with("ab"), "");
+  static_assert(piece.starts_with("abc"), "");
+
+  static_assert(!piece.starts_with("b"), "");
+  static_assert(!piece.starts_with("bc"), "");
+
+  static_assert(!piece.starts_with("abcd"), "");
+}
+
+TEST(StringPieceTest, EndsWith) {
+  constexpr StringPiece piece("abc");
+
+  static_assert(piece.ends_with(""), "");
+  static_assert(piece.ends_with("c"), "");
+  static_assert(piece.ends_with("bc"), "");
+  static_assert(piece.ends_with("abc"), "");
+
+  static_assert(!piece.ends_with("a"), "");
+  static_assert(!piece.ends_with("ab"), "");
+
+  static_assert(!piece.ends_with("abcd"), "");
 }
 
 }  // namespace base

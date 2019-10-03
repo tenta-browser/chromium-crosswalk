@@ -6,8 +6,8 @@
 
 #include <utility>
 
+#include "base/bind.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "services/device/generic_sensor/platform_sensor_provider.h"
 #include "services/device/public/cpp/generic_sensor/platform_sensor_configuration.h"
@@ -16,13 +16,12 @@
 namespace device {
 
 PlatformSensor::PlatformSensor(mojom::SensorType type,
-                               mojo::ScopedSharedBufferMapping mapping,
+                               SensorReadingSharedBuffer* reading_buffer,
                                PlatformSensorProvider* provider)
     : task_runner_(base::ThreadTaskRunnerHandle::Get()),
-      shared_buffer_mapping_(std::move(mapping)),
+      reading_buffer_(reading_buffer),
       type_(type),
-      provider_(provider),
-      weak_factory_(this) {}
+      provider_(provider) {}
 
 PlatformSensor::~PlatformSensor() {
   if (provider_)
@@ -102,27 +101,19 @@ void PlatformSensor::RemoveClient(Client* client) {
 }
 
 bool PlatformSensor::GetLatestReading(SensorReading* result) {
-  if (!shared_buffer_reader_) {
-    const auto* buffer = static_cast<const device::SensorReadingSharedBuffer*>(
-        shared_buffer_mapping_.get());
-    shared_buffer_reader_ =
-        std::make_unique<SensorReadingSharedBufferReader>(buffer);
-  }
-
-  return shared_buffer_reader_->GetReading(result);
+  return SensorReadingSharedBufferReader::GetReading(reading_buffer_, result);
 }
 
 void PlatformSensor::UpdateSharedBufferAndNotifyClients(
     const SensorReading& reading) {
   UpdateSharedBuffer(reading);
-  task_runner_->PostTask(FROM_HERE,
-                         base::Bind(&PlatformSensor::NotifySensorReadingChanged,
-                                    weak_factory_.GetWeakPtr()));
+  task_runner_->PostTask(
+      FROM_HERE, base::BindOnce(&PlatformSensor::NotifySensorReadingChanged,
+                                weak_factory_.GetWeakPtr()));
 }
 
 void PlatformSensor::UpdateSharedBuffer(const SensorReading& reading) {
-  ReadingBuffer* buffer =
-      static_cast<ReadingBuffer*>(shared_buffer_mapping_.get());
+  ReadingBuffer* buffer = reading_buffer_;
   auto& seqlock = buffer->seqlock.value();
   seqlock.WriteBegin();
   buffer->reading = reading;

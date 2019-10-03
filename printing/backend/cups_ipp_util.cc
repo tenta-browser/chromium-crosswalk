@@ -29,11 +29,19 @@ constexpr char kIppCopies[] = CUPS_COPIES;
 constexpr char kIppColor[] = CUPS_PRINT_COLOR_MODE;
 constexpr char kIppMedia[] = CUPS_MEDIA;
 constexpr char kIppDuplex[] = CUPS_SIDES;
-constexpr char kIppResolution[] = "printer-resolution";  // RFC 2911
+constexpr char kIppResolution[] = "printer-resolution";            // RFC 2911
+constexpr char kIppRequestingUserName[] = "requesting-user-name";  // RFC 8011
+constexpr char kIppPin[] = "job-password";                       // PWG 5100.11
+constexpr char kIppPinEncryption[] = "job-password-encryption";  // PWG 5100.11
 
 // collation values
 constexpr char kCollated[] = "collated";
 constexpr char kUncollated[] = "uncollated";
+
+#if defined(OS_CHROMEOS)
+constexpr int kPinMinimumLength = 4;
+constexpr char kPinEncryptionNone[] = "none";
+#endif  // defined(OS_CHROMEOS)
 
 namespace {
 
@@ -52,9 +60,20 @@ struct ColorMap {
   ColorModel model;
 };
 
+struct DuplexMap {
+  const char* name;
+  DuplexMode mode;
+};
+
 const ColorMap kColorList[]{
     {CUPS_PRINT_COLOR_MODE_COLOR, COLORMODE_COLOR},
     {CUPS_PRINT_COLOR_MODE_MONOCHROME, COLORMODE_MONOCHROME},
+};
+
+const DuplexMap kDuplexList[]{
+    {CUPS_SIDES_ONE_SIDED, SIMPLEX},
+    {CUPS_SIDES_TWO_SIDED_PORTRAIT, LONG_EDGE},
+    {CUPS_SIDES_TWO_SIDED_LANDSCAPE, SHORT_EDGE},
 };
 
 ColorModel ColorModelFromIppColor(base::StringPiece ippColor) {
@@ -67,29 +86,11 @@ ColorModel ColorModelFromIppColor(base::StringPiece ippColor) {
   return UNKNOWN_COLOR_MODEL;
 }
 
-bool PrinterSupportsValue(const CupsOptionProvider& printer,
-                          const char* name,
-                          const char* value) {
-  std::vector<base::StringPiece> values =
-      printer.GetSupportedOptionValueStrings(name);
-  return base::ContainsValue(values, value);
-}
-
-DuplexMode PrinterDefaultDuplex(const CupsOptionProvider& printer) {
-  ipp_attribute_t* attr = printer.GetDefaultOptionValue(kIppDuplex);
-  if (!attr)
-    return UNKNOWN_DUPLEX_MODE;
-
-  const char* value = ippGetString(attr, 0, nullptr);
-  if (base::EqualsCaseInsensitiveASCII(value, CUPS_SIDES_ONE_SIDED))
-    return SIMPLEX;
-
-  if (base::EqualsCaseInsensitiveASCII(value, CUPS_SIDES_TWO_SIDED_PORTRAIT))
-    return LONG_EDGE;
-
-  if (base::EqualsCaseInsensitiveASCII(value, CUPS_SIDES_TWO_SIDED_LANDSCAPE))
-    return SHORT_EDGE;
-
+DuplexMode DuplexModeFromIpp(base::StringPiece ipp_duplex) {
+  for (const DuplexMap& entry : kDuplexList) {
+    if (base::EqualsCaseInsensitiveASCII(ipp_duplex, entry.name))
+      return entry.mode;
+  }
   return UNKNOWN_DUPLEX_MODE;
 }
 
@@ -136,6 +137,10 @@ gfx::Size DimensionsToMicrons(base::StringPiece value) {
   return gfx::Size{width_microns, height_microns};
 }
 
+// We read the media name expressed by |value| and return a Paper
+// with the vendor_id and size_um members populated.
+// We don't handle l10n here, so we don't populate the display_name
+// member, deferring that to the caller.
 PrinterSemanticCapsAndDefaults::Paper ParsePaper(base::StringPiece value) {
   // <name>_<width>x<height>{in,mm}
   // e.g. na_letter_8.5x11in, iso_a4_210x297mm
@@ -146,20 +151,38 @@ PrinterSemanticCapsAndDefaults::Paper ParsePaper(base::StringPiece value) {
   if (pieces.size() < 2)
     return PrinterSemanticCapsAndDefaults::Paper();
 
-  std::string display = pieces[0].as_string();
-  for (size_t i = 1; i <= pieces.size() - 2; ++i) {
-    display.append(" ");
-    pieces[i].AppendToString(&display);
-  }
-
   base::StringPiece dimensions = pieces.back();
 
   PrinterSemanticCapsAndDefaults::Paper paper;
-  paper.display_name = display;
   paper.vendor_id = value.as_string();
   paper.size_um = DimensionsToMicrons(dimensions);
 
   return paper;
+}
+
+ColorModel DefaultColorModel(const CupsOptionProvider& printer) {
+  // default color
+  ipp_attribute_t* attr = printer.GetDefaultOptionValue(kIppColor);
+  if (!attr)
+    return UNKNOWN_COLOR_MODEL;
+
+  return ColorModelFromIppColor(ippGetString(attr, 0, nullptr));
+}
+
+std::vector<ColorModel> SupportedColorModels(
+    const CupsOptionProvider& printer) {
+  std::vector<ColorModel> colors;
+
+  std::vector<base::StringPiece> color_modes =
+      printer.GetSupportedOptionValueStrings(kIppColor);
+  for (base::StringPiece color : color_modes) {
+    ColorModel color_model = ColorModelFromIppColor(color);
+    if (color_model != UNKNOWN_COLOR_MODEL) {
+      colors.push_back(color_model);
+    }
+  }
+
+  return colors;
 }
 
 void ExtractColor(const CupsOptionProvider& printer,
@@ -190,6 +213,33 @@ void ExtractColor(const CupsOptionProvider& printer,
 
   // default color
   printer_info->color_default = DefaultColorModel(printer) == COLORMODE_COLOR;
+}
+
+void ExtractDuplexModes(const CupsOptionProvider& printer,
+                        PrinterSemanticCapsAndDefaults* printer_info) {
+  std::vector<base::StringPiece> duplex_modes =
+      printer.GetSupportedOptionValueStrings(kIppDuplex);
+  for (base::StringPiece duplex : duplex_modes) {
+    DuplexMode duplex_mode = DuplexModeFromIpp(duplex);
+    if (duplex_mode != UNKNOWN_DUPLEX_MODE)
+      printer_info->duplex_modes.push_back(duplex_mode);
+  }
+  ipp_attribute_t* attr = printer.GetDefaultOptionValue(kIppDuplex);
+  printer_info->duplex_default =
+      attr ? DuplexModeFromIpp(ippGetString(attr, 0, nullptr))
+           : UNKNOWN_DUPLEX_MODE;
+}
+
+void CopiesRange(const CupsOptionProvider& printer,
+                 int* lower_bound,
+                 int* upper_bound) {
+  ipp_attribute_t* attr = printer.GetSupportedOptionValues(kIppCopies);
+  if (!attr) {
+    *lower_bound = -1;
+    *upper_bound = -1;
+  }
+
+  *lower_bound = ippGetRange(attr, 0, upper_bound);
 }
 
 void ExtractCopies(const CupsOptionProvider& printer,
@@ -238,71 +288,22 @@ void ExtractResolutions(const CupsOptionProvider& printer,
     printer_info->default_dpi = size.value();
 }
 
-}  // namespace
-
-ColorModel DefaultColorModel(const CupsOptionProvider& printer) {
-  // default color
-  ipp_attribute_t* attr = printer.GetDefaultOptionValue(kIppColor);
-  if (!attr)
-    return UNKNOWN_COLOR_MODEL;
-
-  return ColorModelFromIppColor(ippGetString(attr, 0, nullptr));
-}
-
-std::vector<ColorModel> SupportedColorModels(
-    const CupsOptionProvider& printer) {
-  std::vector<ColorModel> colors;
-
-  std::vector<base::StringPiece> color_modes =
-      printer.GetSupportedOptionValueStrings(kIppColor);
-  for (base::StringPiece color : color_modes) {
-    ColorModel color_model = ColorModelFromIppColor(color);
-    if (color_model != UNKNOWN_COLOR_MODEL) {
-      colors.push_back(color_model);
-    }
-  }
-
-  return colors;
-}
-
-PrinterSemanticCapsAndDefaults::Paper DefaultPaper(
-    const CupsOptionProvider& printer) {
-  ipp_attribute_t* attr = printer.GetDefaultOptionValue(kIppMedia);
-  if (!attr)
-    return PrinterSemanticCapsAndDefaults::Paper();
-
-  return ParsePaper(ippGetString(attr, 0, nullptr));
-}
-
-std::vector<PrinterSemanticCapsAndDefaults::Paper> SupportedPapers(
+PrinterSemanticCapsAndDefaults::Papers SupportedPapers(
     const CupsOptionProvider& printer) {
   std::vector<base::StringPiece> papers =
       printer.GetSupportedOptionValueStrings(kIppMedia);
-  std::vector<PrinterSemanticCapsAndDefaults::Paper> parsed_papers;
-  for (base::StringPiece paper : papers) {
+  PrinterSemanticCapsAndDefaults::Papers parsed_papers;
+  parsed_papers.reserve(papers.size());
+  for (base::StringPiece paper : papers)
     parsed_papers.push_back(ParsePaper(paper));
-  }
 
   return parsed_papers;
-}
-
-void CopiesRange(const CupsOptionProvider& printer,
-                 int* lower_bound,
-                 int* upper_bound) {
-  ipp_attribute_t* attr = printer.GetSupportedOptionValues(kIppCopies);
-  if (!attr) {
-    *lower_bound = -1;
-    *upper_bound = -1;
-  }
-
-  *lower_bound = ippGetRange(attr, 0, upper_bound);
 }
 
 bool CollateCapable(const CupsOptionProvider& printer) {
   std::vector<base::StringPiece> values =
       printer.GetSupportedOptionValueStrings(kIppCollate);
-  auto iter = std::find(values.begin(), values.end(), kCollated);
-  return iter != values.end();
+  return base::Contains(values, kCollated);
 }
 
 bool CollateDefault(const CupsOptionProvider& printer) {
@@ -314,13 +315,34 @@ bool CollateDefault(const CupsOptionProvider& printer) {
   return name.compare(kCollated) == 0;
 }
 
+#if defined(OS_CHROMEOS)
+bool PinSupported(const CupsOptionProvider& printer) {
+  ipp_attribute_t* attr = printer.GetSupportedOptionValues(kIppPin);
+  if (!attr)
+    return false;
+  int password_maximum_length_supported = ippGetInteger(attr, 0);
+  if (password_maximum_length_supported < kPinMinimumLength)
+    return false;
+
+  std::vector<base::StringPiece> values =
+      printer.GetSupportedOptionValueStrings(kIppPinEncryption);
+  return base::Contains(values, kPinEncryptionNone);
+}
+#endif  // defined(OS_CHROMEOS)
+
+}  // namespace
+
+PrinterSemanticCapsAndDefaults::Paper DefaultPaper(
+    const CupsOptionProvider& printer) {
+  ipp_attribute_t* attr = printer.GetDefaultOptionValue(kIppMedia);
+  if (!attr)
+    return PrinterSemanticCapsAndDefaults::Paper();
+
+  return ParsePaper(ippGetString(attr, 0, nullptr));
+}
+
 void CapsAndDefaultsFromPrinter(const CupsOptionProvider& printer,
                                 PrinterSemanticCapsAndDefaults* printer_info) {
-  // duplex
-  printer_info->duplex_default = PrinterDefaultDuplex(printer);
-  printer_info->duplex_capable =
-      PrinterSupportsValue(printer, kIppDuplex, CUPS_SIDES_TWO_SIDED_PORTRAIT);
-
   // collate
   printer_info->collate_default = CollateDefault(printer);
   printer_info->collate_capable = CollateCapable(printer);
@@ -329,9 +351,18 @@ void CapsAndDefaultsFromPrinter(const CupsOptionProvider& printer,
   printer_info->default_paper = DefaultPaper(printer);
   printer_info->papers = SupportedPapers(printer);
 
+#if defined(OS_CHROMEOS)
+  printer_info->pin_supported = PinSupported(printer);
+#endif  // defined(OS_CHROMEOS)
+
   ExtractCopies(printer, printer_info);
   ExtractColor(printer, printer_info);
+  ExtractDuplexModes(printer, printer_info);
   ExtractResolutions(printer, printer_info);
+}
+
+ScopedIppPtr WrapIpp(ipp_t* ipp) {
+  return ScopedIppPtr(ipp, &ippDelete);
 }
 
 }  //  namespace printing

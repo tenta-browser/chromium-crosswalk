@@ -6,38 +6,45 @@
 #define IOS_CLEAN_CHROME_BROWSER_UI_FULLSCREEN_FULLSCREEN_WEB_STATE_OBSERVER_H_
 
 #include "ios/web/public/web_state/web_state_observer.h"
+#include "url/gurl.h"
 
+class FullscreenController;
+class FullscreenMediator;
 class FullscreenModel;
+@class FullscreenWebViewProxyObserver;
 
 // A WebStateObserver that updates a FullscreenModel for navigation events.
 class FullscreenWebStateObserver : public web::WebStateObserver {
  public:
-  // Constructor for an observer that updates |model|.
-  FullscreenWebStateObserver(FullscreenModel* model);
+  // Constructor for an observer that updates |controller| and |model|.
+  FullscreenWebStateObserver(FullscreenController* controller,
+                             FullscreenModel* model,
+                             FullscreenMediator* mediator);
+  ~FullscreenWebStateObserver() override;
 
   // Tells the observer to start observing |web_state|.
   void SetWebState(web::WebState* web_state);
 
  private:
   // WebStateObserver:
+  void WasShown(web::WebState* web_state) override;
   void DidFinishNavigation(web::WebState* web_state,
                            web::NavigationContext* navigation_context) override;
   void DidStartLoading(web::WebState* web_state) override;
-  void DidStopLoading(web::WebState* web_state) override;
-  void DidChangeVisibleSecurityState(web::WebState* web_state) override;
-  // Setter for whether the current page's SSL is broken.
-  void SetIsSSLBroken(bool broken);
-  // Setter for whether the WebState is currently loading.
-  void SetIsLoading(bool loading);
+  void WebStateDestroyed(web::WebState* web_state) override;
 
   // The WebState being observed.
   web::WebState* web_state_ = nullptr;
+  // The FullscreenController passed on construction.
+  FullscreenController* controller_;
   // The model passed on construction.
   FullscreenModel* model_;
-  // Whether the page's SSL is broken.
-  bool ssl_broken_ = false;
-  // Whether the WebState is loading.
-  bool loading_ = false;
+  // The mediator passed on construction.
+  FullscreenMediator* mediator_ = nullptr;
+  // Observer for |web_state_|'s scroll view proxy.
+  __strong FullscreenWebViewProxyObserver* web_view_proxy_observer_;
+  // The URL received in the NavigationContext of the last finished navigation.
+  GURL last_navigation_url_;
 };
 
 #endif  // IOS_CLEAN_CHROME_BROWSER_UI_FULLSCREEN_FULLSCREEN_WEB_STATE_OBSERVER_H_

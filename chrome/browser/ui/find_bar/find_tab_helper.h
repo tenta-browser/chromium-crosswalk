@@ -7,17 +7,22 @@
 
 #include "base/macros.h"
 #include "build/build_config.h"
-#include "chrome/browser/ui/find_bar/find_bar_controller.h"
 #include "chrome/browser/ui/find_bar/find_notification_details.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/browser/web_contents_user_data.h"
 #include "ui/gfx/range/range.h"
+
+class FindResultObserver;
+enum class FindOnPageSelectionAction;
 
 // Per-tab find manager. Handles dealing with the life cycle of find sessions.
 class FindTabHelper : public content::WebContentsObserver,
                       public content::WebContentsUserData<FindTabHelper> {
  public:
   ~FindTabHelper() override;
+
+  void AddObserver(FindResultObserver* observer);
+  void RemoveObserver(FindResultObserver* observer);
 
   // Starts the Find operation by calling StartFinding on the Tab. This function
   // can be called from the outside as a result of hot-keys, so it uses the
@@ -27,10 +32,11 @@ class FindTabHelper : public content::WebContentsObserver,
   // for details.
   void StartFinding(base::string16 search_string,
                     bool forward_direction,
-                    bool case_sensitive);
+                    bool case_sensitive,
+                    bool run_synchronously_for_testing = false);
 
   // Stops the current Find operation.
-  void StopFinding(FindBarController::SelectionAction selection_action);
+  void StopFinding(FindOnPageSelectionAction selection_action);
 
   // When the user commits to a search query or jumps from one result
   // to the next, move accessibility focus to the next find result.
@@ -59,6 +65,16 @@ class FindTabHelper : public content::WebContentsObserver,
 
   // Accessor for the previous search we issued.
   base::string16 previous_find_text() const { return previous_find_text_; }
+
+  // Accessor for the latest search for which a final result was reported.
+  base::string16 last_completed_find_text() const {
+    return last_completed_find_text_;
+  }
+
+  void set_last_completed_find_text(
+      const base::string16& last_completed_find_text) {
+    last_completed_find_text_ = last_completed_find_text;
+  }
 
   gfx::Range selected_range() const { return selected_range_; }
   void set_selected_range(const gfx::Range& selected_range) {
@@ -120,6 +136,14 @@ class FindTabHelper : public content::WebContentsObserver,
   // The string we searched for before |find_text_|.
   base::string16 previous_find_text_;
 
+  // Used to keep track the last completed search. A single find session can
+  // result in multiple final updates, if the document contents change
+  // dynamically. It's a nuisance to notify the user more than once that a
+  // search came up empty, and we never want to notify the user that a
+  // previously successful search's results were removed because,
+  // for instance, the page is being torn down during navigation.
+  base::string16 last_completed_find_text_;
+
   // The selection within the text.
   gfx::Range selected_range_;
 
@@ -130,6 +154,10 @@ class FindTabHelper : public content::WebContentsObserver,
   // matches, the find selection rectangle, etc. The UI can access this
   // information to build its presentation.
   FindNotificationDetails last_search_result_;
+
+  base::ObserverList<FindResultObserver> observers_;
+
+  WEB_CONTENTS_USER_DATA_KEY_DECL();
 
   DISALLOW_COPY_AND_ASSIGN(FindTabHelper);
 };

@@ -12,8 +12,6 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
-#include "base/callback_helpers.h"
-#include "base/command_line.h"
 #include "base/logging.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
@@ -25,9 +23,6 @@
 #include "chrome/common/chrome_switches.h"
 #include "chrome/renderer/media/cast_session.h"
 #include "chrome/renderer/media/cast_udp_transport.h"
-#include "content/public/renderer/media_stream_audio_sink.h"
-#include "content/public/renderer/media_stream_utils.h"
-#include "content/public/renderer/media_stream_video_sink.h"
 #include "content/public/renderer/render_thread.h"
 #include "content/public/renderer/video_encode_accelerator.h"
 #include "media/base/audio_bus.h"
@@ -40,7 +35,10 @@
 #include "media/cast/cast_config.h"
 #include "media/cast/cast_sender.h"
 #include "media/cast/net/cast_transport_config.h"
-#include "third_party/WebKit/public/platform/WebMediaStreamSource.h"
+#include "third_party/blink/public/platform/modules/mediastream/web_media_stream_audio_sink.h"
+#include "third_party/blink/public/platform/modules/mediastream/web_media_stream_sink.h"
+#include "third_party/blink/public/platform/web_media_stream_source.h"
+#include "third_party/blink/public/web/modules/mediastream/web_media_stream_utils.h"
 #include "ui/gfx/geometry/size.h"
 
 using media::cast::FrameSenderConfig;
@@ -167,18 +165,21 @@ std::vector<FrameSenderConfig> SupportedVideoConfigs(bool for_remoting_stream) {
 // handles this.  Otherwise, all methods and member variables of the outer class
 // must only be accessed on the render thread.
 class CastVideoSink : public base::SupportsWeakPtr<CastVideoSink>,
-                      public content::MediaStreamVideoSink {
+                      public blink::WebMediaStreamSink {
  public:
   // |track| provides data for this sink.
   // |error_callback| is called if video formats don't match.
   CastVideoSink(const blink::WebMediaStreamTrack& track,
                 const CastRtpStream::ErrorCallback& error_callback)
-      : track_(track), deliverer_(new Deliverer(error_callback)),
+      : track_(track),
+        deliverer_(new Deliverer(error_callback)),
         consecutive_refresh_count_(0),
-        expecting_a_refresh_frame_(false) {}
+        expecting_a_refresh_frame_(false),
+        is_connected_to_track_(false) {}
 
   ~CastVideoSink() override {
-    MediaStreamVideoSink::DisconnectFromTrack();
+    if (is_connected_to_track_)
+      blink::RemoveSinkFromMediaStreamTrack(track_, this);
   }
 
   // Attach this sink to a video track represented by |track_|.
@@ -193,9 +194,10 @@ class CastVideoSink : public base::SupportsWeakPtr<CastVideoSink>,
         base::TimeDelta::FromMilliseconds(kRefreshIntervalMilliseconds),
         base::Bind(&CastVideoSink::OnRefreshTimerFired,
                    base::Unretained(this)));
-    MediaStreamVideoSink::ConnectToTrack(
-        track_, base::Bind(&Deliverer::OnVideoFrame, deliverer_),
+    blink::AddSinkToMediaStreamTrack(
+        track_, this, base::BindRepeating(&Deliverer::OnVideoFrame, deliverer_),
         is_sink_secure);
+    is_connected_to_track_ = true;
   }
 
  private:
@@ -213,7 +215,7 @@ class CastVideoSink : public base::SupportsWeakPtr<CastVideoSink>,
       frame_input_ = std::move(frame_input);
     }
 
-    void OnVideoFrame(const scoped_refptr<media::VideoFrame>& video_frame,
+    void OnVideoFrame(scoped_refptr<media::VideoFrame> video_frame,
                       base::TimeTicks estimated_capture_time) {
       main_task_runner_->PostTask(
           FROM_HERE, base::BindOnce(&CastVideoSink::DidReceiveFrame, sink_));
@@ -224,21 +226,21 @@ class CastVideoSink : public base::SupportsWeakPtr<CastVideoSink>,
 
       if (!(video_frame->format() == media::PIXEL_FORMAT_I420 ||
             video_frame->format() == media::PIXEL_FORMAT_YV12 ||
-            video_frame->format() == media::PIXEL_FORMAT_YV12A)) {
+            video_frame->format() == media::PIXEL_FORMAT_I420A)) {
         error_callback_.Run("Incompatible video frame format.");
         return;
       }
       scoped_refptr<media::VideoFrame> frame = video_frame;
       // Drop alpha channel since we do not support it yet.
-      if (frame->format() == media::PIXEL_FORMAT_YV12A)
-        frame = media::WrapAsI420VideoFrame(video_frame);
+      if (frame->format() == media::PIXEL_FORMAT_I420A)
+        frame = media::WrapAsI420VideoFrame(std::move(video_frame));
 
       // Used by chrome/browser/extension/api/cast_streaming/performance_test.cc
       TRACE_EVENT_INSTANT2("cast_perf_test", "ConsumeVideoFrame",
                            TRACE_EVENT_SCOPE_THREAD, "timestamp",
                            (timestamp - base::TimeTicks()).InMicroseconds(),
                            "time_delta", frame->timestamp().InMicroseconds());
-      frame_input_->InsertRawVideoFrame(frame, timestamp);
+      frame_input_->InsertRawVideoFrame(std::move(frame), timestamp);
     }
 
    private:
@@ -266,7 +268,7 @@ class CastVideoSink : public base::SupportsWeakPtr<CastVideoSink>,
     DVLOG(1) << "CastVideoSink is requesting another refresh frame "
                 "(consecutive count=" << consecutive_refresh_count_ << ").";
     expecting_a_refresh_frame_ = true;
-    content::RequestRefreshFrameFromVideoTrack(connected_track());
+    blink::RequestRefreshFrameFromVideoTrack(track_);
   }
 
   void DidReceiveFrame() {
@@ -298,6 +300,8 @@ class CastVideoSink : public base::SupportsWeakPtr<CastVideoSink>,
   // cleared once the next frame is received.
   bool expecting_a_refresh_frame_;
 
+  bool is_connected_to_track_;
+
   DISALLOW_COPY_AND_ASSIGN(CastVideoSink);
 };
 
@@ -308,7 +312,7 @@ class CastVideoSink : public base::SupportsWeakPtr<CastVideoSink>,
 // Note that RemoveFromAudioTrack() is synchronous and we have
 // gurantee that there will be no more audio data after calling it.
 class CastAudioSink : public base::SupportsWeakPtr<CastAudioSink>,
-                      public content::MediaStreamAudioSink,
+                      public blink::WebMediaStreamAudioSink,
                       public media::AudioConverter::InputCallback {
  public:
   // |track| provides data for this sink.
@@ -394,8 +398,7 @@ class CastAudioSink : public base::SupportsWeakPtr<CastAudioSink>,
              << output_sample_rate_ << " Hz}";
     const media::AudioParameters output_params(
         media::AudioParameters::AUDIO_PCM_LOW_LATENCY,
-        media::GuessChannelLayout(output_channels_),
-        output_sample_rate_, 32,
+        media::GuessChannelLayout(output_channels_), output_sample_rate_,
         output_sample_rate_ * input_params_.frames_per_buffer() /
             input_params_.sample_rate());
     converter_.reset(
@@ -434,12 +437,6 @@ class CastAudioSink : public base::SupportsWeakPtr<CastAudioSink>,
 };
 
 bool CastRtpStream::IsHardwareVP8EncodingSupported() {
-  const base::CommandLine* cmd_line = base::CommandLine::ForCurrentProcess();
-  if (cmd_line->HasSwitch(switches::kDisableCastStreamingHWEncoding)) {
-    DVLOG(1) << "Disabled hardware VP8 support for Cast Streaming.";
-    return false;
-  }
-
   // Query for hardware VP8 encoder support.
   const std::vector<media::VideoEncodeAccelerator::SupportedProfile>
       vea_profiles = content::GetSupportedVideoEncodeAcceleratorProfiles();
@@ -453,12 +450,6 @@ bool CastRtpStream::IsHardwareVP8EncodingSupported() {
 }
 
 bool CastRtpStream::IsHardwareH264EncodingSupported() {
-  const base::CommandLine* cmd_line = base::CommandLine::ForCurrentProcess();
-  if (cmd_line->HasSwitch(switches::kDisableCastStreamingHWEncoding)) {
-    DVLOG(1) << "Disabled hardware h264 support for Cast Streaming.";
-    return false;
-  }
-
 // Query for hardware H.264 encoder support.
 //
 // TODO(miu): Look into why H.264 hardware encoder on MacOS is broken.
@@ -483,12 +474,11 @@ CastRtpStream::CastRtpStream(const blink::WebMediaStreamTrack& track,
     : track_(track),
       cast_session_(session),
       is_audio_(track_.Source().GetType() ==
-                blink::WebMediaStreamSource::kTypeAudio),
-      weak_factory_(this) {}
+                blink::WebMediaStreamSource::kTypeAudio) {}
 
 CastRtpStream::CastRtpStream(bool is_audio,
                              const scoped_refptr<CastSession>& session)
-    : cast_session_(session), is_audio_(is_audio), weak_factory_(this) {}
+    : cast_session_(session), is_audio_(is_audio) {}
 
 CastRtpStream::~CastRtpStream() {
   Stop();
@@ -551,7 +541,7 @@ void CastRtpStream::Stop() {
   error_callback_.Reset();
   audio_sink_.reset();
   video_sink_.reset();
-  base::ResetAndReturn(&stop_callback_).Run();
+  std::move(stop_callback_).Run();
 }
 
 void CastRtpStream::ToggleLogging(bool enable) {

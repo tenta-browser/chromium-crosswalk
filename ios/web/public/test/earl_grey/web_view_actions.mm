@@ -4,15 +4,21 @@
 
 #import "ios/web/public/test/earl_grey/web_view_actions.h"
 
+#import <WebKit/WebKit.h>
+
+#include "base/bind.h"
 #include "base/callback_helpers.h"
 #include "base/logging.h"
-#import "base/mac/bind_objc_block.h"
+#include "base/mac/foundation_util.h"
 #include "base/strings/stringprintf.h"
+#include "base/strings/sys_string_conversions.h"
 #import "base/test/ios/wait_util.h"
 #include "base/values.h"
-#import "ios/testing/wait_util.h"
+#import "ios/testing/earl_grey/earl_grey_app.h"
 #import "ios/web/public/test/earl_grey/web_view_matchers.h"
+#include "ios/web/public/test/element_selector.h"
 #import "ios/web/public/test/web_view_interaction_test_util.h"
+#import "ios/web/public/web_state/web_state.h"
 #import "ios/web/web_state/web_state_impl.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -23,40 +29,31 @@ using web::test::ExecuteJavaScript;
 
 namespace {
 
-// Long press duration to trigger context menu.  EarlGrey LongPress action uses
-// 0.7 secs.  Use the same number to be consistent.
-const NSTimeInterval kContextMenuLongPressDuration = 0.7;
+// Long press duration to trigger context menu.
+const NSTimeInterval kContextMenuLongPressDuration = 1.0;
 
 // Duration to wait for verification of JavaScript action.
 // TODO(crbug.com/670910): Reduce duration if the time required for verification
 // is reduced on devices.
 const NSTimeInterval kWaitForVerificationTimeout = 8.0;
 
-// Callback prefix for injected verifiers.
-const std::string CallbackPrefixForElementId(const std::string& element_id) {
-  return "__web_test_" + element_id + "_interaction";
-}
-
 // Generic verification injector. Injects one-time mousedown verification into
 // |web_state| that will set the boolean pointed to by |verified| to true when
 // |web_state|'s webview registers the mousedown event.
-// RemoveVerifierForElementWithId() should be called after this to ensure
-// future tests can add verifiers with the same prefix.
-bool AddVerifierToElementWithId(web::WebState* web_state,
-                                const std::string& element_id,
-                                bool* verified) {
-  const std::string kCallbackPrefix = CallbackPrefixForElementId(element_id);
+std::unique_ptr<web::WebState::ScriptCommandSubscription>
+AddVerifierToElementWithPrefix(web::WebState* web_state,
+                               ElementSelector* selector,
+                               const std::string& prefix,
+                               bool* verified) {
   const char kCallbackCommand[] = "verified";
-  const std::string kCallbackInvocation =
-      kCallbackPrefix + '.' + kCallbackCommand;
+  const std::string kCallbackInvocation = prefix + '.' + kCallbackCommand;
 
   const char kAddInteractionVerifierScriptTemplate[] =
       "(function() {"
-      // First template param: element ID.
-      "  var elementId = '%1$s';"
-      "  var element = document.getElementById(elementId);"
+      // First template param: element.
+      "  var element = %1$s;"
       "  if (!element)"
-      "    return 'Element ' + elementId + ' not found';"
+      "    return 'Element not found';"
       "  var invokeType = typeof __gCrWeb.message;"
       "  if (invokeType != 'object')"
       "    return 'Host invocation not installed (' + invokeType + ')';"
@@ -69,12 +66,14 @@ bool AddVerifierToElementWithId(web::WebState* web_state,
       "  return true;"
       "})();";
 
+  std::string selector_script =
+      base::SysNSStringToUTF8(selector.selectorScript);
   const std::string kAddVerifierScript =
       base::StringPrintf(kAddInteractionVerifierScriptTemplate,
-                         element_id.c_str(), kCallbackInvocation.c_str());
+                         selector_script.c_str(), kCallbackInvocation.c_str());
 
-  bool success =
-      testing::WaitUntilConditionOrTimeout(testing::kWaitForUIElementTimeout, ^{
+  bool success = base::test::ios::WaitUntilConditionOrTimeout(
+      base::test::ios::kWaitForUIElementTimeout, ^{
         bool verifier_added = false;
         std::unique_ptr<base::Value> value =
             web::test::ExecuteJavaScript(web_state, kAddVerifierScript);
@@ -91,35 +90,25 @@ bool AddVerifierToElementWithId(web::WebState* web_state,
       });
 
   if (!success)
-    return false;
+    return nullptr;
 
   // The callback doesn't care about any of the parameters, just whether it is
   // called or not.
-  auto callback = base::BindBlockArc(
-      ^bool(const base::DictionaryValue& /* json */,
-            const GURL& /* origin_url */, bool /* user_is_interacting */) {
+  auto callback = base::BindRepeating(
+      ^(const base::DictionaryValue& /* json */, const GURL& /* origin_url */,
+        bool /* user_is_interacting */, web::WebFrame* /* sender_frame */) {
         *verified = true;
-        return true;
       });
 
-  static_cast<web::WebStateImpl*>(web_state)->AddScriptCommandCallback(
-      callback, kCallbackPrefix);
-  return true;
-}
-
-// Removes the injected callback.
-void RemoveVerifierForElementWithId(web::WebState* web_state,
-                                    const std::string& element_id) {
-  static_cast<web::WebStateImpl*>(web_state)->RemoveScriptCommandCallback(
-      CallbackPrefixForElementId(element_id));
+  return web_state->AddScriptCommandCallback(callback, prefix);
 }
 
 // Returns a no element found error.
-id<GREYAction> WebViewElementNotFound(const std::string& element_id) {
+id<GREYAction> WebViewElementNotFound(ElementSelector* selector) {
   NSString* description = [NSString
-      stringWithFormat:@"Couldn't locate a bounding rect for element_id %s; "
+      stringWithFormat:@"Couldn't locate a bounding rect for element %@; "
                        @"either it isn't there or it has no area.",
-                       element_id.c_str()];
+                       selector.selectorDescription];
   GREYPerformBlock throw_error =
       ^BOOL(id /* element */, __strong NSError** error) {
         NSDictionary* user_info = @{NSLocalizedDescriptionKey : description};
@@ -132,37 +121,60 @@ id<GREYAction> WebViewElementNotFound(const std::string& element_id) {
                             performBlock:throw_error];
 }
 
+// Checks that a rectangle in a view (expressed in this view's coordinate
+// system) is actually visible and potentially tappable.
+bool IsRectVisibleInView(CGRect rect, UIView* view) {
+  // Take a point at the center of the element.
+  CGPoint point_in_view = CGPointMake(CGRectGetMidX(rect), CGRectGetMidY(rect));
+
+  // Converts its coordinates to window coordinates.
+  CGPoint point_in_window =
+      [view convertPoint:point_in_view toView:view.window];
+
+  // Check if this point is actually on screen.
+  if (!CGRectContainsPoint(view.window.frame, point_in_window)) {
+    return false;
+  }
+
+  // Check that the view is not covered by another view).
+  UIView* hit = [view.window hitTest:point_in_window withEvent:nil];
+  while (hit) {
+    if (hit == view) {
+      return true;
+    }
+    hit = hit.superview;
+  }
+  return false;
+}
+
 }  // namespace
 
 namespace web {
 
 id<GREYAction> WebViewVerifiedActionOnElement(WebState* state,
                                               id<GREYAction> action,
-                                              const std::string& element_id) {
+                                              ElementSelector* selector) {
   NSString* action_name =
-      [NSString stringWithFormat:@"Verified action (%@) on webview element %s.",
-                                 action.name, element_id.c_str()];
+      [NSString stringWithFormat:@"Verified action (%@) on webview element %@.",
+                                 action.name, selector.selectorDescription];
+  const std::string prefix =
+      base::StringPrintf("__web_test_%p_interaction", &selector);
 
   GREYPerformBlock verified_tap = ^BOOL(id element, __strong NSError** error) {
-    // A pointer to |verified| is passed into AddVerifierToElementWithId() so
-    // the verifier can update its value, but |verified| also needs to be marked
-    // as __block so that waitUntilCondition(), below, can access it by
+    // A pointer to |verified| is passed into AddVerifierToElementWithPrefix()
+    // so the verifier can update its value, but |verified| also needs to be
+    // marked as __block so that waitUntilCondition(), below, can access it by
     // reference.
     __block bool verified = false;
 
-    // Ensure that RemoveVerifierForElementWithId() is run regardless of how
-    // the block exits.
-    base::ScopedClosureRunner cleanup(
-        base::Bind(&RemoveVerifierForElementWithId, state, element_id));
-
     // Inject the verifier.
-    bool verifier_added =
-        AddVerifierToElementWithId(state, element_id, &verified);
-    if (!verifier_added) {
+    std::unique_ptr<web::WebState::ScriptCommandSubscription> subscription =
+        AddVerifierToElementWithPrefix(state, selector, prefix, &verified);
+    if (!subscription) {
       NSString* description = [NSString
           stringWithFormat:@"It wasn't possible to add the verification "
-                           @"javascript for element_id %s",
-                           element_id.c_str()];
+                           @"javascript for element %@",
+                           selector.selectorDescription];
       NSDictionary* user_info = @{NSLocalizedDescriptionKey : description};
       *error = [NSError errorWithDomain:kGREYInteractionErrorDomain
                                    code:kGREYInteractionActionFailedErrorCode
@@ -170,31 +182,34 @@ id<GREYAction> WebViewVerifiedActionOnElement(WebState* state,
       return NO;
     }
 
-    // Run the action.
-    [[EarlGrey selectElementWithMatcher:WebViewInWebState(state)]
+    // Run the action and wait for the UI to settle.
+    NSError* actionError = nil;
+    [[[GREYElementInteraction alloc]
+        initWithElementMatcher:WebViewInWebState(state)]
         performAction:action
-                error:error];
+                error:&actionError];
 
-    if (*error) {
+    if (actionError) {
+      *error = actionError;
       return NO;
     }
+    [[GREYUIThreadExecutor sharedInstance] drainUntilIdle];
 
     // Wait for the verified to trigger and set |verified|.
     NSString* verification_timeout_message =
-        [NSString stringWithFormat:@"The action (%@) on element_id %s wasn't "
+        [NSString stringWithFormat:@"The action (%@) on element %@ wasn't "
                                    @"verified before timing out.",
-                                   action.name, element_id.c_str()];
-    GREYAssert(testing::WaitUntilConditionOrTimeout(
-                   kWaitForVerificationTimeout,
-                   ^{
-                     return verified;
-                   }),
-               verification_timeout_message);
+                                   action.name, selector.selectorDescription];
+    bool success = base::test::ios::WaitUntilConditionOrTimeout(
+        kWaitForVerificationTimeout, ^{
+          return verified;
+        });
 
-    // If |verified| is not true, the wait condition should have already exited
-    // this control flow, so sanity check that it has in fact been set to
-    // true by this point.
-    DCHECK(verified);
+    if (!success || !verified) {
+      DLOG(WARNING) << base::SysNSStringToUTF8(verification_timeout_message);
+      return NO;
+    }
+
     return YES;
   };
 
@@ -205,11 +220,11 @@ id<GREYAction> WebViewVerifiedActionOnElement(WebState* state,
 
 id<GREYAction> WebViewLongPressElementForContextMenu(
     WebState* state,
-    const std::string& element_id,
+    ElementSelector* selector,
     bool triggers_context_menu) {
-  CGRect rect = web::test::GetBoundingRectOfElementWithId(state, element_id);
+  CGRect rect = web::test::GetBoundingRectOfElement(state, selector);
   if (CGRectIsEmpty(rect)) {
-    return WebViewElementNotFound(element_id);
+    return WebViewElementNotFound(selector);
   }
   CGPoint point = CGPointMake(CGRectGetMidX(rect), CGRectGetMidY(rect));
   id<GREYAction> longpress =
@@ -217,16 +232,77 @@ id<GREYAction> WebViewLongPressElementForContextMenu(
   if (triggers_context_menu) {
     return longpress;
   }
-  return WebViewVerifiedActionOnElement(state, longpress, element_id);
+  return WebViewVerifiedActionOnElement(state, longpress, selector);
 }
 
-id<GREYAction> WebViewTapElement(WebState* state,
-                                 const std::string& element_id) {
-  CGRect rect = web::test::GetBoundingRectOfElementWithId(state, element_id);
+id<GREYAction> WebViewTapElement(WebState* state, ElementSelector* selector) {
+  CGRect rect = web::test::GetBoundingRectOfElement(state, selector);
   CGPoint point = CGPointMake(CGRectGetMidX(rect), CGRectGetMidY(rect));
-  return CGRectIsEmpty(rect) ? WebViewElementNotFound(element_id)
+  return CGRectIsEmpty(rect) ? WebViewElementNotFound(selector)
                              : WebViewVerifiedActionOnElement(
-                                   state, grey_tapAtPoint(point), element_id);
+                                   state, grey_tapAtPoint(point), selector);
+}
+
+id<GREYAction> WebViewScrollElementToVisible(WebState* state,
+                                             ElementSelector* selector) {
+  const char kScrollToVisibleTemplate[] = "%1$s.scrollIntoView();";
+
+  std::string selector_script =
+      base::SysNSStringToUTF8(selector.selectorScript);
+  const std::string kScrollToVisibleScript =
+      base::StringPrintf(kScrollToVisibleTemplate, selector_script.c_str());
+
+  NSString* action_name =
+      [NSString stringWithFormat:@"Scroll element %@ to visible",
+                                 selector.selectorDescription];
+
+  NSError* (^error_block)(NSString* error) = ^NSError*(NSString* error) {
+    return [NSError errorWithDomain:kGREYInteractionErrorDomain
+                               code:kGREYInteractionActionFailedErrorCode
+                           userInfo:@{NSLocalizedDescriptionKey : error}];
+  };
+
+  GREYActionBlock* scroll_to_visible = [GREYActionBlock
+      actionWithName:action_name
+         constraints:WebViewInWebState(state)
+        performBlock:^BOOL(id element, __strong NSError** error_or_nil) {
+          // Checks that the element is indeed a WKWebView.
+          WKWebView* web_view = base::mac::ObjCCast<WKWebView>(element);
+          if (!web_view) {
+            *error_or_nil = error_block(@"WebView not found.");
+            return NO;
+          }
+
+          // First checks if there is really a need to scroll, if the element is
+          // already visible just returns early.
+          CGRect rect = web::test::GetBoundingRectOfElement(state, selector);
+          if (CGRectIsEmpty(rect)) {
+            *error_or_nil = error_block(@"Element not found.");
+            return false;
+          }
+          if (IsRectVisibleInView(rect, web_view)) {
+            return YES;
+          }
+
+          // Ask the element to scroll itself into view.
+          web::test::ExecuteJavaScript(state, kScrollToVisibleScript);
+
+          // Wait until the element is visible.
+          bool check = base::test::ios::WaitUntilConditionOrTimeout(
+              base::test::ios::kWaitForUIElementTimeout, ^{
+                CGRect rect =
+                    web::test::GetBoundingRectOfElement(state, selector);
+                return IsRectVisibleInView(rect, web_view);
+              });
+
+          if (!check) {
+            *error_or_nil = error_block(@"Element still not visible.");
+            return NO;
+          }
+          return YES;
+        }];
+
+  return scroll_to_visible;
 }
 
 }  // namespace web

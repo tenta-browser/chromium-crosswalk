@@ -5,7 +5,8 @@
 #ifndef CC_LAYERS_PICTURE_LAYER_H_
 #define CC_LAYERS_PICTURE_LAYER_H_
 
-#include "base/macros.h"
+#include <vector>
+
 #include "cc/base/devtools_instrumentation.h"
 #include "cc/base/invalidation_region.h"
 #include "cc/benchmarks/micro_benchmark_controller.h"
@@ -20,6 +21,9 @@ class RecordingSource;
 class CC_EXPORT PictureLayer : public Layer {
  public:
   static scoped_refptr<PictureLayer> Create(ContentLayerClient* client);
+
+  PictureLayer(const PictureLayer&) = delete;
+  PictureLayer& operator=(const PictureLayer&) = delete;
 
   void ClearClient();
 
@@ -38,14 +42,13 @@ class CC_EXPORT PictureLayer : public Layer {
   void SetLayerTreeHost(LayerTreeHost* host) override;
   void PushPropertiesTo(LayerImpl* layer) override;
   void SetNeedsDisplayRect(const gfx::Rect& layer_rect) override;
-  bool Update() override;
-  void SetLayerMaskType(LayerMaskType mask_type) override;
   sk_sp<SkPicture> GetPicture() const override;
-
+  bool Update() override;
   bool HasSlowPaths() const override;
   bool HasNonAAPaint() const override;
-
   void RunMicroBenchmark(MicroBenchmark* benchmark) override;
+  void CaptureContent(const gfx::Rect& rect,
+                      std::vector<NodeId>* content) override;
 
   ContentLayerClient* client() { return picture_layer_inputs_.client; }
 
@@ -55,6 +58,7 @@ class CC_EXPORT PictureLayer : public Layer {
 
   const DisplayItemList* GetDisplayItemList();
 
+  void SetLayerMaskType(LayerMaskType mask_type);
   LayerMaskType mask_type() { return mask_type_; }
 
  protected:
@@ -96,8 +100,6 @@ class CC_EXPORT PictureLayer : public Layer {
 
   int update_source_frame_number_;
   LayerMaskType mask_type_;
-
-  DISALLOW_COPY_AND_ASSIGN(PictureLayer);
 };
 
 }  // namespace cc

@@ -15,9 +15,8 @@
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/logging.h"
-#include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/single_thread_task_runner.h"
+#include "base/stl_util.h"
 #include "base/strings/stringize_macros.h"
 #include "base/time/time.h"
 #include "base/values.h"
@@ -96,9 +95,10 @@ Me2MeNativeMessagingHost::~Me2MeNativeMessagingHost() {
 void Me2MeNativeMessagingHost::OnMessage(const std::string& message) {
   DCHECK(task_runner()->BelongsToCurrentThread());
 
-  auto response = base::MakeUnique<base::DictionaryValue>();
-  std::unique_ptr<base::Value> message_value = base::JSONReader::Read(message);
-  if (!message_value->IsType(base::Value::Type::DICTIONARY)) {
+  auto response = std::make_unique<base::DictionaryValue>();
+  std::unique_ptr<base::Value> message_value =
+      base::JSONReader::ReadDeprecated(message);
+  if (!message_value->is_dict()) {
     OnError("Received a message that's not a dictionary.");
     return;
   }
@@ -180,7 +180,7 @@ void Me2MeNativeMessagingHost::ProcessHello(
   std::unique_ptr<base::ListValue> supported_features_list(
       new base::ListValue());
   supported_features_list->AppendStrings(std::vector<std::string>(
-      kSupportedFeatures, kSupportedFeatures + arraysize(kSupportedFeatures)));
+      kSupportedFeatures, kSupportedFeatures + base::size(kSupportedFeatures)));
   response->Set("supportedFeatures", std::move(supported_features_list));
   SendMessageToClient(std::move(response));
 }
@@ -191,7 +191,7 @@ void Me2MeNativeMessagingHost::ProcessClearPairedClients(
   DCHECK(task_runner()->BelongsToCurrentThread());
 
   if (needs_elevation_) {
-    if (!DelegateToElevatedHost(std::move(message))) {
+    if (DelegateToElevatedHost(std::move(message)) != DELEGATION_SUCCESS) {
       SendBooleanResult(std::move(response), false);
     }
     return;
@@ -212,7 +212,7 @@ void Me2MeNativeMessagingHost::ProcessDeletePairedClient(
   DCHECK(task_runner()->BelongsToCurrentThread());
 
   if (needs_elevation_) {
-    if (!DelegateToElevatedHost(std::move(message))) {
+    if (DelegateToElevatedHost(std::move(message)) != DELEGATION_SUCCESS) {
       SendBooleanResult(std::move(response), false);
     }
     return;
@@ -284,10 +284,18 @@ void Me2MeNativeMessagingHost::ProcessUpdateDaemonConfig(
   DCHECK(task_runner()->BelongsToCurrentThread());
 
   if (needs_elevation_) {
-    if (!DelegateToElevatedHost(std::move(message))) {
-      SendAsyncResult(std::move(response), DaemonController::RESULT_FAILED);
+    DelegationResult result = DelegateToElevatedHost(std::move(message));
+    switch (result) {
+      case DELEGATION_SUCCESS:
+        return;  // Result will be returned by elevated host.
+      case DELEGATION_CANCELLED:
+        SendAsyncResult(std::move(response),
+                        DaemonController::RESULT_CANCELLED);
+        return;
+      default:
+        SendAsyncResult(std::move(response), DaemonController::RESULT_FAILED);
+        return;
     }
-    return;
   }
 
   std::unique_ptr<base::DictionaryValue> config_dict =
@@ -345,10 +353,18 @@ void Me2MeNativeMessagingHost::ProcessStartDaemon(
   DCHECK(task_runner()->BelongsToCurrentThread());
 
   if (needs_elevation_) {
-    if (!DelegateToElevatedHost(std::move(message))) {
-      SendAsyncResult(std::move(response), DaemonController::RESULT_FAILED);
+    DelegationResult result = DelegateToElevatedHost(std::move(message));
+    switch (result) {
+      case DELEGATION_SUCCESS:
+        return;  // Result will be returned by elevated host.
+      case DELEGATION_CANCELLED:
+        SendAsyncResult(std::move(response),
+                        DaemonController::RESULT_CANCELLED);
+        return;
+      default:
+        SendAsyncResult(std::move(response), DaemonController::RESULT_FAILED);
+        return;
     }
-    return;
   }
 
   bool consent;
@@ -376,10 +392,18 @@ void Me2MeNativeMessagingHost::ProcessStopDaemon(
   DCHECK(task_runner()->BelongsToCurrentThread());
 
   if (needs_elevation_) {
-    if (!DelegateToElevatedHost(std::move(message))) {
-      SendAsyncResult(std::move(response), DaemonController::RESULT_FAILED);
+    DelegationResult result = DelegateToElevatedHost(std::move(message));
+    switch (result) {
+      case DELEGATION_SUCCESS:
+        return;  // Result will be returned by elevated host.
+      case DELEGATION_CANCELLED:
+        SendAsyncResult(std::move(response),
+                        DaemonController::RESULT_CANCELLED);
+        return;
+      default:
+        SendAsyncResult(std::move(response), DaemonController::RESULT_FAILED);
+        return;
     }
-    return;
   }
 
   daemon_controller_->Stop(
@@ -458,7 +482,7 @@ void Me2MeNativeMessagingHost::SendConfigResponse(
   if (config) {
     response->Set("config", std::move(config));
   } else {
-    response->Set("config", base::MakeUnique<base::Value>());
+    response->Set("config", std::make_unique<base::Value>());
   }
   SendMessageToClient(std::move(response));
 }
@@ -545,7 +569,8 @@ void Me2MeNativeMessagingHost::OnError(const std::string& error_message) {
 
 #if defined(OS_WIN)
 
-bool Me2MeNativeMessagingHost::DelegateToElevatedHost(
+Me2MeNativeMessagingHost::DelegationResult
+Me2MeNativeMessagingHost::DelegateToElevatedHost(
     std::unique_ptr<base::DictionaryValue> message) {
   DCHECK(task_runner()->BelongsToCurrentThread());
   DCHECK(needs_elevation_);
@@ -559,20 +584,28 @@ bool Me2MeNativeMessagingHost::DelegateToElevatedHost(
         client_));
   }
 
-  if (elevated_host_->EnsureElevatedHostCreated()) {
+  ProcessLaunchResult result = elevated_host_->EnsureElevatedHostCreated();
+  if (result == PROCESS_LAUNCH_RESULT_SUCCESS) {
     elevated_host_->SendMessage(std::move(message));
-    return true;
   }
 
-  return false;
+  switch (result) {
+    case PROCESS_LAUNCH_RESULT_SUCCESS:
+      return DELEGATION_SUCCESS;
+    case PROCESS_LAUNCH_RESULT_CANCELLED:
+      return DELEGATION_CANCELLED;
+    case PROCESS_LAUNCH_RESULT_FAILED:
+      return DELEGATION_FAILED;
+  }
 }
 
 #else  // defined(OS_WIN)
 
-bool Me2MeNativeMessagingHost::DelegateToElevatedHost(
+Me2MeNativeMessagingHost::DelegationResult
+Me2MeNativeMessagingHost::DelegateToElevatedHost(
     std::unique_ptr<base::DictionaryValue> message) {
   NOTREACHED();
-  return false;
+  return DELEGATION_FAILED;
 }
 
 #endif  // !defined(OS_WIN)

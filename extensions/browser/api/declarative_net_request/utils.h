@@ -2,40 +2,60 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#ifndef EXTENSIONS_BROWSER_API_DECLARATIVE_NET_REQUEST_UTILS_H_
+#define EXTENSIONS_BROWSER_API_DECLARATIVE_NET_REQUEST_UTILS_H_
+
 #include <stddef.h>
 #include <stdint.h>
 #include <string>
 #include <vector>
 
-#ifndef EXTENSIONS_BROWSER_API_DECLARATIVE_NET_REQUEST_UTILS_H_
-#define EXTENSIONS_BROWSER_API_DECLARATIVE_NET_REQUEST_UTILS_H_
+#include "base/callback_forward.h"
+#include "base/containers/span.h"
+#include "base/macros.h"
+#include "base/optional.h"
+#include "extensions/browser/api/declarative_net_request/ruleset_source.h"
 
 namespace base {
-class ListValue;
+class FilePath;
 }  // namespace base
 
 namespace extensions {
-class Extension;
-struct InstallWarning;
 
 namespace declarative_net_request {
 
-// Indexes and persists |rules| for |extension|. In case of an error, returns
-// false and populates |error|. On success, returns |ruleset_checksum|, which
-// is a checksum of the persisted indexed ruleset file. |ruleset_checksum| must
-// not be null.
-// Note: This must be called on a thread where file IO is allowed.
-bool IndexAndPersistRules(const base::ListValue& rules,
-                          const Extension& extension,
-                          std::string* error,
-                          std::vector<InstallWarning>* warnings,
-                          int* ruleset_checksum);
+// Returns true if |data| represents a valid data buffer containing indexed
+// ruleset data with |expected_checksum|.
+bool IsValidRulesetData(base::span<const uint8_t> data, int expected_checksum);
 
-// Returns true if |data| and |size| represent a valid data buffer containing
-// indexed ruleset data with |expected_checksum|.
-bool IsValidRulesetData(const uint8_t* data,
-                        size_t size,
-                        int expected_checksum);
+// Returns the version header used for indexed ruleset files. Only exposed for
+// testing.
+std::string GetVersionHeaderForTesting();
+
+// Returns the indexed ruleset format version.
+int GetIndexedRulesetFormatVersionForTesting();
+
+// Override the ruleset format version for testing.
+void SetIndexedRulesetFormatVersionForTesting(int version);
+
+// Strips the version header from |ruleset_data|. Returns false on version
+// mismatch.
+bool StripVersionHeaderAndParseVersion(std::string* ruleset_data);
+
+// Helper function to persist the indexed ruleset |data| at the given |path|.
+// The ruleset is composed of a version header corresponding to the current
+// ruleset format version, followed by the actual ruleset data. Note: The
+// checksum only corresponds to this ruleset data and does not include the
+// version header.
+bool PersistIndexedRuleset(const base::FilePath& path,
+                           base::span<const uint8_t> data,
+                           int* ruleset_checksum);
+
+// Helper to clear each renderer's in-memory cache the next time it navigates.
+void ClearRendererCacheOnNavigation();
+
+// Helper to log the |kReadDynamicRulesJSONStatusHistogram| histogram.
+void LogReadDynamicRulesStatus(ReadJSONRulesResult::Status status);
 
 }  // namespace declarative_net_request
 }  // namespace extensions

@@ -11,6 +11,7 @@
 #include <vector>
 
 #include "base/logging.h"
+#include "base/strings/char_traits.h"
 #include "base/strings/stringprintf.h"
 #include "components/viz/service/display/static_geometry_binding.h"
 #include "gpu/command_buffer/client/gles2_interface.h"
@@ -18,29 +19,18 @@
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/size.h"
 
-constexpr bool ConstexprEqual(const char* a, const char* b, size_t length) {
-  for (size_t i = 0; i < length; i++) {
-    if (a[i] != b[i])
-      return false;
-  }
-  return true;
-}
-
 constexpr base::StringPiece StripLambda(base::StringPiece shader) {
-  // Must contain at least "[]() {}" and trailing null (included in size).
-  // TODO(jbroman): Simplify this once we're in a post-C++17 world, where
-  // starts_with and ends_with can easily be made constexpr.
-  DCHECK(shader.size() >= 7);  // NOLINT
-  DCHECK(ConstexprEqual(shader.data(), "[]() {", 6));
+  // Must contain at least "[]() {}".
+  DCHECK(shader.starts_with("[]() {"));
+  DCHECK(shader.ends_with("}"));
   shader.remove_prefix(6);
-  DCHECK(shader[shader.size() - 1] == '}');  // NOLINT
   shader.remove_suffix(1);
   return shader;
 }
 
 // Shaders are passed in with lambda syntax, which tricks clang-format into
 // handling them correctly. StripLambda removes this.
-#define SHADER0(Src) StripLambda(base::StringPiece(#Src, sizeof(#Src) - 1))
+#define SHADER0(Src) StripLambda(#Src)
 
 #define HDR(x)        \
   do {                \
@@ -207,8 +197,7 @@ void VertexShader::Init(GLES2Interface* context,
     uniforms.push_back("uvTexScale");
     uniforms.push_back("uvTexOffset");
   }
-  if (has_matrix_)
-    uniforms.push_back("matrix");
+  uniforms.push_back("matrix");
   if (has_vertex_opacity_)
     uniforms.push_back("opacity");
   if (aa_mode_ == USE_AA) {
@@ -241,8 +230,7 @@ void VertexShader::Init(GLES2Interface* context,
     uv_tex_scale_location_ = locations[index++];
     uv_tex_offset_location_ = locations[index++];
   }
-  if (has_matrix_)
-    matrix_location_ = locations[index++];
+  matrix_location_ = locations[index++];
   if (has_vertex_opacity_)
     vertex_opacity_location_ = locations[index++];
   if (aa_mode_ == USE_AA) {
@@ -290,7 +278,6 @@ std::string VertexShader::GetShaderString() const {
       SRC("vec4 pos = vec4(quad[vertex_index], a_position.z, a_position.w);");
       break;
   }
-  if (has_matrix_) {
     if (use_uniform_arrays_) {
       HDR("uniform mat4 matrix[NUM_QUADS];");
       SRC("gl_Position = matrix[quad_index] * pos;");
@@ -298,9 +285,6 @@ std::string VertexShader::GetShaderString() const {
       HDR("uniform mat4 matrix;");
       SRC("gl_Position = matrix * pos;");
     }
-  } else {
-    SRC("gl_Position = pos;");
-  }
 
   // Compute the anti-aliasing edge distances.
   if (aa_mode_ == USE_AA) {
@@ -348,7 +332,7 @@ std::string VertexShader::GetShaderString() const {
         break;
       case TEX_COORD_TRANSFORM_TRANSLATED_VEC4:
         SRC("texCoord = texCoord + vec2(0.5);");
-      // Fall through...
+        FALLTHROUGH;
       case TEX_COORD_TRANSFORM_VEC4:
         if (use_uniform_arrays_) {
           HDR("uniform TexCoordPrecision vec4 vertexTexTransform[NUM_QUADS];");
@@ -410,6 +394,7 @@ std::string FragmentShader::GetShaderString() const {
     precision = TEX_COORD_PRECISION_MEDIUM;
   std::string shader = GetShaderSource();
   SetBlendModeFunctions(&shader);
+  SetRoundedCornerFunctions(&shader);
   SetFragmentSamplerType(sampler_type_, &shader);
   SetFragmentTexCoordPrecision(precision, &shader);
   return shader;
@@ -469,6 +454,16 @@ void FragmentShader::Init(GLES2Interface* context,
     uniforms.push_back("lut_texture");
     uniforms.push_back("lut_size");
   }
+  if (has_output_color_matrix_)
+    uniforms.emplace_back("output_color_matrix");
+
+  if (has_tint_color_matrix_)
+    uniforms.emplace_back("tint_color_matrix");
+
+  if (has_rounded_corner_) {
+    uniforms.emplace_back("roundedCornerRect");
+    uniforms.emplace_back("roundedCornerRadius");
+  }
 
   locations.resize(uniforms.size());
 
@@ -525,15 +520,125 @@ void FragmentShader::Init(GLES2Interface* context,
     lut_texture_location_ = locations[index++];
     lut_size_location_ = locations[index++];
   }
+
+  if (has_output_color_matrix_)
+    output_color_matrix_location_ = locations[index++];
+
+  if (has_tint_color_matrix_)
+    tint_color_matrix_location_ = locations[index++];
+
+  if (has_rounded_corner_) {
+    rounded_corner_rect_location_ = locations[index++];
+    rounded_corner_radius_location_ = locations[index++];
+  }
+
   DCHECK_EQ(index, locations.size());
 }
 
-void FragmentShader::SetBlendModeFunctions(std::string* shader_string) const {
-  if (shader_string->find("ApplyBlendMode") == std::string::npos)
+void FragmentShader::SetRoundedCornerFunctions(
+    std::string* shader_string) const {
+  if (!has_rounded_corner_)
     return;
 
+  static constexpr base::StringPiece kUniforms = SHADER0([]() {
+    uniform vec4 roundedCornerRect;
+    uniform vec4 roundedCornerRadius;
+  });
+
+  static constexpr base::StringPiece kFunctionRcUtility = SHADER0([]() {
+    // Returns a vector of size 4. Each component of a vector is set to 1 or 0
+    // representing whether |rcCoord| is a part of the respective corner or
+    // not.
+    // The component ordering is:
+    //     [Top left, Top right, Bottom right, Bottom left]
+    vec4 IsCorner(vec2 rcCoord) {
+      // Top left corner
+      if (rcCoord.x < roundedCornerRadius.x &&
+          rcCoord.y < roundedCornerRadius.x) {
+        return vec4(1.0, 0.0, 0.0, 0.0);
+      }
+
+      // Top right corner
+      if (rcCoord.x > roundedCornerRect.z - roundedCornerRadius.y &&
+          rcCoord.y < roundedCornerRadius.y) {
+        return vec4(0.0, 1.0, 0.0, 0.0);
+      }
+
+      // Bottom right corner
+      if (rcCoord.x > roundedCornerRect.z - roundedCornerRadius.z &&
+          rcCoord.y > roundedCornerRect.w - roundedCornerRadius.z) {
+        return vec4(0.0, 0.0, 1.0, 0.0);
+      }
+
+      // Bottom left corner
+      if (rcCoord.x < roundedCornerRadius.w &&
+          rcCoord.y > roundedCornerRect.w - roundedCornerRadius.w) {
+        return vec4(0.0, 0.0, 0.0, 1.0);
+      }
+      return vec4(0.0, 0.0, 0.0, 0.0);
+    }
+
+    // Returns the center of the rounded corner. |corner| holds the info on
+    // which corner the center is requested for.
+    vec2 GetCenter(vec4 corner, float radius) {
+      if (corner.x == 1.0) {
+        // Top left corner
+        return vec2(radius, radius);
+      } else if (corner.y == 1.0) {
+        // Top right corner
+        return vec2(roundedCornerRect.z - radius, radius);
+      } else if (corner.z == 1.0) {
+        // Bottom right corner
+        return vec2(roundedCornerRect.z - radius, roundedCornerRect.w - radius);
+      } else {
+        // Bottom left corner
+        return vec2(radius, roundedCornerRect.w - radius);
+      }
+    }
+  });
+
+  static constexpr base::StringPiece kFunctionApplyRoundedCorner =
+      SHADER0([]() {
+        vec4 ApplyRoundedCorner(vec4 src) {
+          vec2 rcCoord = gl_FragCoord.xy - roundedCornerRect.xy;
+
+          vec4 isCorner = IsCorner(rcCoord);
+
+          // Get the radius to use based on the corner this fragment lies in.
+          float r = dot(isCorner, roundedCornerRadius);
+
+          // If the radius is 0, then there is no rounded corner here. We can do
+          // an early return.
+          if (r == 0.0)
+            return src;
+
+          // Vector to the corner's center this frag is in.
+          vec2 cornerCenter = GetCenter(isCorner, r);
+
+          // Vector from the center of the corner to the current fragment center
+          vec2 cxy = rcCoord - cornerCenter;
+
+          // Compute the distance of the fragment's center from the corner's
+          // center.
+          float fragDst = length(cxy);
+
+          float alpha = smoothstep(r - 1.0, r + 1.0, fragDst);
+          return vec4(0.0) * alpha + src * (1.0 - alpha);
+        }
+      });
+
+  std::string shader;
+  shader.reserve(shader_string->size() + 2048);
+  shader += "precision mediump float;";
+  kUniforms.AppendToString(&shader);
+  kFunctionRcUtility.AppendToString(&shader);
+  kFunctionApplyRoundedCorner.AppendToString(&shader);
+  shader += *shader_string;
+  *shader_string = std::move(shader);
+}
+
+void FragmentShader::SetBlendModeFunctions(std::string* shader_string) const {
   if (!has_blend_mode()) {
-    shader_string->insert(0, "#define ApplyBlendMode(X, Y) (X)\n");
     return;
   }
 
@@ -543,39 +648,31 @@ void FragmentShader::SetBlendModeFunctions(std::string* shader_string) const {
     uniform TexCoordPrecision vec4 backdropRect;
   });
 
-  base::StringPiece mixFunction;
+  base::StringPiece function_apply_blend_mode;
   if (mask_for_background_) {
-    static constexpr base::StringPiece kMixFunctionWithMask = SHADER0([]() {
-      vec4 MixBackdrop(TexCoordPrecision vec2 bgTexCoord, float mask) {
+    static constexpr base::StringPiece kFunctionApplyBlendMode = SHADER0([]() {
+      vec4 ApplyBlendMode(vec4 src, float mask) {
+        TexCoordPrecision vec2 bgTexCoord = gl_FragCoord.xy - backdropRect.xy;
+        bgTexCoord *= backdropRect.zw;
         vec4 backdrop = texture2D(s_backdropTexture, bgTexCoord);
         vec4 original_backdrop =
             texture2D(s_originalBackdropTexture, bgTexCoord);
-        return mix(original_backdrop, backdrop, mask);
+        vec4 dst = mix(original_backdrop, backdrop, mask);
+        return Blend(src, dst);
       }
     });
-    mixFunction = kMixFunctionWithMask;
+    function_apply_blend_mode = kFunctionApplyBlendMode;
   } else {
-    static constexpr base::StringPiece kMixFunctionWithoutMask = SHADER0([]() {
-      vec4 MixBackdrop(TexCoordPrecision vec2 bgTexCoord, float mask) {
-        return texture2D(s_backdropTexture, bgTexCoord);
+    static constexpr base::StringPiece kFunctionApplyBlendMode = SHADER0([]() {
+      vec4 ApplyBlendMode(vec4 src) {
+        TexCoordPrecision vec2 bgTexCoord = gl_FragCoord.xy - backdropRect.xy;
+        bgTexCoord *= backdropRect.zw;
+        vec4 dst = texture2D(s_backdropTexture, bgTexCoord);
+        return Blend(src, dst);
       }
     });
-    mixFunction = kMixFunctionWithoutMask;
+    function_apply_blend_mode = kFunctionApplyBlendMode;
   }
-
-  static constexpr base::StringPiece kFunctionApplyBlendMode = SHADER0([]() {
-    vec4 GetBackdropColor(float mask) {
-      TexCoordPrecision vec2 bgTexCoord = gl_FragCoord.xy - backdropRect.xy;
-      bgTexCoord.x /= backdropRect.z;
-      bgTexCoord.y /= backdropRect.w;
-      return MixBackdrop(bgTexCoord, mask);
-    }
-
-    vec4 ApplyBlendMode(vec4 src, float mask) {
-      vec4 dst = GetBackdropColor(mask);
-      return Blend(src, dst);
-    }
-  });
 
   std::string shader;
   shader.reserve(shader_string->size() + 1024);
@@ -583,8 +680,7 @@ void FragmentShader::SetBlendModeFunctions(std::string* shader_string) const {
   AppendHelperFunctions(&shader);
   AppendBlendFunction(&shader);
   kUniforms.AppendToString(&shader);
-  mixFunction.AppendToString(&shader);
-  kFunctionApplyBlendMode.AppendToString(&shader);
+  function_apply_blend_mode.AppendToString(&shader);
   shader += *shader_string;
   *shader_string = std::move(shader);
 }
@@ -932,7 +1028,7 @@ std::string FragmentShader::GetShaderSource() const {
       break;
   }
 
-  // Apply LUT based color conversion.
+  // Apply color conversion.
   switch (color_conversion_mode_) {
     case COLOR_CONVERSION_MODE_LUT:
       HDR("uniform sampler2D lut_texture;");
@@ -949,13 +1045,30 @@ std::string FragmentShader::GetShaderSource() const {
       HDR("             LutLookup(sampler, pos.xy + vec2(0, 1.0 / size)),");
       HDR("             pos.z - layer);");
       HDR("}");
+      // Un-premultiply by alpha.
+      if (premultiply_alpha_mode_ != NON_PREMULTIPLIED_ALPHA) {
+        SRC("// un-premultiply alpha");
+        SRC("if (texColor.a > 0.0) texColor.rgb /= texColor.a;");
+      }
       SRC("texColor.rgb = LUT(lut_texture, texColor.xyz, lut_size).xyz;");
+      SRC("texColor.rgb *= texColor.a;");
       break;
     case COLOR_CONVERSION_MODE_SHADER:
       header += color_transform_->GetShaderSource();
+      // Un-premultiply by alpha.
+      if (premultiply_alpha_mode_ != NON_PREMULTIPLIED_ALPHA) {
+        SRC("// un-premultiply alpha");
+        SRC("if (texColor.a > 0.0) texColor.rgb /= texColor.a;");
+      }
       SRC("texColor.rgb = DoColorConversion(texColor.xyz);");
+      SRC("texColor.rgb *= texColor.a;");
       break;
     case COLOR_CONVERSION_MODE_NONE:
+      // Premultiply by alpha.
+      if (premultiply_alpha_mode_ == NON_PREMULTIPLIED_ALPHA) {
+        SRC("// Premultiply alpha");
+        SRC("texColor.rgb *= texColor.a;");
+      }
       break;
   }
 
@@ -992,12 +1105,6 @@ std::string FragmentShader::GetShaderSource() const {
     SRC("float aa = clamp(gl_FragCoord.w * min(d2.x, d2.y), 0.0, 1.0);");
   }
 
-  // Premultiply by alpha.
-  if (premultiply_alpha_mode_ == NON_PREMULTIPLIED_ALPHA) {
-    SRC("// Premultiply alpha");
-    SRC("texColor.rgb *= texColor.a;");
-  }
-
   // Apply background texture.
   if (has_background_color_) {
     HDR("uniform vec4 background_color;");
@@ -1005,10 +1112,18 @@ std::string FragmentShader::GetShaderSource() const {
     SRC("texColor += background_color * (1.0 - texColor.a);");
   }
 
-  // Apply swizzle.
-  if (swizzle_mode_ == DO_SWIZZLE) {
-    SRC("// Apply swizzle");
-    SRC("texColor = texColor.bgra;\n");
+  // Finally apply the output color matrix to texColor.
+  if (has_output_color_matrix_) {
+    HDR("uniform mat4 output_color_matrix;");
+    SRC("// Apply the output color matrix");
+    SRC("texColor = output_color_matrix * texColor;");
+  }
+
+  // Tint the final color. Used for debugging composited content.
+  if (has_tint_color_matrix_) {
+    HDR("uniform mat4 tint_color_matrix;");
+    SRC("// Apply the tint color matrix");
+    SRC("texColor = tint_color_matrix * texColor;");
   }
 
   // Include header text for alpha.
@@ -1050,12 +1165,22 @@ std::string FragmentShader::GetShaderSource() const {
       SRC("gl_FragColor = vec4(texColor.rgb, 1.0);");
       break;
     case FRAG_COLOR_MODE_APPLY_BLEND_MODE:
-      if (mask_mode_ != NO_MASK)
-        SRC("gl_FragColor = ApplyBlendMode(texColor, maskColor.w);");
-      else
-        SRC("gl_FragColor = ApplyBlendMode(texColor, 0.0);");
+      if (!has_blend_mode()) {
+        SRC("gl_FragColor = texColor;");
+      } else if (mask_mode_ != NO_MASK) {
+        if (mask_for_background_)
+          SRC("gl_FragColor = ApplyBlendMode(texColor, maskColor.w);");
+        else
+          SRC("gl_FragColor = ApplyBlendMode(texColor);");
+      } else {
+        SRC("gl_FragColor = ApplyBlendMode(texColor);");
+      }
       break;
   }
+
+  if (has_rounded_corner_)
+    SRC("gl_FragColor = ApplyRoundedCorner(gl_FragColor);");
+
   source += "}\n";
 
   return header + source;

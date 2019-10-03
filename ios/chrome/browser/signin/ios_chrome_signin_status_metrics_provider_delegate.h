@@ -9,7 +9,7 @@
 
 #include "base/macros.h"
 #include "components/signin/core/browser/signin_status_metrics_provider_delegate.h"
-#include "ios/chrome/browser/signin/signin_manager_factory_observer.h"
+#include "ios/chrome/browser/signin/identity_manager_factory_observer.h"
 
 namespace ios {
 class ChromeBrowserState;
@@ -17,7 +17,7 @@ class ChromeBrowserState;
 
 class IOSChromeSigninStatusMetricsProviderDelegate
     : public SigninStatusMetricsProviderDelegate,
-      public SigninManagerFactoryObserver {
+      public IdentityManagerFactoryObserver {
  public:
   IOSChromeSigninStatusMetricsProviderDelegate();
   ~IOSChromeSigninStatusMetricsProviderDelegate() override;
@@ -26,11 +26,12 @@ class IOSChromeSigninStatusMetricsProviderDelegate
   // SigninStatusMetricsProviderDelegate implementation.
   void Initialize() override;
   AccountsStatus GetStatusOfAllAccounts() override;
-  std::vector<SigninManager*> GetSigninManagersForAllAccounts() override;
+  std::vector<signin::IdentityManager*> GetIdentityManagersForAllAccounts()
+      override;
 
-  // SigninManagerFactoryObserver implementation.
-  void SigninManagerCreated(SigninManager* manager) override;
-  void SigninManagerShutdown(SigninManager* manager) override;
+  // IdentityManagerFactoryObserver implementation.
+  void IdentityManagerCreated(signin::IdentityManager* manager) override;
+  void IdentityManagerShutdown(signin::IdentityManager* manager) override;
 
   // Returns the loaded ChromeBrowserState instances.
   std::vector<ios::ChromeBrowserState*> GetLoadedChromeBrowserStates();

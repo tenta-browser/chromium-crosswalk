@@ -8,13 +8,13 @@
 #include <stdint.h>
 
 #include <memory>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
-#include "base/containers/hash_tables.h"
 #include "base/containers/queue.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "gpu/command_buffer/common/mailbox.h"
 #include "media/base/video_decoder_config.h"
 #include "media/video/video_decode_accelerator.h"
 #include "ppapi/c/pp_codecs.h"
@@ -23,7 +23,7 @@ namespace base {
 class SingleThreadTaskRunner;
 }
 
-namespace ui {
+namespace viz {
 class ContextProviderCommandBuffer;
 }
 
@@ -42,7 +42,7 @@ class VideoDecoderShim : public media::VideoDecodeAccelerator {
 
   // media::VideoDecodeAccelerator implementation.
   bool Initialize(const Config& config, Client* client) override;
-  void Decode(const media::BitstreamBuffer& bitstream_buffer) override;
+  void Decode(media::BitstreamBuffer bitstream_buffer) override;
   void AssignPictureBuffers(
       const std::vector<media::PictureBuffer>& buffers) override;
   void ReusePictureBuffer(int32_t picture_buffer_id) override;
@@ -80,20 +80,18 @@ class VideoDecoderShim : public media::VideoDecodeAccelerator {
 
   PepperVideoDecoderHost* host_;
   scoped_refptr<base::SingleThreadTaskRunner> media_task_runner_;
-  scoped_refptr<ui::ContextProviderCommandBuffer> context_provider_;
+  scoped_refptr<viz::ContextProviderCommandBuffer> context_provider_;
 
   // The current decoded frame size.
   gfx::Size texture_size_;
   // Map that takes the plugin's GL texture id to the renderer's GL texture id.
-  using TextureIdMap = base::hash_map<uint32_t, uint32_t>;
+  using TextureIdMap = std::unordered_map<uint32_t, uint32_t>;
   TextureIdMap texture_id_map_;
   // Available textures (these are plugin ids.)
-  using TextureIdSet = base::hash_set<uint32_t>;
+  using TextureIdSet = std::unordered_set<uint32_t>;
   TextureIdSet available_textures_;
   // Track textures that are no longer needed (these are plugin ids.)
   TextureIdSet textures_to_dismiss_;
-  // Mailboxes for pending texture requests, to write to plugin's textures.
-  std::vector<gpu::Mailbox> pending_texture_mailboxes_;
 
   // Queue of completed decode ids, for notifying the host.
   using CompletedDecodeQueue = base::queue<uint32_t>;
@@ -110,7 +108,7 @@ class VideoDecoderShim : public media::VideoDecodeAccelerator {
 
   std::unique_ptr<YUVConverter> yuv_converter_;
 
-  base::WeakPtrFactory<VideoDecoderShim> weak_ptr_factory_;
+  base::WeakPtrFactory<VideoDecoderShim> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(VideoDecoderShim);
 };

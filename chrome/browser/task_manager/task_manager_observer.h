@@ -25,8 +25,9 @@ using TaskIdList = std::vector<TaskId>;
 enum RefreshType {
   REFRESH_TYPE_NONE = 0,
   REFRESH_TYPE_CPU = 1,
-  REFRESH_TYPE_PHYSICAL_MEMORY = 1 << 1,
-  REFRESH_TYPE_MEMORY_DETAILS = 1 << 2,
+
+  // Only available on CrOS.
+  REFRESH_TYPE_SWAPPED_MEM = 1 << 2,
   REFRESH_TYPE_GPU_MEMORY = 1 << 3,
   REFRESH_TYPE_V8_MEMORY = 1 << 4,
   REFRESH_TYPE_SQLITE_MEMORY = 1 << 5,
@@ -42,22 +43,15 @@ enum RefreshType {
   // or backgrounded.
   REFRESH_TYPE_PRIORITY = 1 << 13,
 
-#if defined(OS_LINUX)
+#if defined(OS_LINUX) || defined(OS_MACOSX)
   // For observers interested in getting the number of open file descriptors of
   // processes.
   REFRESH_TYPE_FD_COUNT = 1 << 14,
-#endif  // defined(OS_LINUX)
+#endif  // defined(OS_LINUX) || defined(OS_MACOSX)
 
-  REFRESH_TYPE_MEMORY_STATE = 1 << 15,
-  REFRESH_TYPE_KEEPALIVE_COUNT = 1 << 16,
-  REFRESH_TYPE_MEMORY_FOOTPRINT = 1 << 17,
-  REFRESH_TYPE_HARD_FAULTS = 1 << 18,
-
-  REFRESH_TYPE_MEMORY = REFRESH_TYPE_PHYSICAL_MEMORY |
-                        REFRESH_TYPE_MEMORY_FOOTPRINT |
-                        REFRESH_TYPE_MEMORY_DETAILS,
-  REFRESH_TYPE_MEMORY_NON_MEMORY_INSTRUMENTATION =
-      REFRESH_TYPE_PHYSICAL_MEMORY | REFRESH_TYPE_MEMORY_DETAILS,
+  REFRESH_TYPE_KEEPALIVE_COUNT = 1 << 15,
+  REFRESH_TYPE_MEMORY_FOOTPRINT = 1 << 16,
+  REFRESH_TYPE_HARD_FAULTS = 1 << 17,
 };
 
 // Defines the interface for observers of the task manager.

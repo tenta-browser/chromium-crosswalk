@@ -6,6 +6,7 @@
 #define COMPONENTS_CRASH_CONTENT_APP_CRASH_EXPORT_THUNKS_H_
 
 #include <stddef.h>
+#include <time.h>
 #include <windows.h>
 
 #include "build/build_config.h"
@@ -50,42 +51,22 @@ int CrashForException_ExportThunk(EXCEPTION_POINTERS* info);
 // not enforced to avoid blocking startup code on synchronizing them.
 void SetUploadConsent_ExportThunk(bool consent);
 
-// NOTE: This function is used by SyzyASAN to annotate crash reports. If you
-// change the name or signature of this function you will break SyzyASAN
-// instrumented releases of Chrome. Please contact syzygy-team@chromium.org
-// before doing so! See also http://crbug.com/567781.
-void SetCrashKeyValue_ExportThunk(const wchar_t* key, const wchar_t* value);
-
-void ClearCrashKeyValue_ExportThunk(const wchar_t* key);
-
-void SetCrashKeyValueEx_ExportThunk(const char* key,
-                                    size_t key_len,
-                                    const char* value,
-                                    size_t value_len);
-
-void ClearCrashKeyValueEx_ExportThunk(const char* key, size_t key_len);
-
 // Injects a thread into a remote process to dump state when there is no crash.
-// |serialized_crash_keys| is a nul terminated string in the address space of
 // |process| that represents serialized crash keys sent from the browser.
-// Keys and values are separated by ':', and key/value pairs are separated by
-// ','. All keys should be previously registered as crash keys.
 // This method is used solely to classify hung input.
-HANDLE InjectDumpForHungInput_ExportThunk(HANDLE process,
-                                          void* serialized_crash_keys);
+HANDLE InjectDumpForHungInput_ExportThunk(HANDLE process);
 
-// Injects a thread into a remote process to dump state when there is no crash.
-// This method provides |reason| which will interpreted as an integer and logged
-// as a crash key.
-HANDLE InjectDumpForHungInputNoCrashKeys_ExportThunk(HANDLE process,
-                                                     int reason);
+// Returns the crashpad database path.
+const wchar_t* GetCrashpadDatabasePath_ExportThunk();
 
-#if defined(ARCH_CPU_X86_64)
-// V8 support functions.
-void RegisterNonABICompliantCodeRange_ExportThunk(void* start,
-                                                  size_t size_in_bytes);
-void UnregisterNonABICompliantCodeRange_ExportThunk(void* start);
-#endif  // defined(ARCH_CPU_X86_64)
+// This function may be invoked across module boundaries to delete reports
+// within the time range. See crash_reporter::ClearReportsBetween.
+void ClearReportsBetween_ExportThunk(time_t begin, time_t end);
+
+// Immediately dump |process| to a crash dump adorned with |ptype|.
+// Takes ownership of |process|, does not kill nor affect the exit code of
+// |process|.
+bool DumpHungProcessWithPtype_ExportThunk(HANDLE process, const char* ptype);
 
 }  // extern "C"
 

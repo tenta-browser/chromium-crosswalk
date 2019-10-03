@@ -6,24 +6,24 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/strings/sys_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/threading/sequenced_worker_pool.h"
+#include "base/task/post_task.h"
 #include "base/time/time.h"
-#include "components/signin/core/browser/signin_manager.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #import "ios/chrome/browser/crash_report/breakpad_helper.h"
 #include "ios/chrome/browser/first_run/first_run.h"
 #import "ios/chrome/browser/first_run/first_run_configuration.h"
 #include "ios/chrome/browser/first_run/first_run_metrics.h"
-#include "ios/chrome/browser/signin/signin_manager_factory.h"
-#include "ios/chrome/browser/tabs/tab.h"
+#include "ios/chrome/browser/signin/identity_manager_factory.h"
 #include "ios/chrome/browser/ui/first_run/first_run_histograms.h"
-#import "ios/chrome/browser/ui/settings/settings_utils.h"
-#import "ios/chrome/browser/ui/settings/sync_utils/sync_util.h"
-#include "ios/chrome/browser/ui/ui_util.h"
-#include "ios/web/public/web_thread.h"
+#import "ios/chrome/browser/ui/settings/sync/utils/sync_util.h"
+#import "ios/chrome/browser/ui/settings/utils/settings_utils.h"
+#include "ios/chrome/browser/ui/util/ui_util.h"
+#include "ios/web/public/thread/web_thread.h"
+#import "ios/web/public/web_state/web_state.h"
 #import "ui/gfx/ios/NSString+CrStringDrawing.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -78,28 +78,24 @@ NSString* InsertNewlineBeforeNthToLastWord(NSString* text, int index) {
 }
 
 // Trampoline method for Bind to create the sentinel file.
-bool CreateSentinel() {
-  return FirstRun::CreateSentinel();
+void CreateSentinel() {
+  base::File::Error file_error;
+  FirstRun::SentinelResult sentinel_created =
+      FirstRun::CreateSentinel(&file_error);
+  UMA_HISTOGRAM_ENUMERATION("FirstRun.Sentinel.Created", sentinel_created,
+                            FirstRun::SentinelResult::SENTINEL_RESULT_MAX);
+  if (sentinel_created == FirstRun::SentinelResult::SENTINEL_RESULT_FILE_ERROR)
+    UMA_HISTOGRAM_ENUMERATION("FirstRun.Sentinel.CreatedFileError", -file_error,
+                              -base::File::FILE_ERROR_MAX);
 }
 
-// Helper function for recording first run metrics. Takes an additional
-// |to_record| argument which is the returned value from CreateSentinel().
+// Helper function for recording first run metrics.
 void RecordFirstRunMetricsInternal(ios::ChromeBrowserState* browserState,
                                    bool sign_in_attempted,
-                                   bool has_sso_accounts,
-                                   bool to_record) {
-  // |to_record| is false if the sentinel file was not created which indicates
-  // that the sentinel already exists and metrics were already recorded.
-  // Note: If the user signs in and then signs out during first run, it will be
-  // recorded as a successful sign in.
-  if (!to_record)
-    return;
-
-  bool user_signed_in =
-      ios::SigninManagerFactory::GetForBrowserState(browserState)
-          ->IsAuthenticated();
+                                   bool has_sso_accounts) {
   first_run::SignInStatus sign_in_status;
-
+  bool user_signed_in = IdentityManagerFactory::GetForBrowserState(browserState)
+                            ->HasPrimaryAccount();
   if (user_signed_in) {
     sign_in_status = has_sso_accounts
                          ? first_run::HAS_SSO_ACCOUNT_SIGNIN_SUCCESSFUL
@@ -149,16 +145,15 @@ void WriteFirstRunSentinelAndRecordMetrics(
     ios::ChromeBrowserState* browserState,
     BOOL sign_in_attempted,
     BOOL has_sso_account) {
-  // Call CreateSentinel() and pass the result into RecordFirstRunMetrics().
-  base::PostTaskWithTraitsAndReplyWithResult(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
-      base::BindOnce(&CreateSentinel),
-      base::BindOnce(&RecordFirstRunMetricsInternal, browserState,
-                     sign_in_attempted, has_sso_account));
+  base::PostTaskWithTraits(FROM_HERE,
+                           {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
+                           base::BindOnce(&CreateSentinel));
+  RecordFirstRunMetricsInternal(browserState, sign_in_attempted,
+                                has_sso_account);
 }
 
 void FinishFirstRun(ios::ChromeBrowserState* browserState,
-                    Tab* tab,
+                    web::WebState* web_state,
                     FirstRunConfiguration* config,
                     id<SyncPresenter> presenter) {
   [[NSNotificationCenter defaultCenter]
@@ -168,7 +163,7 @@ void FinishFirstRun(ios::ChromeBrowserState* browserState,
                                         config.hasSSOAccount);
 
   // Display the sync errors infobar.
-  DisplaySyncErrors(browserState, tab, presenter);
+  DisplaySyncErrors(browserState, web_state, presenter);
 }
 
 void RecordProductTourTimingMetrics(NSString* timer_name,

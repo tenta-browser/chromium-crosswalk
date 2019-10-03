@@ -8,6 +8,8 @@
    modify the grd data tree, changing the message name attributes.
 '''
 
+from __future__ import print_function
+
 import os
 import re
 import sys
@@ -60,4 +62,3 @@ class DummyPostProcessor(grit.tool.postprocess_interface.PostProcessor):
 
 if __name__ == '__main__':
   unittest.main()
-

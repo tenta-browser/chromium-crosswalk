@@ -11,12 +11,13 @@
 #include <string>
 #include <vector>
 
+#include "base/feature_list.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/observer_list.h"
 #include "base/synchronization/lock.h"
 #include "base/time/time.h"
-#include "components/signin/core/account_id/account_id.h"
+#include "components/account_id/account_id.h"
 #include "components/user_manager/user.h"
 #include "components/user_manager/user_manager.h"
 #include "components/user_manager/user_manager_export.h"
@@ -30,6 +31,9 @@ class TaskRunner;
 }
 
 namespace user_manager {
+
+// Hides all Supervised Users.
+USER_MANAGER_EXPORT extern const base::Feature kHideSupervisedUsers;
 
 class RemoveUserDelegate;
 
@@ -57,7 +61,6 @@ class USER_MANAGER_EXPORT UserManagerBase : public UserManager {
   void SwitchActiveUser(const AccountId& account_id) override;
   void SwitchToLastActiveUser() override;
   void OnSessionStarted() override;
-  void OnProfileInitialized(User* user) override;
   void RemoveUser(const AccountId& account_id,
                   RemoveUserDelegate* delegate) override;
   void RemoveUserFromList(const AccountId& account_id) override;
@@ -111,7 +114,6 @@ class USER_MANAGER_EXPORT UserManagerBase : public UserManager {
       const User& user,
       const gfx::ImageSkia& profile_image) override;
   void NotifyUsersSignInConstraintsChanged() override;
-  void ResetProfileEverInitialized(const AccountId& account_id) override;
   void Initialize() override;
 
   // This method updates "User was added to the device in this session nad is
@@ -133,6 +135,9 @@ class USER_MANAGER_EXPORT UserManagerBase : public UserManager {
   void AddUserRecordForTesting(User* user) {
     return AddUserRecord(user);
   }
+
+  // Returns true if device is enterprise managed.
+  virtual bool IsEnterpriseManaged() const = 0;
 
  protected:
   // Adds |user| to users list, and adds it to front of LRU list. It is assumed
@@ -158,13 +163,13 @@ class USER_MANAGER_EXPORT UserManagerBase : public UserManager {
       const AccountId& account_id,
       User::OAuthTokenStatus status) const = 0;
 
-  // Returns true if device is enterprise managed.
-  virtual bool IsEnterpriseManaged() const = 0;
-
   // Loads device local accounts from the Local state and fills in
   // |device_local_accounts_set|.
   virtual void LoadDeviceLocalAccounts(
       std::set<AccountId>* device_local_accounts_set) = 0;
+
+  // Notifies observers that active user has changed.
+  void NotifyActiveUserChanged(const User* active_user);
 
   // Notifies that user has logged in.
   virtual void NotifyOnLogin();
@@ -195,7 +200,10 @@ class USER_MANAGER_EXPORT UserManagerBase : public UserManager {
   // Removes a regular or supervised user from the user list.
   // Returns the user if found or NULL otherwise.
   // Also removes the user from the persistent user list.
-  User* RemoveRegularOrSupervisedUserFromList(const AccountId& account_id);
+  // |notify| is true when OnUserRemoved() should be triggered,
+  // meaning that the user won't be added after the removal.
+  User* RemoveRegularOrSupervisedUserFromList(const AccountId& account_id,
+                                              bool notify);
 
   // Implementation for RemoveUser method. This is an asynchronous part of the
   // method, that verifies that owner will not get deleted, and calls
@@ -316,9 +324,6 @@ class USER_MANAGER_EXPORT UserManagerBase : public UserManager {
   // Notifies observers that merge session state had changed.
   void NotifyMergeSessionStateChanged();
 
-  // Notifies observers that active user has changed.
-  void NotifyActiveUserChanged(const User* active_user);
-
   // Notifies observers that active account_id hash has changed.
   void NotifyActiveUserHashChanged(const std::string& hash);
 
@@ -362,10 +367,10 @@ class USER_MANAGER_EXPORT UserManagerBase : public UserManager {
   // been read from trusted device policy yet.
   AccountId owner_account_id_ = EmptyAccountId();
 
-  base::ObserverList<UserManager::Observer> observer_list_;
+  base::ObserverList<UserManager::Observer>::Unchecked observer_list_;
 
   // TODO(nkostylev): Merge with session state refactoring CL.
-  base::ObserverList<UserManager::UserSessionStateObserver>
+  base::ObserverList<UserManager::UserSessionStateObserver>::Unchecked
       session_state_observer_list_;
 
   // Time at which this object was created.

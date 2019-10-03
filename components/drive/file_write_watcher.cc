@@ -14,7 +14,6 @@
 #include "base/callback.h"
 #include "base/files/file_path_watcher.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/sequenced_task_runner.h"
 #include "base/timer/timer.h"
@@ -64,12 +63,10 @@ class FileWriteWatcher::FileWriteWatcherImpl {
   struct PathWatchInfo {
     std::vector<base::Closure> on_write_callbacks;
     base::FilePathWatcher watcher;
-    base::Timer timer;
+    base::OneShotTimer timer;
 
     explicit PathWatchInfo(const base::Closure& on_write_callback)
-        : on_write_callbacks(1, on_write_callback),
-          timer(false /* retain_closure_on_reset */, false /* is_repeating */) {
-    }
+        : on_write_callbacks(1, on_write_callback) {}
   };
 
   base::TimeDelta delay_;
@@ -80,23 +77,22 @@ class FileWriteWatcher::FileWriteWatcherImpl {
 
   // Note: This should remain the last member so it'll be destroyed and
   // invalidate its weak pointers before any other members are destroyed.
-  base::WeakPtrFactory<FileWriteWatcherImpl> weak_ptr_factory_;
+  base::WeakPtrFactory<FileWriteWatcherImpl> weak_ptr_factory_{this};
   DISALLOW_COPY_AND_ASSIGN(FileWriteWatcherImpl);
 };
 
 FileWriteWatcher::FileWriteWatcherImpl::FileWriteWatcherImpl(
     base::SequencedTaskRunner* blocking_task_runner)
     : delay_(base::TimeDelta::FromSeconds(kWriteEventDelayInSeconds)),
-      blocking_task_runner_(blocking_task_runner),
-      weak_ptr_factory_(this) {}
+      blocking_task_runner_(blocking_task_runner) {}
 
 void FileWriteWatcher::FileWriteWatcherImpl::Destroy() {
   DCHECK(thread_checker_.CalledOnValidThread());
 
   // Just forwarding the call to FILE thread.
   blocking_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&FileWriteWatcherImpl::DestroyOnBlockingThread,
-                            base::Unretained(this)));
+      FROM_HERE, base::BindOnce(&FileWriteWatcherImpl::DestroyOnBlockingThread,
+                                base::Unretained(this)));
 }
 
 void FileWriteWatcher::FileWriteWatcherImpl::StartWatch(
@@ -108,14 +104,13 @@ void FileWriteWatcher::FileWriteWatcherImpl::StartWatch(
   // Forwarding the call to FILE thread and relaying the |callback|.
   blocking_task_runner_->PostTask(
       FROM_HERE,
-      base::Bind(&FileWriteWatcherImpl::StartWatchOnBlockingThread,
-                 base::Unretained(this), path,
-                 google_apis::CreateRelayCallback(on_start_callback),
-                 google_apis::CreateRelayCallback(on_write_callback)));
+      base::BindOnce(&FileWriteWatcherImpl::StartWatchOnBlockingThread,
+                     base::Unretained(this), path,
+                     google_apis::CreateRelayCallback(on_start_callback),
+                     google_apis::CreateRelayCallback(on_write_callback)));
 }
 
-FileWriteWatcher::FileWriteWatcherImpl::~FileWriteWatcherImpl() {
-}
+FileWriteWatcher::FileWriteWatcherImpl::~FileWriteWatcherImpl() = default;
 
 void FileWriteWatcher::FileWriteWatcherImpl::DestroyOnBlockingThread() {
   delete this;
@@ -135,7 +130,7 @@ void FileWriteWatcher::FileWriteWatcherImpl::StartWatchOnBlockingThread(
 
   // Start watching |path|.
   std::unique_ptr<PathWatchInfo> info =
-      base::MakeUnique<PathWatchInfo>(on_write_callback);
+      std::make_unique<PathWatchInfo>(on_write_callback);
   bool ok = info->watcher.Watch(
       path,
       false,  // recursive
@@ -158,11 +153,9 @@ void FileWriteWatcher::FileWriteWatcherImpl::OnWriteEvent(
   // Delay running on_write_event_callback by |delay_| time, and if OnWriteEvent
   // is called again in the period, the timer is reset. In other words, we
   // invoke callback when |delay_| has passed after the last OnWriteEvent().
-  it->second->timer.Start(FROM_HERE,
-                          delay_,
-                          base::Bind(&FileWriteWatcherImpl::InvokeCallback,
-                                     weak_ptr_factory_.GetWeakPtr(),
-                                     path));
+  it->second->timer.Start(FROM_HERE, delay_,
+                          base::BindOnce(&FileWriteWatcherImpl::InvokeCallback,
+                                         weak_ptr_factory_.GetWeakPtr(), path));
 }
 
 void FileWriteWatcher::FileWriteWatcherImpl::InvokeCallback(

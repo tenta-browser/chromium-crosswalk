@@ -4,18 +4,18 @@
 
 #include "android_webview/browser/android_protocol_handler.h"
 
+#include <memory>
 #include <utility>
 
 #include "android_webview/browser/input_stream.h"
 #include "android_webview/browser/net/android_stream_reader_url_request_job.h"
 #include "android_webview/browser/net/aw_url_request_job_factory.h"
 #include "android_webview/common/url_constants.h"
+#include "android_webview/native_jni/AndroidProtocolHandler_jni.h"
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/android/jni_weak_ref.h"
-#include "base/memory/ptr_util.h"
 #include "content/public/common/url_constants.h"
-#include "jni/AndroidProtocolHandler_jni.h"
 #include "net/base/io_buffer.h"
 #include "net/base/mime_util.h"
 #include "net/base/net_errors.h"
@@ -41,7 +41,7 @@ const void* const kPreviouslyFailedKey = &kPreviouslyFailedKey;
 
 void MarkRequestAsFailed(net::URLRequest* request) {
   request->SetUserData(kPreviouslyFailedKey,
-                       base::MakeUnique<base::SupportsUserData::Data>());
+                       std::make_unique<base::SupportsUserData::Data>());
 }
 
 bool HasRequestPreviouslyFailed(net::URLRequest* request) {
@@ -108,19 +108,7 @@ AndroidStreamReaderURLRequestJobDelegateImpl::
 std::unique_ptr<InputStream>
 AndroidStreamReaderURLRequestJobDelegateImpl::OpenInputStream(JNIEnv* env,
                                                               const GURL& url) {
-  DCHECK(url.is_valid());
-  DCHECK(env);
-
-  // Open the input stream.
-  ScopedJavaLocalRef<jstring> jurl = ConvertUTF8ToJavaString(env, url.spec());
-  ScopedJavaLocalRef<jobject> stream =
-      android_webview::Java_AndroidProtocolHandler_open(env, jurl);
-
-  if (stream.is_null()) {
-    DLOG(ERROR) << "Unable to open input stream for Android URL";
-    return std::unique_ptr<InputStream>();
-  }
-  return base::MakeUnique<InputStream>(stream);
+  return android_webview::CreateInputStream(env, url);
 }
 
 void AndroidStreamReaderURLRequestJobDelegateImpl::OnInputStreamOpenFailed(
@@ -140,18 +128,7 @@ bool AndroidStreamReaderURLRequestJobDelegateImpl::GetMimeType(
   DCHECK(request);
   DCHECK(mime_type);
 
-  // Query the mime type from the Java side. It is possible for the query to
-  // fail, as the mime type cannot be determined for all supported schemes.
-  ScopedJavaLocalRef<jstring> url =
-      ConvertUTF8ToJavaString(env, request->url().spec());
-  ScopedJavaLocalRef<jstring> returned_type =
-      android_webview::Java_AndroidProtocolHandler_getMimeType(
-          env, stream->jobj(), url);
-  if (returned_type.is_null())
-    return false;
-
-  *mime_type = base::android::ConvertJavaStringToUTF8(returned_type);
-  return true;
+  return GetInputStreamMimeType(env, request->url(), stream, mime_type);
 }
 
 bool AndroidStreamReaderURLRequestJobDelegateImpl::GetCharset(
@@ -222,7 +199,7 @@ namespace android_webview {
 // static
 std::unique_ptr<net::URLRequestInterceptor>
 CreateContentSchemeRequestInterceptor() {
-  return base::MakeUnique<ContentSchemeRequestInterceptor>();
+  return std::make_unique<ContentSchemeRequestInterceptor>();
 }
 
 // static
@@ -232,17 +209,48 @@ CreateAssetFileRequestInterceptor() {
       new AssetFileRequestInterceptor());
 }
 
+// static
+std::unique_ptr<InputStream> CreateInputStream(JNIEnv* env, const GURL& url) {
+  DCHECK(url.is_valid());
+  DCHECK(env);
+
+  // Open the input stream.
+  ScopedJavaLocalRef<jstring> jurl = ConvertUTF8ToJavaString(env, url.spec());
+  ScopedJavaLocalRef<jobject> stream =
+      android_webview::Java_AndroidProtocolHandler_open(env, jurl);
+
+  if (stream.is_null()) {
+    DLOG(ERROR) << "Unable to open input stream for Android URL";
+    return nullptr;
+  }
+  return std::make_unique<InputStream>(stream);
+}
+
+bool GetInputStreamMimeType(JNIEnv* env,
+                            const GURL& url,
+                            InputStream* stream,
+                            std::string* mime_type) {
+  // Query the mime type from the Java side. It is possible for the query to
+  // fail, as the mime type cannot be determined for all supported schemes.
+  ScopedJavaLocalRef<jstring> java_url =
+      ConvertUTF8ToJavaString(env, url.spec());
+  ScopedJavaLocalRef<jstring> returned_type =
+      android_webview::Java_AndroidProtocolHandler_getMimeType(
+          env, stream->jobj(), java_url);
+  if (returned_type.is_null())
+    return false;
+
+  *mime_type = base::android::ConvertJavaStringToUTF8(returned_type);
+  return true;
+}
+
 static ScopedJavaLocalRef<jstring>
-JNI_AndroidProtocolHandler_GetAndroidAssetPath(
-    JNIEnv* env,
-    const JavaParamRef<jclass>& /*clazz*/) {
+JNI_AndroidProtocolHandler_GetAndroidAssetPath(JNIEnv* env) {
   return ConvertUTF8ToJavaString(env, android_webview::kAndroidAssetPath);
 }
 
 static ScopedJavaLocalRef<jstring>
-JNI_AndroidProtocolHandler_GetAndroidResourcePath(
-    JNIEnv* env,
-    const JavaParamRef<jclass>& /*clazz*/) {
+JNI_AndroidProtocolHandler_GetAndroidResourcePath(JNIEnv* env) {
   return ConvertUTF8ToJavaString(env, android_webview::kAndroidResourcePath);
 }
 

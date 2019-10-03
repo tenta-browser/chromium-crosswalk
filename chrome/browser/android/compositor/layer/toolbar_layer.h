@@ -38,8 +38,7 @@ class ToolbarLayer : public Layer {
                     float window_height,
                     float y_offset,
                     bool show_debug,
-                    bool clip_shadow,
-                    bool browser_controls_at_bottom);
+                    bool clip_shadow);
 
   void UpdateProgressBar(int progress_bar_x,
                          int progress_bar_y,
@@ -52,21 +51,23 @@ class ToolbarLayer : public Layer {
                          int progress_bar_background_height,
                          int progress_bar_background_color);
 
+  void SetOpacity(float opacity);
+
  protected:
   explicit ToolbarLayer(ui::ResourceManager* resource_manager);
   ~ToolbarLayer() override;
 
  private:
+  int GetIndexOfLayer(scoped_refptr<cc::Layer> layer);
+
   ui::ResourceManager* resource_manager_;
 
   scoped_refptr<cc::Layer> layer_;
-  scoped_refptr<cc::Layer> toolbar_root_;
   scoped_refptr<cc::SolidColorLayer> toolbar_background_layer_;
   scoped_refptr<cc::NinePatchLayer> url_bar_background_layer_;
   scoped_refptr<cc::UIResourceLayer> bitmap_layer_;
   scoped_refptr<cc::SolidColorLayer> progress_bar_layer_;
   scoped_refptr<cc::SolidColorLayer> progress_bar_background_layer_;
-  scoped_refptr<cc::SolidColorLayer> anonymize_layer_;
   scoped_refptr<cc::SolidColorLayer> debug_layer_;
 
   DISALLOW_COPY_AND_ASSIGN(ToolbarLayer);

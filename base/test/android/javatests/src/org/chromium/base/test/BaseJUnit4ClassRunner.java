@@ -4,22 +4,26 @@
 
 package org.chromium.base.test;
 
-import static org.chromium.base.test.BaseChromiumAndroidJUnitRunner.shouldListTests;
-
+import android.app.Application;
 import android.content.Context;
+import android.support.annotation.CallSuper;
 import android.support.test.InstrumentationRegistry;
 import android.support.test.internal.runner.junit4.AndroidJUnit4ClassRunner;
 import android.support.test.internal.util.AndroidRunnerParams;
 
+import org.junit.rules.MethodRule;
+import org.junit.rules.RuleChain;
+import org.junit.rules.TestRule;
 import org.junit.runner.Description;
 import org.junit.runner.notification.RunNotifier;
 import org.junit.runners.model.FrameworkMethod;
 import org.junit.runners.model.InitializationError;
 import org.junit.runners.model.Statement;
 
-import org.chromium.base.CollectionUtil;
 import org.chromium.base.CommandLine;
+import org.chromium.base.Log;
 import org.chromium.base.test.BaseTestResult.PreTestHook;
+import org.chromium.base.test.params.MethodParamAnnotationRule;
 import org.chromium.base.test.util.DisableIfSkipCheck;
 import org.chromium.base.test.util.MinAndroidSdkLevelSkipCheck;
 import org.chromium.base.test.util.RestrictionSkipCheck;
@@ -28,6 +32,8 @@ import org.chromium.base.test.util.SkipCheck;
 import java.io.File;
 import java.lang.reflect.Method;
 import java.util.ArrayList;
+import java.util.Arrays;
+import java.util.Collections;
 import java.util.List;
 
 /**
@@ -39,20 +45,10 @@ import java.util.List;
  *  and {@link #isIgnored} to add SkipChecks and PreTesthook.
  */
 public class BaseJUnit4ClassRunner extends AndroidJUnit4ClassRunner {
-    private final List<SkipCheck> mSkipChecks;
-    private final List<PreTestHook> mPreTestHooks;
+    private static final String TAG = "BaseJUnit4ClassRunnr";
 
     private static final String EXTRA_TRACE_FILE =
             "org.chromium.base.test.BaseJUnit4ClassRunner.TraceFile";
-
-    /**
-     * Create a BaseJUnit4ClassRunner to run {@code klass} and initialize values
-     *
-     * @throws InitializationError if the test class malformed
-     */
-    public BaseJUnit4ClassRunner(final Class<?> klass) throws InitializationError {
-        this(klass, null, null);
-    }
 
     /**
      * Create a BaseJUnit4ClassRunner to run {@code klass} and initialize values.
@@ -68,31 +64,34 @@ public class BaseJUnit4ClassRunner extends AndroidJUnit4ClassRunner {
      * public ChildRunner extends BaseJUnit4ClassRunner {
      *     public ChildRunner(final Class<?> klass) {
      *             throws InitializationError {
-     *         this(klass, null, null);
+     *         this(klass, Collections.emptyList(), Collections.emptyList(),
+     * Collections.emptyList());
      *     }
      *
      *     public ChildRunner(
-     *             final Class<?> klass, List<SkipCheck> checks, List<PreTestHook> hook) {
-     *             throws InitializationError {
-     *         super(klass, mergeList(
-     *             checks, defaultSkipChecks()), mergeList(hooks, DEFAULT_HOOKS));
+     *             final Class<?> klass, List<SkipCheck> checks, List<PreTestHook> hook,
+     * List<TestRule> rules) { throws InitializationError { super(klass, mergeList( checks,
+     * getSkipChecks()), mergeList(hooks, getPreTestHooks()));
      *     }
      *
-     *     public List<SkipCheck> defaultSkipChecks() {...}
+     *     public List<SkipCheck> getSkipChecks() {...}
      *
-     *     public List<PreTestHook> defaultPreTestHooks() {...}
+     *     public List<PreTestHook> getPreTestHooks() {...}
      * </code>
      * </pre>
      *
      * @throws InitializationError if the test class malformed
      */
-    public BaseJUnit4ClassRunner(
-            final Class<?> klass, List<SkipCheck> checks, List<PreTestHook> hooks)
-            throws InitializationError {
+    public BaseJUnit4ClassRunner(final Class<?> klass) throws InitializationError {
         super(klass,
                 new AndroidRunnerParams(InstrumentationRegistry.getInstrumentation(),
                         InstrumentationRegistry.getArguments(), false, 0L, false));
 
+        assert InstrumentationRegistry.getInstrumentation()
+                        instanceof BaseChromiumAndroidJUnitRunner
+            : "Must use BaseChromiumAndroidJUnitRunner instrumentation with "
+              + "BaseJUnit4ClassRunner, but found: "
+              + InstrumentationRegistry.getInstrumentation().getClass();
         String traceOutput = InstrumentationRegistry.getArguments().getString(EXTRA_TRACE_FILE);
 
         if (traceOutput != null) {
@@ -105,9 +104,12 @@ public class BaseJUnit4ClassRunner extends AndroidJUnit4ClassRunner {
                 }
             }
         }
+    }
 
-        mSkipChecks = mergeList(checks, defaultSkipChecks());
-        mPreTestHooks = mergeList(hooks, defaultPreTestHooks());
+    /** Returns the singleton Application instance. */
+    public static Application getApplication() {
+        return (Application)
+                BaseChromiumAndroidJUnitRunner.sInMemorySharedPreferencesContext.getBaseContext();
     }
 
     /**
@@ -116,31 +118,80 @@ public class BaseJUnit4ClassRunner extends AndroidJUnit4ClassRunner {
      * Used to merge the default SkipChecks/PreTestHooks with the subclasses's
      * SkipChecks/PreTestHooks.
      */
-    protected static final <T> List<T> mergeList(List<T> listA, List<T> listB) {
-        List<T> l = new ArrayList<>();
-        if (listA != null) {
-            l.addAll(listA);
-        }
-        if (listB != null) {
-            l.addAll(listB);
-        }
+    private static <T> List<T> mergeList(List<T> listA, List<T> listB) {
+        List<T> l = new ArrayList<>(listA);
+        l.addAll(listB);
         return l;
     }
 
-    /**
-     * Change this static function to add or take out default {@code SkipCheck}s.
-     */
-    private static List<SkipCheck> defaultSkipChecks() {
-        return CollectionUtil.newArrayList(
-            new RestrictionSkipCheck(InstrumentationRegistry.getTargetContext()),
-            new MinAndroidSdkLevelSkipCheck(), new DisableIfSkipCheck());
+    @SafeVarargs
+    protected static <T> List<T> addToList(List<T> list, T... additionalEntries) {
+        return mergeList(list, Arrays.asList(additionalEntries));
+    }
+
+    @Override
+    protected void collectInitializationErrors(List<Throwable> errors) {
+        super.collectInitializationErrors(errors);
+        // Log any initialization errors to help debugging, as the host-side test runner can get
+        // confused by the thrown exception.
+        if (!errors.isEmpty()) {
+            Log.e(TAG, "Initialization errors in %s: %s", getTestClass().getName(), errors);
+        }
     }
 
     /**
-     * Change this static function to add or take out default {@code PreTestHook}s.
+     * Override this method to return a list of {@link SkipCheck}s}.
+     *
+     * Additional hooks can be added to the list using {@link #addToList}:
+     * {@code return addToList(super.getSkipChecks(), check1, check2);}
      */
-    private static List<PreTestHook> defaultPreTestHooks() {
-        return null;
+    @CallSuper
+    protected List<SkipCheck> getSkipChecks() {
+        return Arrays.asList(new RestrictionSkipCheck(InstrumentationRegistry.getTargetContext()),
+                new MinAndroidSdkLevelSkipCheck(), new DisableIfSkipCheck());
+    }
+
+    /**
+     * Override this method to return a list of {@link PreTestHook}s.
+     *
+     * Additional hooks can be added to the list using {@link #addToList}:
+     * {@code return addToList(super.getPreTestHooks(), hook1, hook2);}
+     * TODO(bauerb): Migrate PreTestHook to TestRule.
+     */
+    @CallSuper
+    protected List<PreTestHook> getPreTestHooks() {
+        return Collections.emptyList();
+    }
+
+    /**
+     * Override this method to return a list of method rules that should be applied to all tests
+     * run with this test runner.
+     *
+     * Additional rules can be added to the list using {@link #addToList}:
+     * {@code return addToList(super.getDefaultMethodRules(), rule1, rule2);}
+     */
+    @CallSuper
+    protected List<MethodRule> getDefaultMethodRules() {
+        return Collections.singletonList(new MethodParamAnnotationRule());
+    }
+
+    /**
+     * Override this method to return a list of rules that should be applied to all tests run with
+     * this test runner.
+     *
+     * Additional rules can be added to the list using {@link #addToList}:
+     * {@code return addToList(super.getDefaultTestRules(), rule1, rule2);}
+     */
+    @CallSuper
+    protected List<TestRule> getDefaultTestRules() {
+        // Order is important here. Outer rule setUp's run first, and tearDown's run last.
+        // Base setUp() should go first to initialize ContextUtils and clear out prefs.
+        // Base's tearDown() should come last since it deletes files.
+        // Activities must be destroyed before lifetimes are checked, so DestroyActivitiesRule()
+        // must come last so that its tearDown() runs before LifetimeAssertRule's.
+        return Collections.singletonList(RuleChain.outerRule(new BaseJUnit4TestRule())
+                                                 .around(new LifetimeAssertRule())
+                                                 .around(new DestroyActivitiesRule()));
     }
 
     /**
@@ -151,20 +202,38 @@ public class BaseJUnit4ClassRunner extends AndroidJUnit4ClassRunner {
         return super.isIgnored(method) || shouldSkip(method);
     }
 
+    @Override
+    protected List<MethodRule> rules(Object target) {
+        List<MethodRule> declaredRules = super.rules(target);
+        List<MethodRule> defaultRules = getDefaultMethodRules();
+        return mergeList(defaultRules, declaredRules);
+    }
+
+    @Override
+    protected final List<TestRule> getTestRules(Object target) {
+        List<TestRule> declaredRules = super.getTestRules(target);
+        List<TestRule> defaultRules = getDefaultTestRules();
+        return mergeList(declaredRules, defaultRules);
+    }
+
     /**
      * Run test with or without execution based on bundle arguments.
      */
     @Override
     public void run(RunNotifier notifier) {
-        if (shouldListTests(InstrumentationRegistry.getArguments())) {
+        if (BaseChromiumAndroidJUnitRunner.shouldListTests(
+                    InstrumentationRegistry.getArguments())) {
             for (Description child : getDescription().getChildren()) {
                 notifier.fireTestStarted(child);
                 notifier.fireTestFinished(child);
             }
-        } else {
-            initCommandLineForTest();
-            super.run(notifier);
+            return;
         }
+
+        if (!CommandLine.isInitialized()) {
+            initCommandLineForTest();
+        }
+        super.run(notifier);
     }
 
     /**
@@ -197,7 +266,7 @@ public class BaseJUnit4ClassRunner extends AndroidJUnit4ClassRunner {
     private void runPreTestHooks(FrameworkMethod frameworkMethod) {
         Method testMethod = frameworkMethod.getMethod();
         Context targetContext = InstrumentationRegistry.getTargetContext();
-        for (PreTestHook hook : mPreTestHooks) {
+        for (PreTestHook hook : getPreTestHooks()) {
             hook.run(targetContext, testMethod);
         }
     }
@@ -206,7 +275,7 @@ public class BaseJUnit4ClassRunner extends AndroidJUnit4ClassRunner {
      * Loop through all the {@code SkipCheck}s to confirm whether a test should be ignored
      */
     private boolean shouldSkip(FrameworkMethod method) {
-        for (SkipCheck s : mSkipChecks) {
+        for (SkipCheck s : getSkipChecks()) {
             if (s.shouldSkip(method)) {
                 return true;
             }

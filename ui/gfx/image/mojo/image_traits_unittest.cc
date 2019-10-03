@@ -6,8 +6,7 @@
 #include <vector>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "mojo/public/cpp/bindings/binding_set.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/skia/include/core/SkBitmap.h"
@@ -64,7 +63,7 @@ class ImageTraitsTest : public testing::Test,
     std::move(callback).Run(in);
   }
 
-  base::MessageLoop loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   mojo::BindingSet<ImageTraitsTestService> bindings_;
   mojom::ImageTraitsTestServicePtr service_;
 
@@ -97,8 +96,8 @@ TEST_F(ImageTraitsTest, EmptyImageSkiaRep) {
   ImageSkiaRep output(gfx::Size(1, 1), 1.0f);
   ASSERT_FALSE(output.is_null());
   service()->EchoImageSkiaRep(empty_rep, &output);
-  EXPECT_TRUE(empty_rep.sk_bitmap().drawsNothing());
-  EXPECT_TRUE(test::AreBitmapsEqual(empty_rep.sk_bitmap(), output.sk_bitmap()));
+  EXPECT_TRUE(empty_rep.GetBitmap().drawsNothing());
+  EXPECT_TRUE(test::AreBitmapsEqual(empty_rep.GetBitmap(), output.GetBitmap()));
 }
 
 TEST_F(ImageTraitsTest, ImageSkiaRep) {
@@ -109,7 +108,7 @@ TEST_F(ImageTraitsTest, ImageSkiaRep) {
 
   EXPECT_FALSE(output.is_null());
   EXPECT_EQ(image_rep.scale(), output.scale());
-  EXPECT_TRUE(test::AreBitmapsEqual(image_rep.sk_bitmap(), output.sk_bitmap()));
+  EXPECT_TRUE(test::AreBitmapsEqual(image_rep.GetBitmap(), output.GetBitmap()));
 }
 
 TEST_F(ImageTraitsTest, UnscaledImageSkiaRep) {
@@ -120,7 +119,7 @@ TEST_F(ImageTraitsTest, UnscaledImageSkiaRep) {
   EXPECT_FALSE(output.unscaled());
   service()->EchoImageSkiaRep(image_rep, &output);
   EXPECT_TRUE(output.unscaled());
-  EXPECT_TRUE(test::AreBitmapsEqual(image_rep.sk_bitmap(), output.sk_bitmap()));
+  EXPECT_TRUE(test::AreBitmapsEqual(image_rep.GetBitmap(), output.GetBitmap()));
 }
 
 TEST_F(ImageTraitsTest, NullImageSkia) {

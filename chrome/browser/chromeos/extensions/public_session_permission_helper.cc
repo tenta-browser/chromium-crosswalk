@@ -4,7 +4,6 @@
 
 #include "chrome/browser/chromeos/extensions/public_session_permission_helper.h"
 
-#include <algorithm>
 #include <map>
 #include <memory>
 #include <utility>
@@ -12,9 +11,9 @@
 
 #include "base/bind.h"
 #include "base/bind_helpers.h"
+#include "base/containers/unique_ptr_adapters.h"
 #include "base/lazy_instance.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/chromeos/extensions/device_local_account_management_policy_provider.h"
 #include "chrome/browser/extensions/extension_install_prompt.h"
 #include "chrome/browser/profiles/profiles_state.h"
@@ -37,7 +36,7 @@ namespace {
 
 std::unique_ptr<ExtensionInstallPrompt> CreateExtensionInstallPrompt(
     content::WebContents* web_contents) {
-  return base::MakeUnique<ExtensionInstallPrompt>(web_contents);
+  return std::make_unique<ExtensionInstallPrompt>(web_contents);
 }
 
 bool PermissionCheckNeeded(const Extension* extension) {
@@ -80,7 +79,8 @@ class PublicSessionPermissionHelper {
   };
   using RequestCallbackList = std::vector<RequestCallback>;
 
-  std::set<std::unique_ptr<ExtensionInstallPrompt>> prompts_;
+  std::set<std::unique_ptr<ExtensionInstallPrompt>, base::UniquePtrComparator>
+      prompts_;
   PermissionIDSet prompted_permission_set_;
   PermissionIDSet allowed_permission_set_;
   PermissionIDSet denied_permission_set_;
@@ -102,7 +102,7 @@ bool PublicSessionPermissionHelper::HandlePermissionRequestImpl(
     content::WebContents* web_contents,
     const RequestResolvedCallback& callback,
     const PromptFactory& prompt_factory) {
-  DCHECK(profiles::IsPublicSession());
+  DCHECK(profiles::ArePublicSessionRestrictionsEnabled());
   if (!PermissionCheckNeeded(&extension)) {
     if (!callback.is_null())
       callback.Run(requested_permissions);
@@ -139,11 +139,12 @@ bool PublicSessionPermissionHelper::HandlePermissionRequestImpl(
     prompted_permission_set_.insert(permission.id());
     new_apis.insert(permission.id());
   }
-  auto permission_set = base::MakeUnique<PermissionSet>(
-      new_apis, ManifestPermissionSet(), URLPatternSet(), URLPatternSet());
+  auto permission_set = std::make_unique<PermissionSet>(
+      std::move(new_apis), ManifestPermissionSet(), URLPatternSet(),
+      URLPatternSet());
   auto prompt = prompt_factory.Run(web_contents);
 
-  auto permissions_prompt = base::MakeUnique<ExtensionInstallPrompt::Prompt>(
+  auto permissions_prompt = std::make_unique<ExtensionInstallPrompt::Prompt>(
       ExtensionInstallPrompt::PERMISSIONS_PROMPT);
   // activeTab has no permission message by default, so one is added here.
   if (unprompted_permissions.ContainsID(APIPermission::kActiveTab)) {
@@ -151,8 +152,7 @@ bool PublicSessionPermissionHelper::HandlePermissionRequestImpl(
     messages.push_back(PermissionMessage(
         l10n_util::GetStringUTF16(IDS_EXTENSION_PROMPT_WARNING_CURRENT_HOST),
         extensions::PermissionIDSet()));
-    permissions_prompt->AddPermissions(
-        messages, ExtensionInstallPrompt::REGULAR_PERMISSIONS);
+    permissions_prompt->AddPermissions(messages);
   }
 
   // This Unretained is safe because the lifetime of this object is until
@@ -174,7 +174,7 @@ bool PublicSessionPermissionHelper::HandlePermissionRequestImpl(
 bool PublicSessionPermissionHelper::PermissionAllowedImpl(
     const Extension* extension,
     APIPermission::ID permission) {
-  DCHECK(profiles::IsPublicSession());
+  DCHECK(profiles::ArePublicSessionRestrictionsEnabled());
   return !PermissionCheckNeeded(extension) ||
          allowed_permission_set_.ContainsID(permission);
 }
@@ -211,11 +211,7 @@ void PublicSessionPermissionHelper::ResolvePermissionPrompt(
   }
 
   // Dispose of the prompt as it's not needed anymore.
-  auto iter = std::find_if(
-      prompts_.begin(), prompts_.end(),
-      [prompt](const std::unique_ptr<ExtensionInstallPrompt>& check) {
-        return check.get() == prompt;
-      });
+  auto iter = prompts_.find(prompt);
   DCHECK(iter != prompts_.end());
   prompts_.erase(iter);
 }

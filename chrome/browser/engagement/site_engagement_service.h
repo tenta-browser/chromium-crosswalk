@@ -16,11 +16,9 @@
 #include "base/time/time.h"
 #include "build/build_config.h"
 #include "chrome/browser/engagement/site_engagement_details.mojom.h"
-#include "chrome/browser/engagement/site_engagement_metrics.h"
-#include "chrome/browser/engagement/site_engagement_observer.h"
 #include "components/history/core/browser/history_service_observer.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "third_party/WebKit/public/platform/site_engagement.mojom.h"
+#include "third_party/blink/public/mojom/site_engagement/site_engagement.mojom.h"
 #include "ui/base/page_transition_types.h"
 
 namespace base {
@@ -28,8 +26,7 @@ class Clock;
 }
 
 namespace banners {
-FORWARD_DECLARE_TEST(AppBannerManagerBrowserTest,
-                     CheckOnLoadWithoutSufficientEngagement);
+FORWARD_DECLARE_TEST(AppBannerManagerBrowserTest, WebAppBannerNeedsEngagement);
 }
 
 namespace content {
@@ -43,6 +40,7 @@ class HistoryService;
 class GURL;
 class HostContentSettingsMap;
 class Profile;
+class SiteEngagementObserver;
 class SiteEngagementScore;
 
 #if defined(OS_ANDROID)
@@ -78,6 +76,25 @@ class SiteEngagementService : public KeyedService,
                               public history::HistoryServiceObserver,
                               public SiteEngagementScoreProvider {
  public:
+  // This is used to back a UMA histogram, so it should be treated as
+  // append-only. Any new values should be inserted immediately prior to
+  // ENGAGEMENT_LAST and added to SiteEngagementServiceEngagementType in
+  // tools/metrics/histograms/enums.xml.
+  // TODO(calamity): Document each of these engagement types.
+  enum EngagementType {
+    ENGAGEMENT_NAVIGATION,
+    ENGAGEMENT_KEYPRESS,
+    ENGAGEMENT_MOUSE,
+    ENGAGEMENT_TOUCH_GESTURE,
+    ENGAGEMENT_SCROLL,
+    ENGAGEMENT_MEDIA_HIDDEN,
+    ENGAGEMENT_MEDIA_VISIBLE,
+    ENGAGEMENT_WEBAPP_SHORTCUT_LAUNCH,
+    ENGAGEMENT_FIRST_DAILY_ENGAGEMENT,
+    ENGAGEMENT_NOTIFICATION_INTERACTION,
+    ENGAGEMENT_LAST,
+  };
+
   // WebContentsObserver that detects engagement triggering events and notifies
   // the service of them.
   class Helper;
@@ -108,6 +125,13 @@ class SiteEngagementService : public KeyedService,
   static double GetScoreFromSettings(HostContentSettingsMap* settings,
                                      const GURL& origin);
 
+  // Retrieves all details. Can be called from a background thread. |now| must
+  // be the current timestamp. Takes a scoped_refptr to keep
+  // HostContentSettingsMap alive. See crbug.com/901287.
+  static std::vector<mojom::SiteEngagementDetails> GetAllDetailsInBackground(
+      base::Time now,
+      scoped_refptr<HostContentSettingsMap> map);
+
   explicit SiteEngagementService(Profile* profile);
   ~SiteEngagementService() override;
 
@@ -120,6 +144,9 @@ class SiteEngagementService : public KeyedService,
   // Returns an array of engagement score details for all origins which have
   // a score, whether due to direct engagement, or other factors that cause
   // an engagement bonus to be applied.
+  //
+  // Note that this method is quite expensive, so try to avoid calling it in
+  // performance-critical code.
   std::vector<mojom::SiteEngagementDetails> GetAllDetails() const;
 
   // Update the engagement score of |url| for a notification interaction.
@@ -139,9 +166,10 @@ class SiteEngagementService : public KeyedService,
   // the result of GetScore(|url|) may not be the same as |score|.
   void ResetBaseScoreForURL(const GURL& url, double score);
 
-  // Update the last time |url| was opened from an installed shortcut to be
-  // clock_->Now().
-  void SetLastShortcutLaunchTime(const GURL& url);
+  // Update the last time |url| was opened from an installed shortcut (hosted in
+  // |web_contents|) to be clock_->Now().
+  void SetLastShortcutLaunchTime(content::WebContents* web_contents,
+                                 const GURL& url);
 
   void HelperCreated(SiteEngagementService::Helper* helper);
   void HelperDeleted(SiteEngagementService::Helper* helper);
@@ -153,9 +181,12 @@ class SiteEngagementService : public KeyedService,
   double GetScore(const GURL& url) const override;
   double GetTotalEngagementPoints() const override;
 
+  // Just forwards calls AddPoints.
+  void AddPointsForTesting(const GURL& url, double points);
+
  private:
+  friend class BookmarkAppTest;
   friend class SiteEngagementObserver;
-  friend class SiteEngagementServiceAndroid;
   friend class SiteEngagementServiceTest;
   FRIEND_TEST_ALL_PREFIXES(SiteEngagementServiceTest, CheckHistograms);
   FRIEND_TEST_ALL_PREFIXES(SiteEngagementServiceTest, CleanupEngagementScores);
@@ -172,7 +203,6 @@ class SiteEngagementService : public KeyedService,
                            GetTotalNotificationPoints);
   FRIEND_TEST_ALL_PREFIXES(SiteEngagementServiceTest, RestrictedToHTTPAndHTTPS);
   FRIEND_TEST_ALL_PREFIXES(SiteEngagementServiceTest, LastShortcutLaunch);
-  FRIEND_TEST_ALL_PREFIXES(SiteEngagementServiceTest, NotificationPermission);
   FRIEND_TEST_ALL_PREFIXES(SiteEngagementServiceTest,
                            CleanupOriginsOnHistoryDeletion);
   FRIEND_TEST_ALL_PREFIXES(SiteEngagementServiceTest, IsBootstrapped);
@@ -184,18 +214,20 @@ class SiteEngagementService : public KeyedService,
                            IncognitoEngagementService);
   FRIEND_TEST_ALL_PREFIXES(SiteEngagementServiceTest, GetScoreFromSettings);
   FRIEND_TEST_ALL_PREFIXES(banners::AppBannerManagerBrowserTest,
-                           CheckOnLoadWithoutSufficientEngagement);
+                           WebAppBannerNeedsEngagement);
   FRIEND_TEST_ALL_PREFIXES(AppBannerSettingsHelperTest, SiteEngagementTrigger);
+  FRIEND_TEST_ALL_PREFIXES(HostedAppPWAOnlyTest, EngagementHistogram);
 
 #if defined(OS_ANDROID)
   // Shim class to expose the service to Java.
+  friend class SiteEngagementServiceAndroid;
   SiteEngagementServiceAndroid* GetAndroidService() const;
   void SetAndroidService(
       std::unique_ptr<SiteEngagementServiceAndroid> android_service);
 #endif
 
   // Only used in tests.
-  SiteEngagementService(Profile* profile, std::unique_ptr<base::Clock> clock);
+  SiteEngagementService(Profile* profile, base::Clock* clock);
 
   // Adds the specified number of points to the given origin, respecting the
   // maximum limits for the day and overall.
@@ -218,8 +250,11 @@ class SiteEngagementService : public KeyedService,
   // left it once they return.
   void CleanupEngagementScores(bool update_last_engagement_time) const;
 
-  // Records UMA metrics.
-  void RecordMetrics();
+  // Possibly records UMA metrics if we haven't recorded them lately.
+  void MaybeRecordMetrics();
+
+  // Actually records metrics for the engagement in |details|.
+  void RecordMetrics(std::vector<mojom::SiteEngagementDetails>);
 
   // Returns true if we should record engagement for this URL. Currently,
   // engagement is only earned for HTTP and HTTPS.
@@ -251,20 +286,16 @@ class SiteEngagementService : public KeyedService,
 
   // Update the engagement score of the origin loaded in |web_contents| for
   // time-on-site, based on user input.
-  void HandleUserInput(content::WebContents* web_contents,
-                       SiteEngagementMetrics::EngagementType type);
+  void HandleUserInput(content::WebContents* web_contents, EngagementType type);
 
-  // Called when the engagement for |url| loaded in |web_contents| increases.
-  // Calls OnEngagementIncreased in all observers. |web_contents| may be null if
-  // the engagement has increased when |url| is not in a tab, e.g. from a
-  // notification interaction.
-  void OnEngagementIncreased(content::WebContents* web_contents,
-                             const GURL& url);
-
-  // Called if |url| changes to |level| engagement, and informs every Helper of
-  // the change.
-  void SendLevelChangeToHelpers(const GURL& url,
-                                blink::mojom::EngagementLevel level);
+  // Called when the engagement for |url| loaded in |web_contents| is changed,
+  // due to an event of type |type|. Calls OnEngagementEvent in all observers.
+  // |web_contents| may be null if the engagement has increased when |url| is
+  // not in a tab, e.g. from a notification interaction. Also records
+  // engagement-type metrics.
+  void OnEngagementEvent(content::WebContents* web_contents,
+                         const GURL& url,
+                         EngagementType type);
 
   // Returns true if the last engagement increasing event seen by the site
   // engagement service was sufficiently long ago that we need to reset all
@@ -274,21 +305,14 @@ class SiteEngagementService : public KeyedService,
 
   // Overridden from history::HistoryServiceObserver:
   void OnURLsDeleted(history::HistoryService* history_service,
-                     bool all_history,
-                     bool expired,
-                     const history::URLRows& deleted_rows,
-                     const std::set<GURL>& favicon_urls) override;
+                     const history::DeletionInfo& deletion_info) override;
 
   // Returns the number of origins with maximum daily and total engagement
   // respectively.
   int OriginsWithMaxDailyEngagement() const;
-  int OriginsWithMaxEngagement(
-      const std::vector<mojom::SiteEngagementDetails>& details) const;
 
-  // Callback for the history service when it is asked for a map of origins to
-  // how many URLs corresponding to that origin remain in history.
-  void GetCountsAndLastVisitForOriginsComplete(
-      history::HistoryService* history_service,
+  // Update site engagement scores after a history deletion.
+  void UpdateEngagementScores(
       const std::multiset<GURL>& deleted_url_origins,
       bool expired,
       const history::OriginCountAndLastVisitMap& remaining_origin_counts);
@@ -300,7 +324,7 @@ class SiteEngagementService : public KeyedService,
   Profile* profile_;
 
   // The clock used to vend times.
-  std::unique_ptr<base::Clock> clock_;
+  base::Clock* clock_;
 
 #if defined(OS_ANDROID)
   std::unique_ptr<SiteEngagementServiceAndroid> android_service_;
@@ -313,14 +337,11 @@ class SiteEngagementService : public KeyedService,
   // upload.
   base::Time last_metrics_time_;
 
-  // All helpers currently attached to a WebContents.
-  std::set<SiteEngagementService::Helper*> helpers_;
-
   // A list of observers. When any origin registers an engagement-increasing
-  // event, each observer's OnEngagementIncreased method will be called.
-  base::ObserverList<SiteEngagementObserver> observer_list_;
+  // event, each observer's OnEngagementEvent method will be called.
+  base::ObserverList<SiteEngagementObserver>::Unchecked observer_list_;
 
-  base::WeakPtrFactory<SiteEngagementService> weak_factory_;
+  base::WeakPtrFactory<SiteEngagementService> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(SiteEngagementService);
 };

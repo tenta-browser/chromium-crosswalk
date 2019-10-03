@@ -3,20 +3,20 @@
 // found in the LICENSE file.
 
 #include <SensorsApi.h>
-#include <objbase.h>
-#include <propvarutil.h>
 #include <sensors.h>
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/win/iunknown_impl.h"
+#include "base/win/propvarutil.h"
+#include "base/win/scoped_com_initializer.h"
 #include "base/win/scoped_propvariant.h"
 #include "services/device/generic_sensor/fake_platform_sensor_and_provider.h"
 #include "services/device/generic_sensor/generic_sensor_consts.h"
 #include "services/device/generic_sensor/platform_sensor_provider_win.h"
-#include "services/device/public/interfaces/sensor_provider.mojom.h"
+#include "services/device/public/mojom/sensor_provider.mojom.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/geometry/angle_conversions.h"
@@ -190,6 +190,10 @@ class MockISensorDataReport : public MockCOMInterface<ISensorDataReport> {
 //                         data in OnDataUpdated event.
 class PlatformSensorAndProviderTestWin : public ::testing::Test {
  public:
+  PlatformSensorAndProviderTestWin()
+      : scoped_task_environment_(
+            base::test::ScopedTaskEnvironment::MainThreadType::IO) {}
+
   void SetUp() override {
     sensor_ = new NiceMock<MockISensor>();
     sensor_collection_ = new NiceMock<MockISensorCollection>();
@@ -198,14 +202,8 @@ class PlatformSensorAndProviderTestWin : public ::testing::Test {
     sensor_manager_->QueryInterface(IID_PPV_ARGS(&manager));
 
     // Overrides default ISensorManager with mocked interface.
-    PlatformSensorProviderWin::GetInstance()->SetSensorManagerForTesting(
-        manager);
-  }
-
-  void TearDown() override {
-    Microsoft::WRL::ComPtr<ISensorManager> null_manager;
-    PlatformSensorProviderWin::GetInstance()->SetSensorManagerForTesting(
-        null_manager);
+    provider_ = std::make_unique<PlatformSensorProviderWin>();
+    provider_->SetSensorManagerForTesting(std::move(manager));
   }
 
  protected:
@@ -218,7 +216,7 @@ class PlatformSensorAndProviderTestWin : public ::testing::Test {
   // PlatformSensorProvider::CreateSensorCallback completion.
   scoped_refptr<PlatformSensor> CreateSensor(mojom::SensorType type) {
     run_loop_ = std::make_unique<base::RunLoop>();
-    PlatformSensorProviderWin::GetInstance()->CreateSensor(
+    provider_->CreateSensor(
         type, base::Bind(&PlatformSensorAndProviderTestWin::SensorCreated,
                          base::Unretained(this)));
     run_loop_->Run();
@@ -242,6 +240,14 @@ class PlatformSensorAndProviderTestWin : public ::testing::Test {
   }
 
   void QuitInnerLoop() { run_loop_->Quit(); }
+
+  void SetUnsupportedSensor(REFSENSOR_TYPE_ID sensor) {
+    EXPECT_CALL(*sensor_manager_, GetSensorsByType(sensor, _))
+        .WillRepeatedly(
+            Invoke([](REFSENSOR_TYPE_ID type, ISensorCollection** collection) {
+              return HRESULT_FROM_WIN32(ERROR_NOT_FOUND);
+            }));
+  }
 
   // Sets sensor with REFSENSOR_TYPE_ID |sensor| to be supported by mocked
   // ISensorMager and it will be present in ISensorCollection.
@@ -281,10 +287,10 @@ class PlatformSensorAndProviderTestWin : public ::testing::Test {
           events->AddRef();
           sensor_events_.Attach(events);
           if (this->run_loop_) {
-            message_loop_.task_runner()->PostTask(
+            scoped_task_environment_.GetMainThreadTaskRunner()->PostTask(
                 FROM_HERE,
-                base::Bind(&PlatformSensorAndProviderTestWin::QuitInnerLoop,
-                           base::Unretained(this)));
+                base::BindOnce(&PlatformSensorAndProviderTestWin::QuitInnerLoop,
+                               base::Unretained(this)));
           }
           return S_OK;
         }));
@@ -295,10 +301,10 @@ class PlatformSensorAndProviderTestWin : public ::testing::Test {
         .WillByDefault(Invoke([this](ISensorEvents* events) {
           sensor_events_.Reset();
           if (this->run_loop_) {
-            message_loop_.task_runner()->PostTask(
+            scoped_task_environment_.GetMainThreadTaskRunner()->PostTask(
                 FROM_HERE,
-                base::Bind(&PlatformSensorAndProviderTestWin::QuitInnerLoop,
-                           base::Unretained(this)));
+                base::BindOnce(&PlatformSensorAndProviderTestWin::QuitInnerLoop,
+                               base::Unretained(this)));
           }
           return S_OK;
         }));
@@ -375,11 +381,13 @@ class PlatformSensorAndProviderTestWin : public ::testing::Test {
     sensor_events_->OnDataUpdated(sensor_.get(), data_report.Get());
   }
 
+  base::win::ScopedCOMInitializer com_initializer_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   scoped_refptr<MockISensorManager> sensor_manager_;
   scoped_refptr<MockISensorCollection> sensor_collection_;
   scoped_refptr<MockISensor> sensor_;
+  std::unique_ptr<PlatformSensorProviderWin> provider_;
   Microsoft::WRL::ComPtr<ISensorEvents> sensor_events_;
-  base::MessageLoop message_loop_;
   scoped_refptr<PlatformSensor> platform_sensor_;
   // Inner run loop used to wait for async sensor creation callback.
   std::unique_ptr<base::RunLoop> run_loop_;
@@ -528,8 +536,7 @@ TEST_F(PlatformSensorAndProviderTestWin, GetMaximumSupportedFrequencyFallback) {
 
 // Tests that Accelerometer readings are correctly converted.
 TEST_F(PlatformSensorAndProviderTestWin, CheckAccelerometerReadingConversion) {
-  mojo::ScopedSharedBufferHandle handle =
-      PlatformSensorProviderWin::GetInstance()->CloneSharedBufferHandle();
+  mojo::ScopedSharedBufferHandle handle = provider_->CloneSharedBufferHandle();
   mojo::ScopedSharedBufferMapping mapping = handle->MapAtOffset(
       sizeof(SensorReadingSharedBuffer),
       SensorReadingSharedBuffer::GetOffset(SensorType::ACCELEROMETER));
@@ -567,8 +574,7 @@ TEST_F(PlatformSensorAndProviderTestWin, CheckAccelerometerReadingConversion) {
 
 // Tests that Gyroscope readings are correctly converted.
 TEST_F(PlatformSensorAndProviderTestWin, CheckGyroscopeReadingConversion) {
-  mojo::ScopedSharedBufferHandle handle =
-      PlatformSensorProviderWin::GetInstance()->CloneSharedBufferHandle();
+  mojo::ScopedSharedBufferHandle handle = provider_->CloneSharedBufferHandle();
   mojo::ScopedSharedBufferMapping mapping = handle->MapAtOffset(
       sizeof(SensorReadingSharedBuffer),
       SensorReadingSharedBuffer::GetOffset(SensorType::GYROSCOPE));
@@ -607,8 +613,7 @@ TEST_F(PlatformSensorAndProviderTestWin, CheckGyroscopeReadingConversion) {
 
 // Tests that Magnetometer readings are correctly converted.
 TEST_F(PlatformSensorAndProviderTestWin, CheckMagnetometerReadingConversion) {
-  mojo::ScopedSharedBufferHandle handle =
-      PlatformSensorProviderWin::GetInstance()->CloneSharedBufferHandle();
+  mojo::ScopedSharedBufferHandle handle = provider_->CloneSharedBufferHandle();
   mojo::ScopedSharedBufferMapping mapping = handle->MapAtOffset(
       sizeof(SensorReadingSharedBuffer),
       SensorReadingSharedBuffer::GetOffset(SensorType::MAGNETOMETER));
@@ -649,8 +654,7 @@ TEST_F(PlatformSensorAndProviderTestWin, CheckMagnetometerReadingConversion) {
 // provided.
 TEST_F(PlatformSensorAndProviderTestWin,
        CheckDeviceOrientationEulerAnglesReadingConversion) {
-  mojo::ScopedSharedBufferHandle handle =
-      PlatformSensorProviderWin::GetInstance()->CloneSharedBufferHandle();
+  mojo::ScopedSharedBufferHandle handle = provider_->CloneSharedBufferHandle();
   mojo::ScopedSharedBufferMapping mapping =
       handle->MapAtOffset(sizeof(SensorReadingSharedBuffer),
                           SensorReadingSharedBuffer::GetOffset(
@@ -692,8 +696,7 @@ TEST_F(PlatformSensorAndProviderTestWin,
 // provided.
 TEST_F(PlatformSensorAndProviderTestWin,
        CheckDeviceOrientationQuaternionReadingConversion) {
-  mojo::ScopedSharedBufferHandle handle =
-      PlatformSensorProviderWin::GetInstance()->CloneSharedBufferHandle();
+  mojo::ScopedSharedBufferHandle handle = provider_->CloneSharedBufferHandle();
   mojo::ScopedSharedBufferMapping mapping =
       handle->MapAtOffset(sizeof(SensorReadingSharedBuffer),
                           SensorReadingSharedBuffer::GetOffset(
@@ -735,6 +738,33 @@ TEST_F(PlatformSensorAndProviderTestWin,
   EXPECT_THAT(buffer->reading.orientation_quat.z, z);
   EXPECT_THAT(buffer->reading.orientation_quat.w, w);
   EXPECT_TRUE(sensor->StopListening(client.get(), configuration));
+}
+
+// Tests that when only the quaternion version of the absolute orientation
+// sensor is available the provider falls back to using a fusion algorithm
+// to provide the euler angles version.
+TEST_F(PlatformSensorAndProviderTestWin,
+       CheckDeviceOrientationEulerAnglesFallback) {
+  SetUnsupportedSensor(SENSOR_TYPE_INCLINOMETER_3D);
+  SetSupportedSensor(SENSOR_TYPE_AGGREGATED_DEVICE_ORIENTATION);
+
+  auto sensor = CreateSensor(SensorType::ABSOLUTE_ORIENTATION_EULER_ANGLES);
+  EXPECT_TRUE(sensor);
+}
+
+// Tests that with neither absolute orientation sensor type available
+// the fallback logic does not generate an infinite loop.
+TEST_F(PlatformSensorAndProviderTestWin,
+       CheckDeviceOrientationFallbackFailure) {
+  SetUnsupportedSensor(SENSOR_TYPE_INCLINOMETER_3D);
+  SetUnsupportedSensor(SENSOR_TYPE_AGGREGATED_DEVICE_ORIENTATION);
+
+  auto euler_angles_sensor =
+      CreateSensor(SensorType::ABSOLUTE_ORIENTATION_EULER_ANGLES);
+  EXPECT_FALSE(euler_angles_sensor);
+  auto quaternion_sensor =
+      CreateSensor(SensorType::ABSOLUTE_ORIENTATION_QUATERNION);
+  EXPECT_FALSE(quaternion_sensor);
 }
 
 }  // namespace device

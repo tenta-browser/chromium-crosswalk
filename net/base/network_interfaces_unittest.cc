@@ -18,6 +18,8 @@
 #elif defined(OS_WIN)
 #include <iphlpapi.h>
 #include <objbase.h>
+#include "base/strings/string_util.h"
+#include "base/win/win_util.h"
 #endif
 
 namespace net {
@@ -28,8 +30,7 @@ namespace {
 TEST(NetworkInterfacesTest, GetNetworkList) {
   NetworkInterfaceList list;
   ASSERT_TRUE(GetNetworkList(&list, INCLUDE_HOST_SCOPE_VIRTUAL_INTERFACES));
-  for (NetworkInterfaceList::iterator it = list.begin();
-       it != list.end(); ++it) {
+  for (auto it = list.begin(); it != list.end(); ++it) {
     // Verify that the names are not empty.
     EXPECT_FALSE(it->name.empty());
     EXPECT_FALSE(it->friendly_name.empty());
@@ -49,15 +50,13 @@ TEST(NetworkInterfacesTest, GetNetworkList) {
     GUID guid;
     EXPECT_EQ(static_cast<DWORD>(NO_ERROR),
               ConvertInterfaceLuidToGuid(&luid, &guid));
-    LPOLESTR name;
-    StringFromCLSID(guid, &name);
-    EXPECT_STREQ(base::UTF8ToWide(it->name).c_str(), name);
-    CoTaskMemFree(name);
+    auto name = base::win::String16FromGUID(guid);
+    EXPECT_EQ(base::as_u16cstr(base::UTF8ToWide(it->name)), name);
 
     if (it->type == NetworkChangeNotifier::CONNECTION_WIFI) {
       EXPECT_NE(WIFI_PHY_LAYER_PROTOCOL_NONE, GetWifiPHYLayerProtocol());
     }
-#elif defined(OS_POSIX) && !defined(OS_ANDROID) && !defined(OS_FUCHSIA)
+#elif defined(OS_POSIX) && !defined(OS_ANDROID)
     char name[IF_NAMESIZE];
     EXPECT_TRUE(if_indextoname(it->interface_index, name));
     EXPECT_STREQ(it->name.c_str(), name);
@@ -69,7 +68,7 @@ TEST(NetworkInterfacesTest, GetWifiSSID) {
   // We can't check the result of GetWifiSSID() directly, since the result
   // will differ across machines. Simply exercise the code path and hope that it
   // doesn't crash.
-  EXPECT_NE((const char*)NULL, GetWifiSSID().c_str());
+  EXPECT_NE((const char*)nullptr, GetWifiSSID().c_str());
 }
 
 TEST(NetworkInterfacesTest, GetHostName) {

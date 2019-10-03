@@ -1,6 +1,5 @@
 include_rules = [
   "-content",
-  "+components/data_use_measurement/core",
   "+components/keyed_service",
   "+components/prefs",
   "+components/sync_preferences",
@@ -11,6 +10,9 @@ include_rules = [
   "+net/base",
   "+net/traffic_annotation",
   "+net/url_request",
+  "+net/http",
+  "+services/network/public/cpp",
+  "+services/network/test",
   "+third_party/re2",
   "+third_party/zlib/google",
 ]

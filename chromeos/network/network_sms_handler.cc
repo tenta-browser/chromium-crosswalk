@@ -15,19 +15,14 @@
 #include "base/containers/circular_deque.h"
 #include "base/macros.h"
 #include "base/values.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/gsm_sms_client.h"
-#include "chromeos/dbus/modem_messaging_client.h"
-#include "chromeos/dbus/shill_device_client.h"
-#include "chromeos/dbus/shill_manager_client.h"
-#include "chromeos/dbus/sms_client.h"
+#include "chromeos/dbus/shill/modem_messaging_client.h"
+#include "chromeos/dbus/shill/shill_device_client.h"
+#include "chromeos/dbus/shill/shill_manager_client.h"
+#include "chromeos/dbus/shill/sms_client.h"
 #include "dbus/object_path.h"
 #include "third_party/cros_system_api/dbus/service_constants.h"
 
 namespace {
-
-// Not exposed/exported:
-const char kIndexKey[] = "index";
 
 // Maximum number of messages stored for RequestUpdate(true).
 const size_t kMaxReceivedMessages = 100;
@@ -49,126 +44,6 @@ class NetworkSmsHandler::NetworkSmsDeviceHandler {
   virtual void RequestUpdate() = 0;
 };
 
-class NetworkSmsHandler::ModemManagerNetworkSmsDeviceHandler
-    : public NetworkSmsHandler::NetworkSmsDeviceHandler {
- public:
-  ModemManagerNetworkSmsDeviceHandler(NetworkSmsHandler* host,
-                                      const std::string& service_name,
-                                      const dbus::ObjectPath& object_path);
-
-  void RequestUpdate() override;
-
- private:
-  void ListCallback(const base::ListValue& message_list);
-  void SmsReceivedCallback(uint32_t index, bool complete);
-  void GetCallback(uint32_t index, const base::DictionaryValue& dictionary);
-  void DeleteMessages();
-  void MessageReceived(const base::DictionaryValue& dictionary);
-
-  NetworkSmsHandler* host_;
-  std::string service_name_;
-  dbus::ObjectPath object_path_;
-  bool deleting_messages_;
-  std::vector<uint32_t> delete_queue_;
-  base::WeakPtrFactory<ModemManagerNetworkSmsDeviceHandler> weak_ptr_factory_;
-
-  DISALLOW_COPY_AND_ASSIGN(ModemManagerNetworkSmsDeviceHandler);
-};
-
-NetworkSmsHandler::
-ModemManagerNetworkSmsDeviceHandler::ModemManagerNetworkSmsDeviceHandler(
-    NetworkSmsHandler* host,
-    const std::string& service_name,
-    const dbus::ObjectPath& object_path)
-    : host_(host),
-      service_name_(service_name),
-      object_path_(object_path),
-      deleting_messages_(false),
-      weak_ptr_factory_(this) {
-  // Set the handler for received Sms messaages.
-  DBusThreadManager::Get()->GetGsmSMSClient()->SetSmsReceivedHandler(
-      service_name_, object_path_,
-      base::Bind(&ModemManagerNetworkSmsDeviceHandler::SmsReceivedCallback,
-                 weak_ptr_factory_.GetWeakPtr()));
-
-  // List the existing messages.
-  DBusThreadManager::Get()->GetGsmSMSClient()->List(
-      service_name_, object_path_,
-      base::Bind(&NetworkSmsHandler::
-                 ModemManagerNetworkSmsDeviceHandler::ListCallback,
-                 weak_ptr_factory_.GetWeakPtr()));
-}
-
-void NetworkSmsHandler::ModemManagerNetworkSmsDeviceHandler::RequestUpdate() {
-  DBusThreadManager::Get()->GetGsmSMSClient()->RequestUpdate(
-      service_name_, object_path_);
-}
-
-void NetworkSmsHandler::ModemManagerNetworkSmsDeviceHandler::ListCallback(
-    const base::ListValue& message_list) {
-  // This receives all messages, so clear any pending deletes.
-  delete_queue_.clear();
-  for (base::ListValue::const_iterator iter = message_list.begin();
-       iter != message_list.end(); ++iter) {
-    const base::DictionaryValue* message = NULL;
-    if (iter->GetAsDictionary(&message))
-      continue;
-    MessageReceived(*message);
-    double index = 0;
-    if (message->GetDoubleWithoutPathExpansion(kIndexKey, &index))
-      delete_queue_.push_back(static_cast<uint32_t>(index));
-  }
-  DeleteMessages();
-}
-
-// Messages must be deleted one at a time, since we can not guarantee
-// the order the deletion will be executed in. Delete messages from
-// the back of the list so that the indices are valid.
-void NetworkSmsHandler::ModemManagerNetworkSmsDeviceHandler::DeleteMessages() {
-  if (delete_queue_.empty()) {
-    deleting_messages_ = false;
-    return;
-  }
-  deleting_messages_ = true;
-  uint32_t index = delete_queue_.back();
-  delete_queue_.pop_back();
-  DBusThreadManager::Get()->GetGsmSMSClient()->Delete(
-      service_name_, object_path_, index,
-      base::Bind(&NetworkSmsHandler::
-                 ModemManagerNetworkSmsDeviceHandler::DeleteMessages,
-                 weak_ptr_factory_.GetWeakPtr()));
-}
-
-void NetworkSmsHandler::ModemManagerNetworkSmsDeviceHandler::
-    SmsReceivedCallback(uint32_t index, bool complete) {
-  // Only handle complete messages.
-  if (!complete)
-    return;
-  DBusThreadManager::Get()->GetGsmSMSClient()->Get(
-      service_name_, object_path_, index,
-      base::Bind(&NetworkSmsHandler::
-                 ModemManagerNetworkSmsDeviceHandler::GetCallback,
-                 weak_ptr_factory_.GetWeakPtr(), index));
-}
-
-void NetworkSmsHandler::ModemManagerNetworkSmsDeviceHandler::GetCallback(
-    uint32_t index,
-    const base::DictionaryValue& dictionary) {
-  MessageReceived(dictionary);
-  delete_queue_.push_back(index);
-  if (!deleting_messages_)
-    DeleteMessages();
-}
-
-void NetworkSmsHandler::
-ModemManagerNetworkSmsDeviceHandler::MessageReceived(
-    const base::DictionaryValue& dictionary) {
-  // The keys of the ModemManager.Modem.Gsm.SMS interface match the
-  // exported keys, so the dictionary used as a notification argument
-  // unchanged.
-  host_->MessageReceived(dictionary);
-}
-
 class NetworkSmsHandler::ModemManager1NetworkSmsDeviceHandler
     : public NetworkSmsHandler::NetworkSmsDeviceHandler {
  public:
@@ -179,10 +54,11 @@ class NetworkSmsHandler::ModemManager1NetworkSmsDeviceHandler
   void RequestUpdate() override;
 
  private:
-  void ListCallback(const std::vector<dbus::ObjectPath>& paths);
+  void ListCallback(base::Optional<std::vector<dbus::ObjectPath>> paths);
   void SmsReceivedCallback(const dbus::ObjectPath& path, bool complete);
   void GetCallback(const base::DictionaryValue& dictionary);
   void DeleteMessages();
+  void DeleteCallback(bool success);
   void GetMessages();
   void MessageReceived(const base::DictionaryValue& dictionary);
 
@@ -210,39 +86,42 @@ ModemManager1NetworkSmsDeviceHandler::ModemManager1NetworkSmsDeviceHandler(
       retrieving_messages_(false),
       weak_ptr_factory_(this) {
   // Set the handler for received Sms messaages.
-  DBusThreadManager::Get()->GetModemMessagingClient()->SetSmsReceivedHandler(
+  ModemMessagingClient::Get()->SetSmsReceivedHandler(
       service_name_, object_path_,
-      base::Bind(
-          &NetworkSmsHandler::
-          ModemManager1NetworkSmsDeviceHandler::SmsReceivedCallback,
-          weak_ptr_factory_.GetWeakPtr()));
+      base::Bind(&NetworkSmsHandler::ModemManager1NetworkSmsDeviceHandler::
+                     SmsReceivedCallback,
+                 weak_ptr_factory_.GetWeakPtr()));
 
   // List the existing messages.
-  DBusThreadManager::Get()->GetModemMessagingClient()->List(
+  ModemMessagingClient::Get()->List(
       service_name_, object_path_,
-      base::Bind(&NetworkSmsHandler::
-                 ModemManager1NetworkSmsDeviceHandler::ListCallback,
-                 weak_ptr_factory_.GetWeakPtr()));
+      base::BindOnce(&NetworkSmsHandler::ModemManager1NetworkSmsDeviceHandler::
+                         ListCallback,
+                     weak_ptr_factory_.GetWeakPtr()));
 }
 
 void NetworkSmsHandler::ModemManager1NetworkSmsDeviceHandler::RequestUpdate() {
   // Calling List using the service "AddSMS" causes the stub
   // implementation to deliver new sms messages.
-  DBusThreadManager::Get()->GetModemMessagingClient()->List(
+  ModemMessagingClient::Get()->List(
       std::string("AddSMS"), dbus::ObjectPath("/"),
-      base::Bind(&NetworkSmsHandler::
-                 ModemManager1NetworkSmsDeviceHandler::ListCallback,
-                 weak_ptr_factory_.GetWeakPtr()));
+      base::BindOnce(&NetworkSmsHandler::ModemManager1NetworkSmsDeviceHandler::
+                         ListCallback,
+                     weak_ptr_factory_.GetWeakPtr()));
 }
 
 void NetworkSmsHandler::ModemManager1NetworkSmsDeviceHandler::ListCallback(
-    const std::vector<dbus::ObjectPath>& paths) {
+    base::Optional<std::vector<dbus::ObjectPath>> paths) {
   // This receives all messages, so clear any pending gets and deletes.
   retrieval_queue_.clear();
   delete_queue_.clear();
 
-  retrieval_queue_.resize(paths.size());
-  std::copy(paths.begin(), paths.end(), retrieval_queue_.begin());
+  if (!paths.has_value())
+    return;
+
+  retrieval_queue_.reserve(paths->size());
+  retrieval_queue_.assign(std::make_move_iterator(paths->begin()),
+                          std::make_move_iterator(paths->end()));
   if (!retrieving_messages_)
     GetMessages();
 }
@@ -256,13 +135,20 @@ void NetworkSmsHandler::ModemManager1NetworkSmsDeviceHandler::DeleteMessages() {
     return;
   }
   deleting_messages_ = true;
-  dbus::ObjectPath sms_path = delete_queue_.back();
+  dbus::ObjectPath sms_path = std::move(delete_queue_.back());
   delete_queue_.pop_back();
-  DBusThreadManager::Get()->GetModemMessagingClient()->Delete(
+  ModemMessagingClient::Get()->Delete(
       service_name_, object_path_, sms_path,
-      base::Bind(&NetworkSmsHandler::
-                 ModemManager1NetworkSmsDeviceHandler::DeleteMessages,
-                 weak_ptr_factory_.GetWeakPtr()));
+      base::BindOnce(&NetworkSmsHandler::ModemManager1NetworkSmsDeviceHandler::
+                         DeleteCallback,
+                     weak_ptr_factory_.GetWeakPtr()));
+}
+
+void NetworkSmsHandler::ModemManager1NetworkSmsDeviceHandler::DeleteCallback(
+    bool success) {
+  if (!success)
+    return;
+  DeleteMessages();
 }
 
 // Messages must be fetched one at a time, so that we do not queue too
@@ -277,11 +163,11 @@ void NetworkSmsHandler::ModemManager1NetworkSmsDeviceHandler::GetMessages() {
   retrieving_messages_ = true;
   dbus::ObjectPath sms_path = retrieval_queue_.front();
   retrieval_queue_.pop_front();
-  DBusThreadManager::Get()->GetSMSClient()->GetAll(
+  SMSClient::Get()->GetAll(
       service_name_, sms_path,
-      base::Bind(&NetworkSmsHandler::
-                 ModemManager1NetworkSmsDeviceHandler::GetCallback,
-                 weak_ptr_factory_.GetWeakPtr()));
+      base::BindOnce(
+          &NetworkSmsHandler::ModemManager1NetworkSmsDeviceHandler::GetCallback,
+          weak_ptr_factory_.GetWeakPtr()));
   delete_queue_.push_back(sms_path);
 }
 
@@ -332,17 +218,15 @@ NetworkSmsHandler::NetworkSmsHandler()
 }
 
 NetworkSmsHandler::~NetworkSmsHandler() {
-  DBusThreadManager::Get()->GetShillManagerClient()->
-      RemovePropertyChangedObserver(this);
+  ShillManagerClient::Get()->RemovePropertyChangedObserver(this);
 }
 
 void NetworkSmsHandler::Init() {
   // Add as an observer here so that new devices added after this call are
   // recognized.
-  DBusThreadManager::Get()->GetShillManagerClient()->AddPropertyChangedObserver(
-      this);
+  ShillManagerClient::Get()->AddPropertyChangedObserver(this);
   // Request network manager properties so that we can get the list of devices.
-  DBusThreadManager::Get()->GetShillManagerClient()->GetProperties(
+  ShillManagerClient::Get()->GetProperties(
       base::Bind(&NetworkSmsHandler::ManagerPropertiesCallback,
                  weak_ptr_factory_.GetWeakPtr()));
 }
@@ -423,11 +307,10 @@ void NetworkSmsHandler::UpdateDevices(const base::ListValue* devices) {
     if (!device_path.empty()) {
       // Request device properties.
       VLOG(1) << "GetDeviceProperties: " << device_path;
-      DBusThreadManager::Get()->GetShillDeviceClient()->GetProperties(
+      ShillDeviceClient::Get()->GetProperties(
           dbus::ObjectPath(device_path),
           base::Bind(&NetworkSmsHandler::DevicePropertiesCallback,
-                     weak_ptr_factory_.GetWeakPtr(),
-                     device_path));
+                     weak_ptr_factory_.GetWeakPtr(), device_path));
     }
   }
 }
@@ -468,10 +351,6 @@ void NetworkSmsHandler::DevicePropertiesCallback(
   if (service_name == modemmanager::kModemManager1ServiceName) {
     device_handlers_.push_back(
         std::make_unique<ModemManager1NetworkSmsDeviceHandler>(
-            this, service_name, object_path));
-  } else {
-    device_handlers_.push_back(
-        std::make_unique<ModemManagerNetworkSmsDeviceHandler>(
             this, service_name, object_path));
   }
 }

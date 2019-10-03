@@ -6,23 +6,27 @@
 #define COMPONENTS_PAYMENTS_CONTENT_ANDROID_PAYMENT_MANIFEST_DOWNLOADER_ANDROID_H_
 
 #include <jni.h>
+#include <memory>
 
 #include "base/android/jni_android.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "components/payments/core/payment_manifest_downloader.h"
 
-namespace net {
-class URLRequestContextGetter;
+namespace network {
+class SharedURLLoaderFactory;
 }
 
 namespace payments {
 
+class ErrorLogger;
+
 // Android wrapper for the payment manifest downloader.
 class PaymentManifestDownloaderAndroid {
  public:
-  explicit PaymentManifestDownloaderAndroid(
-      const scoped_refptr<net::URLRequestContextGetter>& context);
+  PaymentManifestDownloaderAndroid(
+      std::unique_ptr<ErrorLogger> log,
+      scoped_refptr<network::SharedURLLoaderFactory> url_loader_factory);
   ~PaymentManifestDownloaderAndroid();
 
   void DownloadPaymentMethodManifest(

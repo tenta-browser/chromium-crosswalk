@@ -16,6 +16,8 @@
 
 #include <elf.h>
 
+#include <type_traits>
+
 #include "util/stdlib/map_insert.h"
 
 namespace crashpad {
@@ -40,16 +42,19 @@ bool Read(const ProcessMemoryRange& memory,
     switch (entry.d_tag) {
       case DT_NULL:
         values->swap(local_values);
-        if (size != 0) {
-          LOG(WARNING) << size << " trailing bytes not read";
-        }
         return true;
       case DT_NEEDED:
         // Skip these entries for now.
         break;
       default:
+        static_assert(std::is_unsigned<decltype(entry.d_un.d_ptr)>::value,
+                      "type must be unsigned");
+        static_assert(static_cast<void*>(&entry.d_un.d_ptr) ==
+                              static_cast<void*>(&entry.d_un.d_val) &&
+                          sizeof(entry.d_un.d_ptr) == sizeof(entry.d_un.d_val),
+                      "d_ptr and d_val must be aliases");
         if (!MapInsertOrReplace(
-                &local_values, entry.d_tag, entry.d_un.d_val, nullptr)) {
+                &local_values, entry.d_tag, entry.d_un.d_ptr, nullptr)) {
           LOG(ERROR) << "duplicate dynamic array entry";
           return false;
         }

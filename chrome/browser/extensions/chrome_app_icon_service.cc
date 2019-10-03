@@ -5,7 +5,6 @@
 #include "chrome/browser/extensions/chrome_app_icon_service.h"
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "chrome/browser/extensions/chrome_app_icon.h"
 #include "chrome/browser/extensions/chrome_app_icon_service_factory.h"
@@ -21,9 +20,9 @@ ChromeAppIconService* ChromeAppIconService::Get(
 }
 
 ChromeAppIconService::ChromeAppIconService(content::BrowserContext* context)
-    : context_(context), observer_(this), weak_ptr_factory_(this) {
+    : context_(context), observer_(this) {
 #if defined(OS_CHROMEOS)
-  app_updater_ = base::MakeUnique<LauncherExtensionAppUpdater>(this, context);
+  app_updater_ = std::make_unique<LauncherExtensionAppUpdater>(this, context);
 #endif
 
   observer_.Add(ExtensionRegistry::Get(context_));
@@ -40,15 +39,23 @@ void ChromeAppIconService::Shutdown() {
 std::unique_ptr<ChromeAppIcon> ChromeAppIconService::CreateIcon(
     ChromeAppIconDelegate* delegate,
     const std::string& app_id,
-    int resource_size_in_dip) {
-  std::unique_ptr<ChromeAppIcon> icon = base::MakeUnique<ChromeAppIcon>(
+    int resource_size_in_dip,
+    const ResizeFunction& resize_function) {
+  std::unique_ptr<ChromeAppIcon> icon = std::make_unique<ChromeAppIcon>(
       delegate, context_,
       base::Bind(&ChromeAppIconService::OnIconDestroyed,
                  weak_ptr_factory_.GetWeakPtr()),
-      app_id, resource_size_in_dip);
+      app_id, resource_size_in_dip, resize_function);
 
   icon_map_[icon->app_id()].insert(icon.get());
   return icon;
+}
+
+std::unique_ptr<ChromeAppIcon> ChromeAppIconService::CreateIcon(
+    ChromeAppIconDelegate* delegate,
+    const std::string& app_id,
+    int resource_size_in_dip) {
+  return CreateIcon(delegate, app_id, resource_size_in_dip, ResizeFunction());
 }
 
 void ChromeAppIconService::OnExtensionLoaded(
@@ -86,18 +93,19 @@ void ChromeAppIconService::OnAppUpdated(const std::string& app_id) {
 
 void ChromeAppIconService::OnIconDestroyed(ChromeAppIcon* icon) {
   DCHECK(icon);
-  IconMap::iterator it = icon_map_.find(icon->app_id());
+  auto it = icon_map_.find(icon->app_id());
   DCHECK(it != icon_map_.end());
   it->second.erase(icon);
   if (it->second.empty()) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&ChromeAppIconService::MaybeCleanupIconSet,
-                              weak_ptr_factory_.GetWeakPtr(), icon->app_id()));
+        FROM_HERE,
+        base::BindOnce(&ChromeAppIconService::MaybeCleanupIconSet,
+                       weak_ptr_factory_.GetWeakPtr(), icon->app_id()));
   }
 }
 
 void ChromeAppIconService::MaybeCleanupIconSet(const std::string& app_id) {
-  IconMap::iterator it = icon_map_.find(app_id);
+  auto it = icon_map_.find(app_id);
   if (it != icon_map_.end() && it->second.empty())
     icon_map_.erase(it);
 }

@@ -52,21 +52,28 @@ class NET_EXPORT_PRIVATE EntryImpl
 
   // Background implementation of the Entry interface.
   void DoomImpl();
-  int ReadDataImpl(int index, int offset, IOBuffer* buf, int buf_len,
-                   const CompletionCallback& callback);
-  int WriteDataImpl(int index, int offset, IOBuffer* buf, int buf_len,
-                    const CompletionCallback& callback, bool truncate);
+  int ReadDataImpl(int index,
+                   int offset,
+                   IOBuffer* buf,
+                   int buf_len,
+                   CompletionOnceCallback callback);
+  int WriteDataImpl(int index,
+                    int offset,
+                    IOBuffer* buf,
+                    int buf_len,
+                    CompletionOnceCallback callback,
+                    bool truncate);
   int ReadSparseDataImpl(int64_t offset,
                          IOBuffer* buf,
                          int buf_len,
-                         const CompletionCallback& callback);
+                         CompletionOnceCallback callback);
   int WriteSparseDataImpl(int64_t offset,
                           IOBuffer* buf,
                           int buf_len,
-                          const CompletionCallback& callback);
+                          CompletionOnceCallback callback);
   int GetAvailableRangeImpl(int64_t offset, int len, int64_t* start);
   void CancelSparseIOImpl();
-  int ReadyForSparseIOImpl(const CompletionCallback& callback);
+  int ReadyForSparseIOImpl(CompletionOnceCallback callback);
 
   inline CacheEntryBlock* entry() {
     return &entry_;
@@ -171,28 +178,29 @@ class NET_EXPORT_PRIVATE EntryImpl
                int offset,
                IOBuffer* buf,
                int buf_len,
-               const CompletionCallback& callback) override;
+               CompletionOnceCallback callback) override;
   int WriteData(int index,
                 int offset,
                 IOBuffer* buf,
                 int buf_len,
-                const CompletionCallback& callback,
+                CompletionOnceCallback callback,
                 bool truncate) override;
   int ReadSparseData(int64_t offset,
                      IOBuffer* buf,
                      int buf_len,
-                     const CompletionCallback& callback) override;
+                     CompletionOnceCallback callback) override;
   int WriteSparseData(int64_t offset,
                       IOBuffer* buf,
                       int buf_len,
-                      const CompletionCallback& callback) override;
+                      CompletionOnceCallback callback) override;
   int GetAvailableRange(int64_t offset,
                         int len,
                         int64_t* start,
-                        const CompletionCallback& callback) override;
+                        CompletionOnceCallback callback) override;
   bool CouldBeSparse() const override;
   void CancelSparseIO() override;
-  int ReadyForSparseIO(const CompletionCallback& callback) override;
+  net::Error ReadyForSparseIO(CompletionOnceCallback callback) override;
+  void SetLastUsedTimeForTest(base::Time time) override;
 
  private:
   enum {
@@ -204,10 +212,17 @@ class NET_EXPORT_PRIVATE EntryImpl
 
   // Do all the work for ReadDataImpl and WriteDataImpl.  Implemented as
   // separate functions to make logging of results simpler.
-  int InternalReadData(int index, int offset, IOBuffer* buf,
-                       int buf_len, const CompletionCallback& callback);
-  int InternalWriteData(int index, int offset, IOBuffer* buf, int buf_len,
-                        const CompletionCallback& callback, bool truncate);
+  int InternalReadData(int index,
+                       int offset,
+                       IOBuffer* buf,
+                       int buf_len,
+                       CompletionOnceCallback callback);
+  int InternalWriteData(int index,
+                        int offset,
+                        IOBuffer* buf,
+                        int buf_len,
+                        CompletionOnceCallback callback,
+                        bool truncate);
 
   // Initializes the storage for an internal or external data block.
   bool CreateDataBlock(int index, int size);
@@ -280,6 +295,9 @@ class NET_EXPORT_PRIVATE EntryImpl
   // Logs this entry to the internal trace buffer.
   void Log(const char* msg);
 
+  // |net_log_| should be early since some field destructors (at least
+  // ~SparseControl) can touch it.
+  net::NetLogWithSource net_log_;
   CacheEntryBlock entry_;     // Key related information for this entry.
   CacheRankingsBlock node_;   // Rankings related information for this entry.
   base::WeakPtr<BackendImpl> backend_;  // Back pointer to the cache.
@@ -293,8 +311,6 @@ class NET_EXPORT_PRIVATE EntryImpl
   bool read_only_;            // True if not yet writing.
   bool dirty_;                // True if we detected that this is a dirty entry.
   std::unique_ptr<SparseControl> sparse_;  // Support for sparse entries.
-
-  net::NetLogWithSource net_log_;
 
   DISALLOW_COPY_AND_ASSIGN(EntryImpl);
 };

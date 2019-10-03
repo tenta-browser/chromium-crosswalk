@@ -4,19 +4,22 @@
 
 #include "chrome/browser/ui/android/autofill/autofill_popup_view_android.h"
 
+#include <memory>
+
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/command_line.h"
+#include "chrome/android/chrome_jni_headers/AutofillPopupBridge_jni.h"
 #include "chrome/browser/android/resource_mapper.h"
+#include "chrome/browser/autofill/autofill_keyboard_accessory_adapter.h"
 #include "chrome/browser/ui/android/autofill/autofill_keyboard_accessory_view.h"
 #include "chrome/browser/ui/android/view_android_helper.h"
 #include "chrome/browser/ui/autofill/autofill_popup_controller.h"
 #include "chrome/browser/ui/autofill/autofill_popup_layout_model.h"
-#include "components/autofill/core/browser/popup_item_ids.h"
-#include "components/autofill/core/browser/suggestion.h"
+#include "components/autofill/core/browser/ui/popup_item_ids.h"
+#include "components/autofill/core/browser/ui/suggestion.h"
 #include "components/autofill/core/common/autofill_util.h"
 #include "components/security_state/core/security_state.h"
-#include "jni/AutofillPopupBridge_jni.h"
 #include "ui/android/view_android.h"
 #include "ui/android/window_android.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -35,19 +38,6 @@ AutofillPopupViewAndroid::AutofillPopupViewAndroid(
 AutofillPopupViewAndroid::~AutofillPopupViewAndroid() {}
 
 void AutofillPopupViewAndroid::Show() {
-  JNIEnv* env = base::android::AttachCurrentThread();
-  ui::ViewAndroid* view_android = controller_->container_view();
-
-  DCHECK(view_android);
-  popup_view_ = view_android->AcquireAnchorView();
-  const ScopedJavaLocalRef<jobject> view = popup_view_.view();
-  if (view.is_null())
-    return;
-
-  java_object_.Reset(Java_AutofillPopupBridge_create(
-      env, view, reinterpret_cast<intptr_t>(this),
-      view_android->GetWindowAndroid()->GetJavaObject()));
-
   OnSuggestionsChanged();
 }
 
@@ -100,29 +90,23 @@ void AutofillPopupViewAndroid::OnSuggestionsChanged() {
 
     bool is_deletable =
         controller_->GetRemovalConfirmationText(i, nullptr, nullptr);
-    // In the Form-Not-Secure experiment, the payment disabled message
-    // is a short message that should be displayed the same as the other
-    // autofill suggestions. If this experiment is not enabled, then the
-    // payment disabled message should be allowed to span multiple
-    // lines.
     bool is_label_multiline =
-        (!security_state::IsHttpWarningInFormEnabled() &&
-         suggestion.frontend_id ==
-             POPUP_ITEM_ID_INSECURE_CONTEXT_PAYMENT_DISABLED_MESSAGE) ||
+        suggestion.frontend_id ==
+            POPUP_ITEM_ID_INSECURE_CONTEXT_PAYMENT_DISABLED_MESSAGE ||
         suggestion.frontend_id == POPUP_ITEM_ID_CREDIT_CARD_SIGNIN_PROMO;
     Java_AutofillPopupBridge_addToAutofillSuggestionArray(
         env, data_array, i, value, label, android_icon_id,
-        controller_->layout_model().IsIconAtStart(suggestion.frontend_id),
-        suggestion.frontend_id, is_deletable, is_label_multiline,
-        suggestion.is_value_bold);
+        /*icon_at_start=*/false, suggestion.frontend_id, is_deletable,
+        is_label_multiline, /*isLabelBold*/ false);
   }
 
-  Java_AutofillPopupBridge_show(
-      env, java_object_, data_array, controller_->IsRTL(),
-      controller_->layout_model().GetBackgroundColor(),
-      controller_->layout_model().GetDividerColor(),
-      controller_->layout_model().GetDropdownItemHeight(),
-      controller_->layout_model().GetMargin());
+  Java_AutofillPopupBridge_show(env, java_object_, data_array,
+                                controller_->IsRTL());
+}
+
+base::Optional<int32_t> AutofillPopupViewAndroid::GetAxUniqueId() {
+  NOTIMPLEMENTED() << "See https://crbug.com/985927";
+  return base::nullopt;
 }
 
 void AutofillPopupViewAndroid::SuggestionSelected(
@@ -175,15 +159,42 @@ void AutofillPopupViewAndroid::PopupDismissed(
   delete this;
 }
 
+void AutofillPopupViewAndroid::Init() {
+  JNIEnv* env = base::android::AttachCurrentThread();
+  ui::ViewAndroid* view_android = controller_->container_view();
+
+  DCHECK(view_android);
+  popup_view_ = view_android->AcquireAnchorView();
+  const ScopedJavaLocalRef<jobject> view = popup_view_.view();
+  if (view.is_null())
+    return;
+
+  java_object_.Reset(Java_AutofillPopupBridge_create(
+      env, view, reinterpret_cast<intptr_t>(this),
+      view_android->GetWindowAndroid()->GetJavaObject()));
+}
+
+bool AutofillPopupViewAndroid::WasSuppressed() {
+  return java_object_ &&
+         Java_AutofillPopupBridge_wasSuppressed(
+             base::android::AttachCurrentThread(), java_object_);
+}
+
 // static
 AutofillPopupView* AutofillPopupView::Create(
     AutofillPopupController* controller) {
-  if (IsKeyboardAccessoryEnabled())
-    return new AutofillKeyboardAccessoryView(
+  if (IsKeyboardAccessoryEnabled()) {
+    auto adapter = std::make_unique<AutofillKeyboardAccessoryAdapter>(
         controller, GetKeyboardAccessoryAnimationDuration(),
         ShouldLimitKeyboardAccessorySuggestionLabelWidth());
+    adapter->SetAccessoryView(
+        std::make_unique<AutofillKeyboardAccessoryView>(adapter.get()));
+    return adapter.release();
+  }
 
-  return new AutofillPopupViewAndroid(controller);
+  auto popup_view = std::make_unique<AutofillPopupViewAndroid>(controller);
+  popup_view->Init();
+  return popup_view->WasSuppressed() ? nullptr : popup_view.release();
 }
 
 }  // namespace autofill

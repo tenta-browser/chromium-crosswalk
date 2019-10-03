@@ -5,11 +5,14 @@
 #ifndef CONTENT_PUBLIC_TEST_BROWSER_TEST_BASE_H_
 #define CONTENT_PUBLIC_TEST_BROWSER_TEST_BASE_H_
 
+#include <memory>
+
 #include "base/callback.h"
 #include "base/compiler_specific.h"
 #include "base/metrics/field_trial.h"
 #include "base/threading/thread.h"
 #include "build/build_config.h"
+#include "content/public/test/no_renderer_crashes_assertion.h"
 #include "content/public/test/test_host_resolver.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/spawned_test_server/spawned_test_server.h"
@@ -21,6 +24,8 @@ class FilePath;
 }
 
 namespace content {
+class BrowserMainParts;
+class WebContents;
 
 class BrowserTestBase : public testing::Test {
  public:
@@ -46,6 +51,15 @@ class BrowserTestBase : public testing::Test {
   // Override this to add command line flags specific to your test.
   virtual void SetUpCommandLine(base::CommandLine* command_line) {}
 
+  // Override this to disallow accesses to be production-compatible.
+  virtual bool AllowFileAccessFromFiles();
+
+  // Crash the Network Service process. Should only be called when
+  // out-of-process Network Service is enabled. Re-applies any added host
+  // resolver rules, though network tasks started before the call returns may
+  // racily start before the rules have been re-applied.
+  void SimulateNetworkServiceCrash();
+
   // Returns the host resolver being used for the tests. Subclasses might want
   // to configure it inside tests.
   net::RuleBasedHostResolverProc* host_resolver() {
@@ -64,6 +78,10 @@ class BrowserTestBase : public testing::Test {
 
   // Override this for things you would normally override TearDown for.
   virtual void TearDownInProcessBrowserTestFixture() {}
+
+  // Called after the BrowserMainParts have been created, and before
+  // PreEarlyInitialization() has been called.
+  virtual void CreatedBrowserMainParts(BrowserMainParts* browser_main_parts) {}
 
   // This is invoked from main after browser_init/browser_main have completed.
   // This prepares for the test by creating a new browser and doing any other
@@ -117,7 +135,7 @@ class BrowserTestBase : public testing::Test {
   // When the test is running in --single-process mode, runs the given task on
   // the in-process renderer thread. A nested run loop is run until it
   // returns.
-  void PostTaskToInProcessRendererAndWait(const base::Closure& task);
+  void PostTaskToInProcessRendererAndWait(base::OnceClosure task);
 
   // Call this before SetUp() to cause the test to generate pixel output.
   void EnablePixelOutput();
@@ -129,11 +147,19 @@ class BrowserTestBase : public testing::Test {
   // Returns true if the test will be using GL acceleration via a software GL.
   bool UsingSoftwareGL() const;
 
-  // Temporary
-  // TODO(jam): remove this.
-  void disable_io_checks() { disable_io_checks_ = true; }
+  // Should be in PreRunTestOnMainThread, with the initial WebContents for the
+  // main window. This allows the test harness to watch it for navigations so
+  // that it can sync the host_resolver() rules to the out-of-process network
+  // code necessary.
+  void SetInitialWebContents(WebContents* web_contents);
 
  private:
+#if defined(OS_ANDROID)
+  // Android browser tests need to wait for async initialization in Java code.
+  // This waits for those to complete before we can continue with the test.
+  void WaitUntilJavaIsReady(base::OnceClosure quit_closure);
+#endif
+  // Performs a bunch of setup, and then runs the browser test body.
   void ProxyRunTestOnMainThreadLoop();
 
   // When using the network process, update the host resolver rules that were
@@ -163,15 +189,17 @@ class BrowserTestBase : public testing::Test {
   // When true, do compositing with the software backend instead of using GL.
   bool use_software_compositing_;
 
+  // Initial WebContents to watch for navigations during SetUpOnMainThread.
+  WebContents* initial_web_contents_ = nullptr;
+
   // Whether SetUp was called. This value is checked in the destructor of this
   // class to ensure that SetUp was called. If it's not called, the test will
   // not run and report a false positive result.
   bool set_up_called_;
 
-  // Tests should keep on the IO thread checks to test that production code
-  // paths don't make file access. Keep this for now since src/chrome didn't
-  // check this.
-  bool disable_io_checks_;
+  std::unique_ptr<NoRendererCrashesAssertion> no_renderer_crashes_assertion_;
+
+  bool initialized_network_process_ = false;
 
 #if defined(OS_POSIX)
   bool handle_sigterm_;

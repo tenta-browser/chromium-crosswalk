@@ -36,15 +36,15 @@ Polymer({
    * @private
    */
   onMenuButtonTap_: function(event) {
-    var button = /** @type {!HTMLElement} */ (event.target);
-    var menu = /** @type {!CrActionMenuElement} */ (this.$.dotsMenu);
+    const button = /** @type {!HTMLElement} */ (event.target);
+    const menu = /** @type {!CrActionMenuElement} */ (this.$.dotsMenu);
     menu.showAt(button);
     event.stopPropagation();
   },
 
   /** @private */
   onConnectActionTap_: function() {
-    var action = this.isDisconnected_(this.device) ? 'connect' : 'disconnect';
+    const action = this.isDisconnected_(this.device) ? 'connect' : 'disconnect';
     this.fire('device-event', {
       action: action,
       device: this.device,
@@ -85,10 +85,18 @@ Polymer({
    * @private
    */
   getConnectionStatusText_: function(device) {
-    if (!this.hasConnectionStatusText_(device))
+    if (!this.hasConnectionStatusText_(device)) {
       return '';
-    return this.i18n(
-        device.connected ? 'bluetoothConnected' : 'bluetoothNotConnected');
+    }
+    if (device.connecting) {
+      return this.i18n('bluetoothConnecting');
+    }
+    if (!device.connected) {
+      return this.i18n('bluetoothNotConnected');
+    }
+    return device.batteryPercentage !== undefined ?
+        this.i18n('bluetoothConnectedWithBattery', device.batteryPercentage) :
+        this.i18n('bluetoothConnected');
   },
 
   /**
@@ -98,7 +106,7 @@ Polymer({
    * @private
    */
   hasConnectionStatusText_: function(device) {
-    return !!device.paired && !device.connecting;
+    return !!(device.paired || device.connecting);
   },
 
   /**
@@ -122,14 +130,14 @@ Polymer({
   getDeviceIcon_: function(device) {
     switch (device.type) {
       case 'computer':
-        return 'settings:computer';
+        return 'cr:computer';
       case 'phone':
         return 'settings:smartphone';
       case 'audio':
       case 'carAudio':
         return 'settings:headset';
       case 'video':
-        return 'settings:videocam';
+        return 'cr:videocam';
       case 'joystick':
       case 'gamepad':
         return 'settings:gamepad';
@@ -142,7 +150,7 @@ Polymer({
         return 'settings:mouse';
       default:
         return device.connected ? 'settings:bluetooth-connected' :
-                                  'settings:bluetooth';
+                                  'cr:bluetooth';
     }
   },
 });

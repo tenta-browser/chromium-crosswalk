@@ -8,6 +8,7 @@
 #include <vector>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "chrome/browser/extensions/extension_service.h"
 #include "chrome/browser/sync_file_system/drive_backend/callback_helper.h"
 #include "chrome/browser/sync_file_system/drive_backend/conflict_resolver.h"
@@ -35,8 +36,6 @@ namespace drive_backend {
 
 namespace {
 
-void EmptyStatusCallback(SyncStatusCode status) {}
-
 void InvokeIdleCallback(const base::Closure& idle_callback,
                         const SyncStatusCallback& callback) {
   idle_callback.Run();
@@ -47,7 +46,8 @@ void InvokeIdleCallback(const base::Closure& idle_callback,
 
 SyncWorker::SyncWorker(
     const base::FilePath& base_dir,
-    const base::WeakPtr<ExtensionServiceInterface>& extension_service,
+    const base::WeakPtr<extensions::ExtensionServiceInterface>&
+        extension_service,
     leveldb::Env* env_override)
     : base_dir_(base_dir),
       env_override_(env_override),
@@ -56,8 +56,7 @@ SyncWorker::SyncWorker(
       should_check_remote_change_(true),
       listing_remote_changes_(false),
       sync_enabled_(false),
-      extension_service_(extension_service),
-      weak_ptr_factory_(this) {
+      extension_service_(extension_service) {
   sequence_checker_.DetachFromSequence();
   DCHECK(base_dir_.IsAbsolute());
 }
@@ -290,7 +289,7 @@ void SyncWorker::RecordTaskLog(std::unique_ptr<TaskLogger::TaskLog> task_log) {
   context_->GetUITaskRunner()->PostTask(
       FROM_HERE,
       base::BindOnce(&TaskLogger::RecordLog, context_->GetTaskLogger(),
-                     base::Passed(&task_log)));
+                     std::move(task_log)));
 }
 
 void SyncWorker::ActivateService(RemoteServiceState service_state,
@@ -413,18 +412,19 @@ void SyncWorker::UpdateRegisteredApps() {
 }
 
 void SyncWorker::QueryAppStatusOnUIThread(
-    const base::WeakPtr<ExtensionServiceInterface>& extension_service_ptr,
+    const base::WeakPtr<extensions::ExtensionServiceInterface>&
+        extension_service_ptr,
     const std::vector<std::string>* app_ids,
     AppStatusMap* status,
     const base::Closure& callback) {
-  ExtensionServiceInterface* extension_service = extension_service_ptr.get();
+  extensions::ExtensionServiceInterface* extension_service =
+      extension_service_ptr.get();
   if (!extension_service) {
     callback.Run();
     return;
   }
 
-  for (std::vector<std::string>::const_iterator itr = app_ids->begin();
-       itr != app_ids->end(); ++itr) {
+  for (auto itr = app_ids->begin(); itr != app_ids->end(); ++itr) {
     const std::string& app_id = *itr;
     if (!extension_service->GetInstalledExtension(app_id))
       (*status)[app_id] = APP_STATUS_UNINSTALLED;
@@ -444,8 +444,7 @@ void SyncWorker::DidQueryAppStatus(const AppStatusMap* app_status) {
   DCHECK(metadata_db);
 
   // Update the status of every origin using status from ExtensionService.
-  for (AppStatusMap::const_iterator itr = app_status->begin();
-       itr != app_status->end(); ++itr) {
+  for (auto itr = app_status->begin(); itr != app_status->end(); ++itr) {
     const std::string& app_id = itr->first;
     GURL origin = extensions::Extension::GetBaseURLFromExtensionId(app_id);
 
@@ -453,9 +452,8 @@ void SyncWorker::DidQueryAppStatus(const AppStatusMap* app_status) {
       // Extension has been uninstalled.
       // (At this stage we can't know if it was unpacked extension or not,
       // so just purge the remote folder.)
-      UninstallOrigin(origin,
-                      RemoteFileSyncService::UNINSTALL_AND_PURGE_REMOTE,
-                      base::Bind(&EmptyStatusCallback));
+      UninstallOrigin(origin, RemoteFileSyncService::UNINSTALL_AND_PURGE_REMOTE,
+                      base::DoNothing());
       continue;
     }
 
@@ -471,9 +469,9 @@ void SyncWorker::DidQueryAppStatus(const AppStatusMap* app_status) {
     bool is_app_root_tracker_enabled =
         (tracker.tracker_kind() == TRACKER_KIND_APP_ROOT);
     if (is_app_enabled && !is_app_root_tracker_enabled)
-      EnableOrigin(origin, base::Bind(&EmptyStatusCallback));
+      EnableOrigin(origin, base::DoNothing());
     else if (!is_app_enabled && is_app_root_tracker_enabled)
-      DisableOrigin(origin, base::Bind(&EmptyStatusCallback));
+      DisableOrigin(origin, base::DoNothing());
   }
 }
 
@@ -502,7 +500,7 @@ void SyncWorker::DidProcessRemoteChange(RemoteToLocalSyncer* syncer,
     if (syncer->sync_action() == SYNC_ACTION_DELETED &&
         syncer->url().is_valid() &&
         storage::VirtualPath::IsRootPath(syncer->url().path())) {
-      RegisterOrigin(syncer->url().origin(), base::Bind(&EmptyStatusCallback));
+      RegisterOrigin(syncer->url().origin().GetURL(), base::DoNothing());
     }
     should_check_conflict_ = true;
   }
@@ -519,7 +517,7 @@ void SyncWorker::DidApplyLocalChange(LocalToRemoteSyncer* syncer,
       syncer->sync_action() != SYNC_ACTION_NONE) {
     storage::FileSystemURL updated_url = syncer->url();
     if (!syncer->target_path().empty()) {
-      updated_url = CreateSyncableFileSystemURL(syncer->url().origin(),
+      updated_url = CreateSyncableFileSystemURL(syncer->url().origin().GetURL(),
                                                 syncer->target_path());
     }
     for (auto& observer : observers_) {
@@ -529,10 +527,8 @@ void SyncWorker::DidApplyLocalChange(LocalToRemoteSyncer* syncer,
     }
   }
 
-  if (status == SYNC_STATUS_UNKNOWN_ORIGIN && syncer->url().is_valid()) {
-    RegisterOrigin(syncer->url().origin(),
-                   base::Bind(&EmptyStatusCallback));
-  }
+  if (status == SYNC_STATUS_UNKNOWN_ORIGIN && syncer->url().is_valid())
+    RegisterOrigin(syncer->url().origin().GetURL(), base::DoNothing());
 
   if (syncer->needs_remote_change_listing() &&
       !listing_remote_changes_) {
@@ -674,9 +670,8 @@ void SyncWorker::UpdateServiceState(RemoteServiceState state,
 
 void SyncWorker::CallOnIdleForTesting(const base::Closure& callback) {
   if (task_manager_->ScheduleTaskIfIdle(
-          FROM_HERE,
-          base::Bind(&InvokeIdleCallback, callback),
-          base::Bind(&EmptyStatusCallback)))
+          FROM_HERE, base::Bind(&InvokeIdleCallback, callback),
+          base::DoNothing()))
     return;
   call_on_idle_callback_ = base::Bind(
       &SyncWorker::CallOnIdleForTesting,

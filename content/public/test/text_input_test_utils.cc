@@ -6,6 +6,7 @@
 
 #include <unordered_set>
 
+#include "base/strings/utf_string_conversions.h"
 #include "content/browser/frame_host/frame_tree.h"
 #include "content/browser/frame_host/frame_tree_node.h"
 #include "content/browser/frame_host/render_frame_host_impl.h"
@@ -21,7 +22,7 @@
 #include "content/public/browser/web_contents.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/test/test_utils.h"
-#include "third_party/WebKit/public/web/WebImeTextSpan.h"
+#include "third_party/blink/public/web/web_ime_text_span.h"
 #include "ui/base/ime/ime_text_span.h"
 #include "ui/base/ime/input_method.h"
 #include "ui/base/ime/input_method_observer.h"
@@ -186,7 +187,7 @@ class TestRenderWidgetHostViewDestructionObserver::InternalObserver
   DISALLOW_COPY_AND_ASSIGN(InternalObserver);
 };
 
-#ifdef USE_AURA
+#if defined(USE_AURA)
 class InputMethodObserverAura : public TestInputMethodObserver,
                                 public ui::InputMethodObserver {
  public:
@@ -208,7 +209,8 @@ class InputMethodObserverAura : public TestInputMethodObserver,
     return ui::TEXT_INPUT_TYPE_NONE;
   }
 
-  void SetOnShowImeIfNeededCallback(const base::Closure& callback) override {
+  void SetOnShowVirtualKeyboardIfEnabledCallback(
+      const base::RepeatingClosure& callback) override {
     on_show_ime_if_needed_callback_ = callback;
   }
 
@@ -219,11 +221,13 @@ class InputMethodObserverAura : public TestInputMethodObserver,
   void OnTextInputStateChanged(const ui::TextInputClient* client) override {}
   void OnInputMethodDestroyed(const ui::InputMethod* input_method) override {}
 
-  void OnShowImeIfNeeded() override { on_show_ime_if_needed_callback_.Run(); }
+  void OnShowVirtualKeyboardIfEnabled() override {
+    on_show_ime_if_needed_callback_.Run();
+  }
 
   ui::InputMethod* input_method_;
   const ui::TextInputClient* text_input_client_;
-  base::Closure on_show_ime_if_needed_callback_;
+  base::RepeatingClosure on_show_ime_if_needed_callback_;
 
   DISALLOW_COPY_AND_ASSIGN(InputMethodObserverAura);
 };
@@ -362,7 +366,7 @@ bool TextInputManagerTester::GetTextInputValue(std::string* value) {
       observer_->text_input_manager()->GetTextInputState();
   if (!state)
     return false;
-  *value = state->value;
+  *value = base::UTF16ToUTF8(state->value);
   return true;
 }
 
@@ -445,9 +449,19 @@ void TextInputStateSender::SetCanComposeInline(bool can_compose_inline) {
   text_input_state_->can_compose_inline = can_compose_inline;
 }
 
-void TextInputStateSender::SetShowImeIfNeeded(bool show_ime_if_needed) {
+void TextInputStateSender::SetShowVirtualKeyboardIfEnabled(
+    bool show_ime_if_needed) {
   text_input_state_->show_ime_if_needed = show_ime_if_needed;
 }
+
+#if defined(USE_AURA)
+void TextInputStateSender::SetLastPointerType(
+    ui::EventPointerType last_pointer_type) {
+  RenderWidgetHostViewAura* rwhva =
+      static_cast<RenderWidgetHostViewAura*>(view_);
+  rwhva->SetLastPointerType(last_pointer_type);
+}
+#endif
 
 TestInputMethodObserver::TestInputMethodObserver() {}
 
@@ -458,7 +472,7 @@ std::unique_ptr<TestInputMethodObserver> TestInputMethodObserver::Create(
     WebContents* web_contents) {
   std::unique_ptr<TestInputMethodObserver> observer;
 
-#ifdef USE_AURA
+#if defined(USE_AURA)
   RenderWidgetHostViewAura* view = static_cast<RenderWidgetHostViewAura*>(
       web_contents->GetRenderWidgetHostView());
   observer.reset(new InputMethodObserverAura(view->GetInputMethod()));

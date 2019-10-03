@@ -27,8 +27,9 @@ class CONTENT_EXPORT PepperFileChooserHost
  public:
   // Structure to store the information about chosen files.
   struct ChosenFileInfo {
-    ChosenFileInfo(const std::string& path, const std::string& display_name);
-    std::string path;
+    ChosenFileInfo(const base::FilePath& file_path,
+                   const std::string& display_name);
+    base::FilePath file_path;
     std::string display_name;  // May be empty.
   };
 
@@ -62,7 +63,7 @@ class CONTENT_EXPORT PepperFileChooserHost
   ppapi::host::ReplyMessageContext reply_context_;
   CompletionHandler* handler_;
 
-  base::WeakPtrFactory<PepperFileChooserHost> weak_factory_;
+  base::WeakPtrFactory<PepperFileChooserHost> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PepperFileChooserHost);
 };

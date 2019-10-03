@@ -4,6 +4,9 @@
 
 #include "ui/android/window_android.h"
 
+#include <utility>
+#include <vector>
+
 #include "base/android/jni_android.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
@@ -13,9 +16,11 @@
 #include "base/stl_util.h"
 #include "components/viz/common/frame_sinks/begin_frame_args.h"
 #include "components/viz/common/frame_sinks/begin_frame_source.h"
-#include "jni/WindowAndroid_jni.h"
+#include "ui/android/display_android_manager.h"
+#include "ui/android/ui_android_jni_headers/WindowAndroid_jni.h"
 #include "ui/android/window_android_compositor.h"
 #include "ui/android/window_android_observer.h"
+#include "ui/base/ui_base_features.h"
 
 namespace ui {
 
@@ -23,6 +28,8 @@ using base::android::AttachCurrentThread;
 using base::android::JavaParamRef;
 using base::android::JavaRef;
 using base::android::ScopedJavaLocalRef;
+
+const float kDefaultMouseWheelTickMultiplier = 64;
 
 class WindowAndroid::WindowBeginFrameSource : public viz::BeginFrameSource {
  public:
@@ -40,17 +47,39 @@ class WindowAndroid::WindowBeginFrameSource : public viz::BeginFrameSource {
   void RemoveObserver(viz::BeginFrameObserver* obs) override;
   void DidFinishFrame(viz::BeginFrameObserver* obs) override {}
   bool IsThrottled() const override { return true; }
+  void OnGpuNoLongerBusy() override;
 
   void OnVSync(base::TimeTicks frame_time, base::TimeDelta vsync_period);
   void OnPauseChanged(bool paused);
+  void AddBeginFrameCompletionCallback(base::OnceClosure callback);
 
  private:
+  friend class WindowAndroid::ScopedOnBeginFrame;
+
   WindowAndroid* const window_;
-  base::ObserverList<viz::BeginFrameObserver> observers_;
+  base::ObserverList<viz::BeginFrameObserver>::Unchecked observers_;
   int observer_count_;
   viz::BeginFrameArgs last_begin_frame_args_;
   uint64_t next_sequence_number_;
   bool paused_;
+  // Used for determining what the sequence number should be on
+  // CreateBeginFrameArgs.
+  base::TimeTicks next_expected_frame_time_;
+
+  // Set by ScopedOnBeginFrame.
+  std::vector<base::OnceClosure>* vsync_complete_callbacks_ptr_ = nullptr;
+};
+
+class WindowAndroid::ScopedOnBeginFrame {
+ public:
+  explicit ScopedOnBeginFrame(WindowAndroid::WindowBeginFrameSource* bfs,
+                              bool allow_reentrancy);
+  ~ScopedOnBeginFrame();
+
+ private:
+  WindowAndroid::WindowBeginFrameSource* const begin_frame_source_;
+  const bool reentrant_;
+  std::vector<base::OnceClosure> vsync_complete_callbacks_;
 };
 
 void WindowAndroid::WindowBeginFrameSource::AddObserver(
@@ -78,6 +107,7 @@ void WindowAndroid::WindowBeginFrameSource::AddObserver(
       // BeginFrames.
       last_begin_frame_args_.deadline =
           base::TimeTicks::Now() + last_begin_frame_args_.interval;
+      ScopedOnBeginFrame scope(this, true /* allow_reentrancy */);
       obs->OnBeginFrame(last_begin_frame_args_);
     }
   }
@@ -94,19 +124,42 @@ void WindowAndroid::WindowBeginFrameSource::RemoveObserver(
     window_->SetNeedsBeginFrames(false);
 }
 
+void WindowAndroid::WindowBeginFrameSource::OnGpuNoLongerBusy() {
+  ScopedOnBeginFrame scope(this, false /* allow_reentrancy */);
+  for (auto& obs : observers_)
+    obs.OnBeginFrame(last_begin_frame_args_);
+}
+
 void WindowAndroid::WindowBeginFrameSource::OnVSync(
     base::TimeTicks frame_time,
     base::TimeDelta vsync_period) {
+  uint64_t sequence_number = next_sequence_number_;
+  // We expect |sequence_number| to be the number for the frame at
+  // |expected_frame_time|. We adjust this sequence number according to the
+  // actual frame time in case it is later than expected.
+  if (next_expected_frame_time_ != base::TimeTicks()) {
+    // Add |error_margin| to round |frame_time| up to the next tick if it is
+    // close to the end of an interval. This happens when a timebase is a bit
+    // off because of an imperfect presentation timestamp that may be a bit
+    // later than the beginning of the next interval.
+    constexpr double kErrorMarginIntervalPct = 0.05;
+    base::TimeDelta error_margin = vsync_period * kErrorMarginIntervalPct;
+    int ticks_since_estimated_frame_time =
+        (frame_time + error_margin - next_expected_frame_time_) / vsync_period;
+    sequence_number += std::max(0, ticks_since_estimated_frame_time);
+  }
+
   // frame time is in the past, so give the next vsync period as the deadline.
   base::TimeTicks deadline = frame_time + vsync_period;
   last_begin_frame_args_ = viz::BeginFrameArgs::Create(
-      BEGINFRAME_FROM_HERE, source_id(), next_sequence_number_, frame_time,
-      deadline, vsync_period, viz::BeginFrameArgs::NORMAL);
+      BEGINFRAME_FROM_HERE, source_id(), sequence_number, frame_time, deadline,
+      vsync_period, viz::BeginFrameArgs::NORMAL);
   DCHECK(last_begin_frame_args_.IsValid());
-  next_sequence_number_++;
-
-  for (auto& obs : observers_)
-    obs.OnBeginFrame(last_begin_frame_args_);
+  next_sequence_number_ = sequence_number + 1;
+  next_expected_frame_time_ = deadline;
+  if (RequestCallbackOnGpuAvailable())
+    return;
+  OnGpuNoLongerBusy();
 }
 
 void WindowAndroid::WindowBeginFrameSource::OnPauseChanged(bool paused) {
@@ -115,12 +168,84 @@ void WindowAndroid::WindowBeginFrameSource::OnPauseChanged(bool paused) {
     obs.OnBeginFrameSourcePausedChanged(paused_);
 }
 
-WindowAndroid::WindowAndroid(JNIEnv* env, jobject obj, int display_id)
+void WindowAndroid::WindowBeginFrameSource::AddBeginFrameCompletionCallback(
+    base::OnceClosure callback) {
+  CHECK(vsync_complete_callbacks_ptr_);
+  vsync_complete_callbacks_ptr_->emplace_back(std::move(callback));
+}
+
+WindowAndroid::ScopedOnBeginFrame::ScopedOnBeginFrame(
+    WindowAndroid::WindowBeginFrameSource* bfs,
+    bool allow_reentrancy)
+    : begin_frame_source_(bfs),
+      reentrant_(allow_reentrancy &&
+                 begin_frame_source_->vsync_complete_callbacks_ptr_) {
+  if (reentrant_) {
+    DCHECK(begin_frame_source_->vsync_complete_callbacks_ptr_);
+    return;
+  }
+  DCHECK(!begin_frame_source_->vsync_complete_callbacks_ptr_);
+  begin_frame_source_->vsync_complete_callbacks_ptr_ =
+      &vsync_complete_callbacks_;
+}
+
+WindowAndroid::ScopedOnBeginFrame::~ScopedOnBeginFrame() {
+  if (reentrant_) {
+    DCHECK_NE(&vsync_complete_callbacks_,
+              begin_frame_source_->vsync_complete_callbacks_ptr_);
+    return;
+  }
+  DCHECK_EQ(&vsync_complete_callbacks_,
+            begin_frame_source_->vsync_complete_callbacks_ptr_);
+  begin_frame_source_->vsync_complete_callbacks_ptr_ = nullptr;
+  for (base::OnceClosure& callback : vsync_complete_callbacks_)
+    std::move(callback).Run();
+}
+
+WindowAndroid::ScopedSelectionHandles::ScopedSelectionHandles(
+    WindowAndroid* window)
+    : window_(window) {
+  if (++window_->selection_handles_active_count_ == 1) {
+    JNIEnv* env = AttachCurrentThread();
+    Java_WindowAndroid_onSelectionHandlesStateChanged(
+        env, window_->GetJavaObject(), true /* active */);
+  }
+}
+
+WindowAndroid::ScopedSelectionHandles::~ScopedSelectionHandles() {
+  DCHECK_GT(window_->selection_handles_active_count_, 0);
+
+  if (--window_->selection_handles_active_count_ == 0) {
+    JNIEnv* env = AttachCurrentThread();
+    Java_WindowAndroid_onSelectionHandlesStateChanged(
+        env, window_->GetJavaObject(), false /* active */);
+  }
+}
+
+// static
+WindowAndroid* WindowAndroid::FromJavaWindowAndroid(
+    const JavaParamRef<jobject>& jwindow_android) {
+  if (jwindow_android.is_null())
+    return nullptr;
+
+  return reinterpret_cast<WindowAndroid*>(Java_WindowAndroid_getNativePointer(
+      AttachCurrentThread(), jwindow_android));
+}
+
+WindowAndroid::WindowAndroid(JNIEnv* env,
+                             jobject obj,
+                             int display_id,
+                             float scroll_factor,
+                             bool window_is_wide_color_gamut)
     : display_id_(display_id),
+      window_is_wide_color_gamut_(window_is_wide_color_gamut),
       compositor_(NULL),
       begin_frame_source_(new WindowBeginFrameSource(this)),
       needs_begin_frames_(false) {
   java_window_.Reset(env, obj);
+  mouse_wheel_scroll_factor_ =
+      scroll_factor > 0 ? scroll_factor
+                        : kDefaultMouseWheelTickMultiplier * GetDipScale();
 }
 
 void WindowAndroid::Destroy(JNIEnv* env, const JavaParamRef<jobject>& obj) {
@@ -134,6 +259,7 @@ ScopedJavaLocalRef<jobject> WindowAndroid::GetJavaObject() {
 WindowAndroid::~WindowAndroid() {
   DCHECK(parent_ == nullptr) << "WindowAndroid must be a root view.";
   DCHECK(!compositor_);
+  RemoveAllChildren(true);
   Java_WindowAndroid_clearNativePointer(AttachCurrentThread(), GetJavaObject());
 }
 
@@ -153,8 +279,9 @@ void WindowAndroid::AddObserver(WindowAndroidObserver* observer) {
     observer_list_.AddObserver(observer);
 }
 
-void WindowAndroid::AddVSyncCompleteCallback(const base::Closure& callback) {
-  vsync_complete_callbacks_.push_back(callback);
+void WindowAndroid::AddBeginFrameCompletionCallback(
+    base::OnceClosure callback) {
+  begin_frame_source_->AddBeginFrameCompletionCallback(std::move(callback));
 }
 
 void WindowAndroid::RemoveObserver(WindowAndroidObserver* observer) {
@@ -172,6 +299,8 @@ void WindowAndroid::AttachCompositor(WindowAndroidCompositor* compositor) {
   compositor_ = compositor;
   for (WindowAndroidObserver& observer : observer_list_)
     observer.OnAttachCompositor();
+
+  compositor_->SetVSyncPaused(vsync_paused_);
 }
 
 void WindowAndroid::DetachCompositor() {
@@ -184,6 +313,40 @@ void WindowAndroid::DetachCompositor() {
 void WindowAndroid::RequestVSyncUpdate() {
   JNIEnv* env = AttachCurrentThread();
   Java_WindowAndroid_requestVSyncUpdate(env, GetJavaObject());
+}
+
+float WindowAndroid::GetRefreshRate() {
+  JNIEnv* env = AttachCurrentThread();
+  return Java_WindowAndroid_getRefreshRate(env, GetJavaObject());
+}
+
+std::vector<float> WindowAndroid::GetSupportedRefreshRates() {
+  if (test_hooks_)
+    return test_hooks_->GetSupportedRates();
+
+  JNIEnv* env = AttachCurrentThread();
+  base::android::ScopedJavaLocalRef<jfloatArray> j_supported_refresh_rates =
+      Java_WindowAndroid_getSupportedRefreshRates(env, GetJavaObject());
+  std::vector<float> supported_refresh_rates;
+  if (j_supported_refresh_rates) {
+    base::android::JavaFloatArrayToFloatVector(env, j_supported_refresh_rates,
+                                               &supported_refresh_rates);
+  }
+  return supported_refresh_rates;
+}
+
+void WindowAndroid::SetPreferredRefreshRate(float refresh_rate) {
+  if (force_60hz_refresh_rate_)
+    return;
+
+  if (test_hooks_) {
+    test_hooks_->SetPreferredRate(refresh_rate);
+    return;
+  }
+
+  JNIEnv* env = AttachCurrentThread();
+  Java_WindowAndroid_setPreferredRefreshRate(env, GetJavaObject(),
+                                             refresh_rate);
 }
 
 void WindowAndroid::SetNeedsBeginFrames(bool needs_begin_frames) {
@@ -222,10 +385,6 @@ void WindowAndroid::OnVSync(JNIEnv* env,
 
   begin_frame_source_->OnVSync(frame_time, vsync_period);
 
-  for (const base::Closure& callback : vsync_complete_callbacks_)
-    callback.Run();
-  vsync_complete_callbacks_.clear();
-
   if (needs_begin_frames_)
     RequestVSyncUpdate();
 }
@@ -252,7 +411,68 @@ void WindowAndroid::OnActivityStarted(JNIEnv* env,
 void WindowAndroid::SetVSyncPaused(JNIEnv* env,
                                    const JavaParamRef<jobject>& obj,
                                    bool paused) {
+  vsync_paused_ = paused;
+
+  if (compositor_)
+    compositor_->SetVSyncPaused(paused);
+
   begin_frame_source_->OnPauseChanged(paused);
+}
+
+void WindowAndroid::OnCursorVisibilityChanged(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& obj,
+    bool visible) {
+  for (WindowAndroidObserver& observer : observer_list_)
+    observer.OnCursorVisibilityChanged(visible);
+}
+
+void WindowAndroid::OnFallbackCursorModeToggled(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& obj,
+    bool is_on) {
+  for (WindowAndroidObserver& observer : observer_list_)
+    observer.OnFallbackCursorModeToggled(is_on);
+}
+
+void WindowAndroid::OnUpdateRefreshRate(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& obj,
+    float refresh_rate) {
+  if (compositor_)
+    compositor_->OnUpdateRefreshRate(refresh_rate);
+  Force60HzRefreshRateIfNeeded();
+}
+
+void WindowAndroid::OnSupportedRefreshRatesUpdated(
+    JNIEnv* env,
+    const base::android::JavaParamRef<jobject>& obj,
+    const JavaParamRef<jfloatArray>& j_supported_refresh_rates) {
+  std::vector<float> supported_refresh_rates;
+  if (j_supported_refresh_rates) {
+    base::android::JavaFloatArrayToFloatVector(env, j_supported_refresh_rates,
+                                               &supported_refresh_rates);
+  }
+  if (compositor_)
+    compositor_->OnUpdateSupportedRefreshRates(supported_refresh_rates);
+
+  Force60HzRefreshRateIfNeeded();
+}
+
+void WindowAndroid::SetForce60HzRefreshRate() {
+  if (force_60hz_refresh_rate_)
+    return;
+
+  force_60hz_refresh_rate_ = true;
+  Force60HzRefreshRateIfNeeded();
+}
+
+void WindowAndroid::Force60HzRefreshRateIfNeeded() {
+  if (!force_60hz_refresh_rate_)
+    return;
+
+  JNIEnv* env = AttachCurrentThread();
+  Java_WindowAndroid_setPreferredRefreshRate(env, GetJavaObject(), 60.f);
 }
 
 bool WindowAndroid::HasPermission(const std::string& permission) {
@@ -279,14 +499,38 @@ ScopedJavaLocalRef<jobject> WindowAndroid::GetWindowToken() {
   return Java_WindowAndroid_getWindowToken(env, GetJavaObject());
 }
 
+display::Display WindowAndroid::GetDisplayWithWindowColorSpace() {
+  display::Display display =
+      display::Screen::GetScreen()->GetDisplayNearestWindow(this);
+  DisplayAndroidManager::DoUpdateDisplay(
+      &display, display.GetSizeInPixel(), display.device_scale_factor(),
+      display.RotationAsDegree(), display.color_depth(),
+      display.depth_per_component(), window_is_wide_color_gamut_);
+  return display;
+}
+
+void WindowAndroid::SetTestHooks(TestHooks* hooks) {
+  test_hooks_ = hooks;
+  if (!test_hooks_)
+    return;
+
+  if (compositor_) {
+    compositor_->OnUpdateSupportedRefreshRates(
+        test_hooks_->GetSupportedRates());
+  }
+}
+
 // ----------------------------------------------------------------------------
 // Native JNI methods
 // ----------------------------------------------------------------------------
 
 jlong JNI_WindowAndroid_Init(JNIEnv* env,
                              const JavaParamRef<jobject>& obj,
-                             int sdk_display_id) {
-  WindowAndroid* window = new WindowAndroid(env, obj, sdk_display_id);
+                             jint sdk_display_id,
+                             jfloat scroll_factor,
+                             jboolean window_is_wide_color_gamut) {
+  WindowAndroid* window = new WindowAndroid(
+      env, obj, sdk_display_id, scroll_factor, window_is_wide_color_gamut);
   return reinterpret_cast<intptr_t>(window);
 }
 

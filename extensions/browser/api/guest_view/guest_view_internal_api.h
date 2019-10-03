@@ -10,46 +10,52 @@
 
 namespace extensions {
 
-class GuestViewInternalCreateGuestFunction : public AsyncExtensionFunction {
+class GuestViewInternalCreateGuestFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("guestViewInternal.createGuest",
-                             GUESTVIEWINTERNAL_CREATEGUEST);
+                             GUESTVIEWINTERNAL_CREATEGUEST)
   GuestViewInternalCreateGuestFunction();
 
  protected:
   ~GuestViewInternalCreateGuestFunction() override {}
-  bool RunAsync() final;
+
+  // UIThreadExtensionFunction:
+  ResponseAction Run() final;
 
  private:
   void CreateGuestCallback(content::WebContents* guest_web_contents);
   DISALLOW_COPY_AND_ASSIGN(GuestViewInternalCreateGuestFunction);
 };
 
-class GuestViewInternalDestroyGuestFunction : public AsyncExtensionFunction {
+class GuestViewInternalDestroyGuestFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("guestViewInternal.destroyGuest",
-                             GUESTVIEWINTERNAL_DESTROYGUEST);
+                             GUESTVIEWINTERNAL_DESTROYGUEST)
   GuestViewInternalDestroyGuestFunction();
 
  protected:
   ~GuestViewInternalDestroyGuestFunction() override;
-  bool RunAsync() final;
+
+  // UIThreadExtensionFunction:
+  ResponseAction Run() final;
 
  private:
   void DestroyGuestCallback(content::WebContents* guest_web_contents);
   DISALLOW_COPY_AND_ASSIGN(GuestViewInternalDestroyGuestFunction);
 };
 
-class GuestViewInternalSetSizeFunction : public AsyncExtensionFunction {
+class GuestViewInternalSetSizeFunction : public UIThreadExtensionFunction {
  public:
   DECLARE_EXTENSION_FUNCTION("guestViewInternal.setSize",
-                             GUESTVIEWINTERNAL_SETAUTOSIZE);
+                             GUESTVIEWINTERNAL_SETAUTOSIZE)
 
   GuestViewInternalSetSizeFunction();
 
  protected:
   ~GuestViewInternalSetSizeFunction() override;
-  bool RunAsync() final;
+
+  // UIThreadExtensionFunction:
+  ResponseAction Run() final;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(GuestViewInternalSetSizeFunction);

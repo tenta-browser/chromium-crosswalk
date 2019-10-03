@@ -20,12 +20,10 @@ class ChromeBubbleManager : public BubbleManager,
   ~ChromeBubbleManager() override;
 
   // TabStripModelObserver:
-  void TabDetachedAt(content::WebContents* contents, int index) override;
-  void TabDeactivated(content::WebContents* contents) override;
-  void ActiveTabChanged(content::WebContents* old_contents,
-                        content::WebContents* new_contents,
-                        int index,
-                        int reason) override;
+  void OnTabStripModelChanged(
+      TabStripModel* tab_strip_model,
+      const TabStripModelChange& change,
+      const TabStripSelectionChange& selection) override;
 
   // content::WebContentsObserver:
   void FrameDeleted(content::RenderFrameHost* render_frame_host) override;
@@ -44,6 +42,7 @@ class ChromeBubbleManager : public BubbleManager,
     void OnBubbleNeverShown(BubbleReference bubble) override;
     void OnBubbleClosed(BubbleReference bubble,
                         BubbleCloseReason reason) override;
+    void OnBubbleShown(BubbleReference bubble) override;
 
    private:
     DISALLOW_COPY_AND_ASSIGN(ChromeBubbleMetrics);

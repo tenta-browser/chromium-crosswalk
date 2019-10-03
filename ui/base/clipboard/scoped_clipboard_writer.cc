@@ -2,17 +2,16 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-// This file implements the ScopedClipboardWriter class. Documentation on its
-// purpose can be found in our header. Documentation on the format of the
-// parameters for each clipboard target can be found in clipboard.h.
-
 #include "ui/base/clipboard/scoped_clipboard_writer.h"
 
 #include "base/pickle.h"
 #include "base/strings/utf_string_conversions.h"
 #include "net/base/escape.h"
+#include "ui/base/clipboard/clipboard_format_type.h"
 #include "ui/gfx/geometry/size.h"
 
+// Documentation on the format of the parameters for each clipboard target can
+// be found in clipboard.h.
 namespace ui {
 
 ScopedClipboardWriter::ScopedClipboardWriter(ClipboardType type) : type_(type) {
@@ -75,11 +74,11 @@ void ScopedClipboardWriter::WriteHyperlink(const base::string16& anchor_text,
     return;
 
   // Construct the hyperlink.
-  std::string html("<a href=\"");
-  html.append(net::EscapeForHTML(url));
-  html.append("\">");
-  html.append(net::EscapeForHTML(base::UTF16ToUTF8(anchor_text)));
-  html.append("</a>");
+  std::string html = "<a href=\"";
+  html += net::EscapeForHTML(url);
+  html += "\">";
+  html += net::EscapeForHTML(base::UTF16ToUTF8(anchor_text));
+  html += "</a>";
   WriteHTML(base::UTF8ToUTF16(html), std::string());
 }
 
@@ -88,9 +87,10 @@ void ScopedClipboardWriter::WriteWebSmartPaste() {
 }
 
 void ScopedClipboardWriter::WriteImage(const SkBitmap& bitmap) {
-  if (bitmap.drawsNothing()) {
+  if (bitmap.drawsNothing())
     return;
-  }
+  DCHECK(bitmap.getPixels());
+
   bitmap_ = bitmap;
   // TODO(dcheng): This is slightly less horrible than what we used to do, but
   // only very slightly less.
@@ -105,7 +105,7 @@ void ScopedClipboardWriter::WriteImage(const SkBitmap& bitmap) {
 
 void ScopedClipboardWriter::WritePickledData(
     const base::Pickle& pickle,
-    const Clipboard::FormatType& format) {
+    const ClipboardFormatType& format) {
   std::string format_string = format.Serialize();
   Clipboard::ObjectMapParam format_parameter(format_string.begin(),
                                              format_string.end());
@@ -117,6 +117,16 @@ void ScopedClipboardWriter::WritePickledData(
 
   Clipboard::ObjectMapParams parameters;
   parameters.push_back(format_parameter);
+  parameters.push_back(data_parameter);
+  objects_[Clipboard::CBF_DATA] = parameters;
+}
+
+void ScopedClipboardWriter::WriteData(const std::string& type,
+                                      const std::string& data) {
+  Clipboard::ObjectMapParam type_parameter(type.begin(), type.end());
+  Clipboard::ObjectMapParam data_parameter(data.begin(), data.end());
+  Clipboard::ObjectMapParams parameters;
+  parameters.push_back(type_parameter);
   parameters.push_back(data_parameter);
   objects_[Clipboard::CBF_DATA] = parameters;
 }

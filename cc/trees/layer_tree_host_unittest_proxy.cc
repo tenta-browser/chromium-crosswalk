@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include "base/bind.h"
 #include "base/compiler_specific.h"
-#include "base/macros.h"
 #include "cc/test/fake_content_layer_client.h"
 #include "cc/test/fake_picture_layer.h"
 #include "cc/test/layer_tree_test.h"
@@ -37,8 +37,13 @@ class LayerTreeHostProxyTest : public LayerTreeTest {
 
 class LayerTreeHostProxyTestSetNeedsCommit : public LayerTreeHostProxyTest {
  protected:
-  LayerTreeHostProxyTestSetNeedsCommit() {}
-  ~LayerTreeHostProxyTestSetNeedsCommit() override {}
+  LayerTreeHostProxyTestSetNeedsCommit() = default;
+  LayerTreeHostProxyTestSetNeedsCommit(
+      const LayerTreeHostProxyTestSetNeedsCommit&) = delete;
+  ~LayerTreeHostProxyTestSetNeedsCommit() override = default;
+
+  LayerTreeHostProxyTestSetNeedsCommit& operator=(
+      const LayerTreeHostProxyTestSetNeedsCommit&) = delete;
 
   void BeginTest() override {
     EXPECT_EQ(ProxyMain::NO_PIPELINE_STAGE,
@@ -65,17 +70,19 @@ class LayerTreeHostProxyTestSetNeedsCommit : public LayerTreeHostProxyTest {
   }
 
   void AfterTest() override {}
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(LayerTreeHostProxyTestSetNeedsCommit);
 };
 
 MULTI_THREAD_TEST_F(LayerTreeHostProxyTestSetNeedsCommit);
 
 class LayerTreeHostProxyTestSetNeedsAnimate : public LayerTreeHostProxyTest {
  protected:
-  LayerTreeHostProxyTestSetNeedsAnimate() {}
-  ~LayerTreeHostProxyTestSetNeedsAnimate() override {}
+  LayerTreeHostProxyTestSetNeedsAnimate() = default;
+  LayerTreeHostProxyTestSetNeedsAnimate(
+      const LayerTreeHostProxyTestSetNeedsAnimate&) = delete;
+  ~LayerTreeHostProxyTestSetNeedsAnimate() override = default;
+
+  LayerTreeHostProxyTestSetNeedsAnimate& operator=(
+      const LayerTreeHostProxyTestSetNeedsAnimate&) = delete;
 
   void BeginTest() override {
     EXPECT_EQ(ProxyMain::NO_PIPELINE_STAGE,
@@ -100,9 +107,6 @@ class LayerTreeHostProxyTestSetNeedsAnimate : public LayerTreeHostProxyTest {
   }
 
   void AfterTest() override {}
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(LayerTreeHostProxyTestSetNeedsAnimate);
 };
 
 MULTI_THREAD_TEST_F(LayerTreeHostProxyTestSetNeedsAnimate);
@@ -110,8 +114,13 @@ MULTI_THREAD_TEST_F(LayerTreeHostProxyTestSetNeedsAnimate);
 class LayerTreeHostProxyTestSetNeedsUpdateLayers
     : public LayerTreeHostProxyTest {
  protected:
-  LayerTreeHostProxyTestSetNeedsUpdateLayers() {}
-  ~LayerTreeHostProxyTestSetNeedsUpdateLayers() override {}
+  LayerTreeHostProxyTestSetNeedsUpdateLayers() = default;
+  LayerTreeHostProxyTestSetNeedsUpdateLayers(
+      const LayerTreeHostProxyTestSetNeedsUpdateLayers&) = delete;
+  ~LayerTreeHostProxyTestSetNeedsUpdateLayers() override = default;
+
+  LayerTreeHostProxyTestSetNeedsUpdateLayers& operator=(
+      const LayerTreeHostProxyTestSetNeedsUpdateLayers&) = delete;
 
   void BeginTest() override {
     EXPECT_EQ(ProxyMain::NO_PIPELINE_STAGE,
@@ -136,9 +145,6 @@ class LayerTreeHostProxyTestSetNeedsUpdateLayers
   }
 
   void AfterTest() override {}
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(LayerTreeHostProxyTestSetNeedsUpdateLayers);
 };
 
 MULTI_THREAD_TEST_F(LayerTreeHostProxyTestSetNeedsUpdateLayers);
@@ -146,8 +152,14 @@ MULTI_THREAD_TEST_F(LayerTreeHostProxyTestSetNeedsUpdateLayers);
 class LayerTreeHostProxyTestSetNeedsUpdateLayersWhileAnimating
     : public LayerTreeHostProxyTest {
  protected:
-  LayerTreeHostProxyTestSetNeedsUpdateLayersWhileAnimating() {}
-  ~LayerTreeHostProxyTestSetNeedsUpdateLayersWhileAnimating() override {}
+  LayerTreeHostProxyTestSetNeedsUpdateLayersWhileAnimating() = default;
+  LayerTreeHostProxyTestSetNeedsUpdateLayersWhileAnimating(
+      const LayerTreeHostProxyTestSetNeedsUpdateLayersWhileAnimating&) = delete;
+  ~LayerTreeHostProxyTestSetNeedsUpdateLayersWhileAnimating() override =
+      default;
+
+  LayerTreeHostProxyTestSetNeedsUpdateLayersWhileAnimating& operator=(
+      const LayerTreeHostProxyTestSetNeedsUpdateLayersWhileAnimating&) = delete;
 
   void BeginTest() override { proxy()->SetNeedsAnimate(); }
 
@@ -180,10 +192,6 @@ class LayerTreeHostProxyTestSetNeedsUpdateLayersWhileAnimating
   }
 
   void AfterTest() override {}
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(
-      LayerTreeHostProxyTestSetNeedsUpdateLayersWhileAnimating);
 };
 
 MULTI_THREAD_TEST_F(LayerTreeHostProxyTestSetNeedsUpdateLayersWhileAnimating);
@@ -191,8 +199,13 @@ MULTI_THREAD_TEST_F(LayerTreeHostProxyTestSetNeedsUpdateLayersWhileAnimating);
 class LayerTreeHostProxyTestSetNeedsCommitWhileAnimating
     : public LayerTreeHostProxyTest {
  protected:
-  LayerTreeHostProxyTestSetNeedsCommitWhileAnimating() {}
-  ~LayerTreeHostProxyTestSetNeedsCommitWhileAnimating() override {}
+  LayerTreeHostProxyTestSetNeedsCommitWhileAnimating() = default;
+  LayerTreeHostProxyTestSetNeedsCommitWhileAnimating(
+      const LayerTreeHostProxyTestSetNeedsCommitWhileAnimating&) = delete;
+  ~LayerTreeHostProxyTestSetNeedsCommitWhileAnimating() override = default;
+
+  LayerTreeHostProxyTestSetNeedsCommitWhileAnimating& operator=(
+      const LayerTreeHostProxyTestSetNeedsCommitWhileAnimating&) = delete;
 
   void BeginTest() override { proxy()->SetNeedsAnimate(); }
 
@@ -225,9 +238,6 @@ class LayerTreeHostProxyTestSetNeedsCommitWhileAnimating
   }
 
   void AfterTest() override {}
-
- private:
-  DISALLOW_COPY_AND_ASSIGN(LayerTreeHostProxyTestSetNeedsCommitWhileAnimating);
 };
 
 MULTI_THREAD_TEST_F(LayerTreeHostProxyTestSetNeedsCommitWhileAnimating);
@@ -236,6 +246,11 @@ class LayerTreeHostProxyTestCommitWaitsForActivation
     : public LayerTreeHostProxyTest {
  protected:
   LayerTreeHostProxyTestCommitWaitsForActivation() = default;
+  LayerTreeHostProxyTestCommitWaitsForActivation(
+      const LayerTreeHostProxyTestCommitWaitsForActivation&) = delete;
+
+  LayerTreeHostProxyTestCommitWaitsForActivation& operator=(
+      const LayerTreeHostProxyTestCommitWaitsForActivation&) = delete;
 
   void BeginTest() override { PostSetNeedsCommitToMainThread(); }
 
@@ -254,11 +269,11 @@ class LayerTreeHostProxyTestCommitWaitsForActivation
     switch (impl->sync_tree()->source_frame_number()) {
       case 0: {
         // This is for case 1 in DidCommit.
-        auto unblock = base::Bind(
+        auto unblock = base::BindOnce(
             &LayerTreeHostProxyTestCommitWaitsForActivation::UnblockActivation,
             base::Unretained(this), impl);
         ImplThreadTaskRunner()->PostDelayedTask(
-            FROM_HERE, unblock,
+            FROM_HERE, std::move(unblock),
             // Use a delay to allow the main frame to start if it would. This
             // should cause failures (or flakiness) if we fail to wait for the
             // activation before starting the main frame.
@@ -312,8 +327,6 @@ class LayerTreeHostProxyTestCommitWaitsForActivation
  private:
   base::Lock activate_blocked_lock_;
   bool activate_blocked_ = false;
-
-  DISALLOW_COPY_AND_ASSIGN(LayerTreeHostProxyTestCommitWaitsForActivation);
 };
 
 MULTI_THREAD_TEST_F(LayerTreeHostProxyTestCommitWaitsForActivation);
@@ -326,6 +339,11 @@ class LayerTreeHostProxyTestCommitWaitsForActivationMFBA
     : public LayerTreeHostProxyTest {
  protected:
   LayerTreeHostProxyTestCommitWaitsForActivationMFBA() = default;
+  LayerTreeHostProxyTestCommitWaitsForActivationMFBA(
+      const LayerTreeHostProxyTestCommitWaitsForActivationMFBA&) = delete;
+
+  LayerTreeHostProxyTestCommitWaitsForActivationMFBA& operator=(
+      const LayerTreeHostProxyTestCommitWaitsForActivationMFBA&) = delete;
 
   void InitializeSettings(LayerTreeSettings* settings) override {
     settings->main_frame_before_activation_enabled = true;
@@ -347,13 +365,13 @@ class LayerTreeHostProxyTestCommitWaitsForActivationMFBA
         // This is the main frame with SetNextCommitWaitsForActivation().
         // Activation is currently blocked for the previous main frame (from the
         // case above). We unblock activate to allow this main frame to commit.
-        auto unblock =
-            base::Bind(&LayerTreeHostImpl::BlockNotifyReadyToActivateForTesting,
-                       base::Unretained(impl), false);
+        auto unblock = base::BindOnce(
+            &LayerTreeHostImpl::BlockNotifyReadyToActivateForTesting,
+            base::Unretained(impl), false);
         // Post the unblock instead of doing it immediately so that the main
         // frame is fully processed by the compositor thread, and it has a full
         // opportunity to wrongly unblock the main thread.
-        ImplThreadTaskRunner()->PostTask(FROM_HERE, unblock);
+        ImplThreadTaskRunner()->PostTask(FROM_HERE, std::move(unblock));
         // Once activation completes, we'll begin the commit for frame 1.
         break;
       }
@@ -375,11 +393,12 @@ class LayerTreeHostProxyTestCommitWaitsForActivationMFBA
       // failures (or flakiness) if we fail to wait for the activation before
       // starting the main frame.
       auto unblock =
-          base::Bind(&LayerTreeHostProxyTestCommitWaitsForActivationMFBA::
-                         UnblockActivation,
-                     base::Unretained(this), impl);
+          base::BindOnce(&LayerTreeHostProxyTestCommitWaitsForActivationMFBA::
+                             UnblockActivation,
+                         base::Unretained(this), impl);
       ImplThreadTaskRunner()->PostDelayedTask(
-          FROM_HERE, unblock, base::TimeDelta::FromMilliseconds(16 * 4));
+          FROM_HERE, std::move(unblock),
+          base::TimeDelta::FromMilliseconds(16 * 4));
     }
   }
 
@@ -416,10 +435,132 @@ class LayerTreeHostProxyTestCommitWaitsForActivationMFBA
  private:
   base::Lock activate_blocked_lock_;
   bool activate_blocked_ = false;
-
-  DISALLOW_COPY_AND_ASSIGN(LayerTreeHostProxyTestCommitWaitsForActivationMFBA);
 };
 
 MULTI_THREAD_TEST_F(LayerTreeHostProxyTestCommitWaitsForActivationMFBA);
+
+// Tests that SingleThreadProxy correctly reports pending animations when
+// requested from the impl-side.
+class LayerTreeHostProxyTestImplFrameCausesAnimatePending
+    : public LayerTreeHostProxyTest {
+ protected:
+  LayerTreeHostProxyTestImplFrameCausesAnimatePending() = default;
+  LayerTreeHostProxyTestImplFrameCausesAnimatePending(
+      const LayerTreeHostProxyTestImplFrameCausesAnimatePending&) = delete;
+  LayerTreeHostProxyTestImplFrameCausesAnimatePending& operator=(
+      const LayerTreeHostProxyTestImplFrameCausesAnimatePending&) = delete;
+
+  void BeginTest() override { PostSetNeedsCommitToMainThread(); }
+
+  void CommitCompleteOnThread(LayerTreeHostImpl* host_impl) override {
+    switch (host_impl->sync_tree()->source_frame_number()) {
+      case 0: {
+        EXPECT_FALSE(proxy()->RequestedAnimatePending());
+        host_impl->SetNeedsOneBeginImplFrame();
+        EXPECT_TRUE(proxy()->RequestedAnimatePending());
+        PostSetNeedsCommitToMainThread();
+        break;
+      }
+      case 1: {
+        EXPECT_FALSE(proxy()->RequestedAnimatePending());
+        EndTest();
+        break;
+      }
+      default: { NOTREACHED(); }
+    }
+  }
+
+  void AfterTest() override {}
+};
+
+SINGLE_THREAD_TEST_F(LayerTreeHostProxyTestImplFrameCausesAnimatePending);
+
+// Test that the SingleThreadProxy correctly records and clears commit requests
+// from the impl-side.
+class LayerTreeHostProxyTestNeedsCommitFromImpl
+    : public LayerTreeHostProxyTest {
+ protected:
+  LayerTreeHostProxyTestNeedsCommitFromImpl() = default;
+  LayerTreeHostProxyTestNeedsCommitFromImpl(
+      const LayerTreeHostProxyTestNeedsCommitFromImpl&) = delete;
+  LayerTreeHostProxyTestNeedsCommitFromImpl& operator=(
+      const LayerTreeHostProxyTestNeedsCommitFromImpl&) = delete;
+
+  void BeginTest() override { PostSetNeedsCommitToMainThread(); }
+
+  void CommitCompleteOnThread(LayerTreeHostImpl* host_impl) override {
+    switch (host_impl->sync_tree()->source_frame_number()) {
+      case 0: {
+        host_impl->SetNeedsCommit();
+        MainThreadTaskRunner()->PostTask(
+            FROM_HERE,
+            base::BindOnce(&LayerTreeHostProxyTestNeedsCommitFromImpl::
+                               CheckCommitRequested,
+                           base::Unretained(this)));
+        break;
+      }
+      case 1: {
+        MainThreadTaskRunner()->PostTask(
+            FROM_HERE,
+            base::BindOnce(&LayerTreeHostProxyTestNeedsCommitFromImpl::
+                               CheckRequestClearedAndEnd,
+                           base::Unretained(this)));
+        break;
+      }
+      default: { NOTREACHED(); }
+    }
+  }
+
+  void CheckCommitRequested() { EXPECT_TRUE(proxy()->CommitRequested()); }
+
+  void CheckRequestClearedAndEnd() {
+    EXPECT_FALSE(proxy()->CommitRequested());
+    EndTest();
+  }
+
+  void AfterTest() override {}
+};
+
+SINGLE_THREAD_TEST_F(LayerTreeHostProxyTestNeedsCommitFromImpl);
+
+// Test that a commit is correctly delayed but is not lost when turning
+// invisible, and after turning visible, the commit is executed.
+// This is a regression test for https://crbug.com/890008
+class LayerTreeHostProxyTestDelayedCommitDueToVisibility
+    : public LayerTreeHostProxyTest {
+ protected:
+  LayerTreeHostProxyTestDelayedCommitDueToVisibility() = default;
+  LayerTreeHostProxyTestDelayedCommitDueToVisibility(
+      const LayerTreeHostProxyTestDelayedCommitDueToVisibility&) = delete;
+  ~LayerTreeHostProxyTestDelayedCommitDueToVisibility() override = default;
+
+  LayerTreeHostProxyTestDelayedCommitDueToVisibility& operator=(
+      const LayerTreeHostProxyTestDelayedCommitDueToVisibility&) = delete;
+
+  void BeginTest() override { PostSetNeedsCommitToMainThread(); }
+
+  void WillSendBeginMainFrameOnThread(LayerTreeHostImpl*) override {
+    if (!set_invisible_once_) {
+      set_invisible_once_ = true;
+      PostSetVisibleToMainThread(false);
+    }
+  }
+
+  void BeginMainFrameAbortedOnThread(LayerTreeHostImpl*,
+                                     CommitEarlyOutReason reason) override {
+    EXPECT_EQ(CommitEarlyOutReason::ABORTED_NOT_VISIBLE, reason);
+    PostSetVisibleToMainThread(true);
+  }
+
+  void DidCommit() override { EndTest(); }
+
+  void AfterTest() override {}
+
+ private:
+  bool set_invisible_once_ = false;
+};
+
+SINGLE_AND_MULTI_THREAD_TEST_F(
+    LayerTreeHostProxyTestDelayedCommitDueToVisibility);
 
 }  // namespace cc

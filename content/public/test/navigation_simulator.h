@@ -6,32 +6,34 @@
 #define CONTENT_PUBLIC_TEST_NAVIGATION_SIMULATOR_H_
 
 #include <memory>
+#include <string>
 
-#include "base/callback.h"
-#include "base/optional.h"
-#include "content/public/browser/global_request_id.h"
+#include "base/memory/scoped_refptr.h"
 #include "content/public/browser/navigation_throttle.h"
 #include "content/public/browser/reload_type.h"
-#include "content/public/browser/web_contents_observer.h"
-#include "content/public/common/referrer.h"
-#include "net/base/host_port_pair.h"
+#include "services/service_manager/public/cpp/interface_provider.h"
 #include "ui/base/page_transition_types.h"
 
 class GURL;
 
+namespace net {
+class IPEndPoint;
+class HttpResponseHeaders;
+class SSLInfo;
+}  // namespace net
+
 namespace content {
 
-class FrameTreeNode;
 class NavigationHandle;
-class NavigationHandleImpl;
 class RenderFrameHost;
-class TestRenderFrameHost;
+class WebContents;
+struct GlobalRequestID;
 struct Referrer;
 
-// An interface for simulating a navigation in unit tests. Currently this only
-// supports renderer-initiated navigations.
+// An interface for simulating a navigation in unit tests. Supports both
+// renderer and browser-initiated navigations.
 // Note: this should not be used in browser tests.
-class NavigationSimulator : public WebContentsObserver {
+class NavigationSimulator {
  public:
   // Simulates a browser-initiated navigation to |url| started in
   // |web_contents| from start to commit. Returns the RenderFrameHost that
@@ -126,7 +128,13 @@ class NavigationSimulator : public WebContentsObserver {
       const GURL& original_url,
       RenderFrameHost* render_frame_host);
 
-  ~NavigationSimulator() override;
+  // Creates a NavigationSimulator for an already-started navigation via
+  // LoadURL / Reload / GoToOffset / history.GoBack() scripts, etc. Can be used
+  // to drive the navigation to completion.
+  static std::unique_ptr<NavigationSimulator> CreateFromPending(
+      WebContents* contents);
+
+  virtual ~NavigationSimulator() {}
 
   // --------------------------------------------------------------------------
 
@@ -173,31 +181,50 @@ class NavigationSimulator : public WebContentsObserver {
   //             simulator->GetLastThrottleCheckResult());
 
   // Simulates the start of the navigation.
-  virtual void Start();
+  virtual void Start() = 0;
 
   // Simulates a redirect to |new_url| for the navigation.
-  virtual void Redirect(const GURL& new_url);
+  virtual void Redirect(const GURL& new_url) = 0;
 
   // Simulates receiving the navigation response and choosing a final
   // RenderFrameHost to commit it.
-  virtual void ReadyToCommit();
+  virtual void ReadyToCommit() = 0;
 
   // Simulates the commit of the navigation in the RenderFrameHost.
-  virtual void Commit();
+  virtual void Commit() = 0;
+
+  // Simulates the commit of a navigation or an error page aborting.
+  virtual void AbortCommit() = 0;
+
+  // Simulates the navigation failing with the error code |error_code| and
+  // response headers |response_headers|.
+  virtual void FailWithResponseHeaders(
+      int error_code,
+      scoped_refptr<net::HttpResponseHeaders> response_headers) = 0;
 
   // Simulates the navigation failing with the error code |error_code|.
-  virtual void Fail(int error_code);
+  // IMPORTANT NOTE: This is simulating a network connection error and implies
+  // we do not get a response. Error codes like 204 are not properly managed.
+  virtual void Fail(int error_code) = 0;
 
   // Simulates the commit of an error page following a navigation failure.
-  virtual void CommitErrorPage();
+  virtual void CommitErrorPage() = 0;
 
   // Simulates the commit of a same-document navigation, ie fragment navigations
   // or pushState/popState navigations.
-  virtual void CommitSameDocument();
+  virtual void CommitSameDocument() = 0;
 
   // Must be called after the simulated navigation or an error page has
   // committed. Returns the RenderFrameHost the navigation committed in.
-  virtual RenderFrameHost* GetFinalRenderFrameHost();
+  virtual RenderFrameHost* GetFinalRenderFrameHost() = 0;
+
+  // Only used if AutoAdvance is turned off. Will wait until the current stage
+  // of the navigation is complete.
+  virtual void Wait() = 0;
+
+  // Returns true if the navigation is deferred waiting for navigation throttles
+  // to complete.
+  virtual bool IsDeferred() = 0;
 
   // --------------------------------------------------------------------------
 
@@ -206,170 +233,87 @@ class NavigationSimulator : public WebContentsObserver {
 
   // The following parameters are constant during the navigation and may only be
   // specified before calling |Start|.
-  virtual void SetTransition(ui::PageTransition transition);
-  virtual void SetHasUserGesture(bool has_user_gesture);
+  virtual void SetTransition(ui::PageTransition transition) = 0;
+  virtual void SetHasUserGesture(bool has_user_gesture) = 0;
   // Note: ReloadType should only be specified for browser-initiated
   // navigations.
-  void SetReloadType(ReloadType reload_type);
+  virtual void SetReloadType(ReloadType reload_type) = 0;
+
+  // Sets the HTTP method for the navigation.
+  virtual void SetMethod(const std::string& method) = 0;
+
+  // Sets whether this navigation originated as the result of a form submission.
+  virtual void SetIsFormSubmission(bool is_form_submission) = 0;
+
+  // Sets whether this navigation originated as the result of a link click.
+  virtual void SetWasInitiatedByLinkClick(bool was_initiated_by_link_click) = 0;
 
   // The following parameters can change during redirects. They should be
   // specified before calling |Start| if they need to apply to the navigation to
   // the original url. Otherwise, they should be specified before calling
   // |Redirect|.
-  virtual void SetReferrer(const Referrer& referrer);
+  virtual void SetReferrer(const Referrer& referrer) = 0;
 
   // The following parameters can change at any point until the page fails or
   // commits. They should be specified before calling |Fail| or |Commit|.
-  virtual void SetSocketAddress(const net::HostPortPair& socket_address);
+  virtual void SetSocketAddress(const net::IPEndPoint& remote_endpoint) = 0;
+
+  // Pretend the navigation response is served from cache.
+  virtual void SetWasFetchedViaCache(bool was_fetched_via_cache) = 0;
+
+  // Pretend the navigation is against an inner response of a signed exchange.
+  virtual void SetIsSignedExchangeInnerResponse(
+      bool is_signed_exchange_inner_response) = 0;
+
+  // Sets the InterfaceProvider interface request to pass in as an argument to
+  // DidCommitProvisionalLoad for cross-document navigations. If not called,
+  // a stub will be passed in (which will never receive any interface requests).
+  //
+  // This interface connection would normally be created by the RenderFrame,
+  // with the client end bound to |remote_interfaces_| to allow the new document
+  // to access services exposed by the RenderFrameHost.
+  virtual void SetInterfaceProviderRequest(
+      service_manager::mojom::InterfaceProviderRequest request) = 0;
+
+  // Provides the contents mime type to be set at commit. It should be
+  // specified before calling |Commit|.
+  virtual void SetContentsMimeType(const std::string& contents_mime_type) = 0;
+
+  // Whether or not the NavigationSimulator automatically advances the
+  // navigation past the stage requested (e.g. through asynchronous
+  // NavigationThrottles). Defaults to true. Useful for testing throttles which
+  // defer the navigation.
+  //
+  // If the test sets this to false, it should follow up any calls that result
+  // in throttles deferring the navigation with a call to Wait().
+  virtual void SetAutoAdvance(bool auto_advance) = 0;
+
+  // Sets the SSLInfo to be set on the response. This should be called before
+  // Commit().
+  virtual void SetSSLInfo(const net::SSLInfo& ssl_info) = 0;
 
   // --------------------------------------------------------------------------
 
   // Gets the last throttle check result computed by the navigation throttles.
   // It is an error to call this before Start() is called.
-  virtual NavigationThrottle::ThrottleCheckResult GetLastThrottleCheckResult();
+  virtual NavigationThrottle::ThrottleCheckResult
+  GetLastThrottleCheckResult() = 0;
 
   // Returns the NavigationHandle associated with the navigation being
   // simulated. It is an error to call this before Start() or after the
   // navigation has finished (successfully or not).
-  virtual NavigationHandle* GetNavigationHandle() const;
+  virtual NavigationHandle* GetNavigationHandle() = 0;
 
   // Returns the GlobalRequestID for the simulated navigation request. Can be
   // invoked after the navigation has completed. It is an error to call this
   // before the simulated navigation has completed its WillProcessResponse
   // callback.
-  content::GlobalRequestID GetGlobalRequestID() const;
-
-  // Allows the user of the NavigationSimulator to specify a callback that will
-  // be called if the navigation is deferred by a NavigationThrottle. This is
-  // used for testing deferring NavigationThrottles.
-  //
-  // Example usage:
-  //   void CheckThrottleStateAndResume() {
-  //     // Do some testing here.
-  //     deferring_navigation_throttle->Resume();
-  //   }
-  //   unique_ptr<NavigationSimulator> simulator =
-  //       NavigationSimulator::CreateRendererInitiated(
-  //           original_url, render_frame_host);
-  //   simulator->SetOnDeferCallback(base::Bind(&CheckThrottleStateAndResume));
-  //   simulator->Start();
-  //   simulator->Commit();
-  void SetOnDeferCallback(const base::Closure& on_defer_callback);
+  virtual GlobalRequestID GetGlobalRequestID() = 0;
 
  private:
-  NavigationSimulator(const GURL& original_url,
-                      bool browser_initiated,
-                      WebContentsImpl* web_contents,
-                      TestRenderFrameHost* render_frame_host);
-
-  // WebContentsObserver:
-  void DidStartNavigation(NavigationHandle* navigation_handle) override;
-  void DidRedirectNavigation(NavigationHandle* navigation_handle) override;
-  void ReadyToCommitNavigation(NavigationHandle* navigation_handle) override;
-  void DidFinishNavigation(NavigationHandle* navigation_handle) override;
-
-  void OnWillStartRequest();
-  void OnWillRedirectRequest();
-  void OnWillFailRequest();
-  void OnWillProcessResponse();
-
-  // Simulates a browser-initiated navigation starting. Returns false if the
-  // navigation failed synchronously.
-  bool SimulateBrowserInitiatedStart();
-
-  // Simulates a renderer-initiated navigation starting. Returns false if the
-  // navigation failed synchronously.
-  bool SimulateRendererInitiatedStart();
-
-  // This method will block waiting for throttle checks to complete.
-  void WaitForThrottleChecksComplete();
-
-  // Sets |last_throttle_check_result_| and calls
-  // |throttle_checks_wait_closure_|.
-  void OnThrottleChecksComplete(NavigationThrottle::ThrottleCheckResult result);
-
-  // Helper method to set the OnThrottleChecksComplete callback on the
-  // NavigationHandle.
-  void PrepareCompleteCallbackOnHandle();
-
-  // Simulates the DidFailProvisionalLoad IPC following a NavigationThrottle
-  // cancelling the navigation.
-  // PlzNavigate: this is not needed.
-  void FailFromThrottleCheck(NavigationThrottle::ThrottleCheckResult result);
-
-  // Check if the navigation corresponds to a same-document navigation.
-  // PlzNavigate: only use on renderer-initiated navigations.
-  bool CheckIfSameDocument();
-
-  // Infers from internal parameters whether the navigation created a new
-  // entry.
-  bool DidCreateNewEntry();
-
-  // Set the navigation to be done towards the specified navigation controller
-  // offset. Typically -1 for back navigations or 1 for forward navigations.
-  void SetSessionHistoryOffset(int offset);
-
-  enum State {
-    INITIALIZATION,
-    STARTED,
-    READY_TO_COMMIT,
-    FAILED,
-    FINISHED,
-  };
-
-  State state_ = INITIALIZATION;
-
-  // The WebContents in which the navigation is taking place.
-  WebContentsImpl* web_contents_;
-
-  // The renderer associated with this navigation.
-  // Note: this can initially be null for browser-initiated navigations.
-  TestRenderFrameHost* render_frame_host_;
-
-  FrameTreeNode* frame_tree_node_;
-
-  // The NavigationHandle associated with this navigation.
-  NavigationHandleImpl* handle_;
-
-  GURL navigation_url_;
-  net::HostPortPair socket_address_;
-  bool browser_initiated_;
-  bool same_document_ = false;
-  Referrer referrer_;
-  ui::PageTransition transition_;
-  ReloadType reload_type_ = ReloadType::NONE;
-  int session_history_offset_ = 0;
-  bool has_user_gesture_ = true;
-
-  // These are used to sanity check the content/public/ API calls emitted as
-  // part of the navigation.
-  int num_did_start_navigation_called_ = 0;
-  int num_will_start_request_called_ = 0;
-  int num_will_redirect_request_called_ = 0;
-  int num_will_fail_request_called_ = 0;
-  int num_did_redirect_navigation_called_ = 0;
-  int num_will_process_response_called_ = 0;
-  int num_ready_to_commit_called_ = 0;
-  int num_did_finish_navigation_called_ = 0;
-
-  // Holds the last ThrottleCheckResult calculated by the navigation's
-  // throttles. Will be unset before WillStartRequest is finished. Will be unset
-  // while throttles are being run, but before they finish.
-  base::Optional<NavigationThrottle::ThrottleCheckResult>
-      last_throttle_check_result_;
-
-  // GlobalRequestID for the associated NavigationHandle. Only valid after
-  // WillProcessResponse has been invoked on the NavigationHandle.
-  content::GlobalRequestID request_id_;
-
-  // Closure that is set when WaitForThrottleChecksComplete is called.
-  base::Closure throttle_checks_wait_closure_;
-
-  // Temporarily holds a closure that will be called on navigation deferral
-  // until the NavigationHandle for this navigation has been created.
-  base::Closure on_defer_callback_;
-
-  base::WeakPtrFactory<NavigationSimulator> weak_factory_;
+  // This interface should only be implemented inside content.
+  friend class NavigationSimulatorImpl;
+  NavigationSimulator() {}
 };
 
 }  // namespace content

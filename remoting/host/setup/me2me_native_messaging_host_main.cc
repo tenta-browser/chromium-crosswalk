@@ -13,12 +13,13 @@
 #include "base/command_line.h"
 #include "base/files/file.h"
 #include "base/i18n/icu_util.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/task_scheduler/task_scheduler.h"
+#include "base/task/single_thread_task_executor.h"
+#include "base/task/thread_pool/thread_pool.h"
 #include "base/threading/thread.h"
 #include "build/build_config.h"
+#include "mojo/core/embedder/embedder.h"
 #include "net/url_request/url_fetcher.h"
 #include "remoting/base/auto_thread_task_runner.h"
 #include "remoting/base/breakpad.h"
@@ -33,6 +34,8 @@
 #include "remoting/host/setup/me2me_native_messaging_host.h"
 #include "remoting/host/switches.h"
 #include "remoting/host/usage_stats_consent.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/network/transitional_url_loader_factory_owner.h"
 
 #if defined(OS_MACOSX)
 #include "base/mac/scoped_nsautorelease_pool.h"
@@ -53,7 +56,8 @@ using remoting::protocol::PairingRegistry;
 namespace remoting {
 
 int Me2MeNativeMessagingHostMain(int argc, char** argv) {
-  // This object instance is required by Chrome code (such as MessageLoop).
+  // This object instance is required by Chrome code (such as
+  // SingleThreadTaskExecutor).
   base::AtExitManager exit_manager;
 
   base::CommandLine::Init(argc, argv);
@@ -85,18 +89,17 @@ int Me2MeNativeMessagingHostMain(int argc, char** argv) {
   }
 #endif  // defined(REMOTING_ENABLE_BREAKPAD)
 
-  base::TaskScheduler::CreateAndStartWithDefaultParams("Me2Me");
+  base::ThreadPoolInstance::CreateAndStartWithDefaultParams("Me2Me");
+
+  mojo::core::Init();
 
   // An IO thread is needed for the pairing registry and URL context getter.
   base::Thread io_thread("io_thread");
   io_thread.StartWithOptions(
-      base::Thread::Options(base::MessageLoop::TYPE_IO, 0));
+      base::Thread::Options(base::MessagePump::Type::IO, 0));
 
-  base::Thread file_thread("file_thread");
-  file_thread.StartWithOptions(
-      base::Thread::Options(base::MessageLoop::TYPE_IO, 0));
-
-  base::MessageLoopForUI message_loop;
+  base::SingleThreadTaskExecutor main_task_executor(
+      base::MessagePump::Type::UI);
   base::RunLoop run_loop;
 
   scoped_refptr<DaemonController> daemon_controller =
@@ -184,10 +187,11 @@ int Me2MeNativeMessagingHostMain(int argc, char** argv) {
 
   // OAuth client (for credential requests). IO thread is used for blocking
   scoped_refptr<net::URLRequestContextGetter> url_request_context_getter(
-      new URLRequestContextGetter(io_thread.task_runner(),
-                                  file_thread.task_runner()));
+      new URLRequestContextGetter(io_thread.task_runner()));
+  network::TransitionalURLLoaderFactoryOwner url_loader_factory_owner(
+      url_request_context_getter);
   std::unique_ptr<OAuthClient> oauth_client(
-      new GaiaOAuthClient(url_request_context_getter));
+      new GaiaOAuthClient(url_loader_factory_owner.GetURLLoaderFactory()));
 
   net::URLFetcher::SetIgnoreCertificateRequests(true);
 
@@ -249,7 +253,7 @@ int Me2MeNativeMessagingHostMain(int argc, char** argv) {
 
   std::unique_ptr<ChromotingHostContext> context =
       ChromotingHostContext::Create(new remoting::AutoThreadTaskRunner(
-          message_loop.task_runner(), run_loop.QuitClosure()));
+          main_task_executor.task_runner(), run_loop.QuitClosure()));
 
   // Create the native messaging host.
   std::unique_ptr<extensions::NativeMessageHost> host(
@@ -266,7 +270,7 @@ int Me2MeNativeMessagingHostMain(int argc, char** argv) {
   run_loop.Run();
 
   // Block until tasks blocking shutdown have completed their execution.
-  base::TaskScheduler::GetInstance()->Shutdown();
+  base::ThreadPoolInstance::Get()->Shutdown();
 
   return kSuccessExitCode;
 }

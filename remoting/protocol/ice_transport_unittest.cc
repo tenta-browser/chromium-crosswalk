@@ -4,12 +4,12 @@
 
 #include "remoting/protocol/ice_transport.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/bind.h"
 #include "base/location.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
@@ -95,16 +95,17 @@ class IceTransportTest : public testing::Test {
   }
 
   void ProcessTransportInfo(std::unique_ptr<IceTransport>* target_transport,
-                            std::unique_ptr<buzz::XmlElement> transport_info) {
+                            std::unique_ptr<jingle_xmpp::XmlElement> transport_info) {
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-        FROM_HERE, base::Bind(&IceTransportTest::DeliverTransportInfo,
-                              base::Unretained(this), target_transport,
-                              base::Passed(&transport_info)),
+        FROM_HERE,
+        base::BindOnce(&IceTransportTest::DeliverTransportInfo,
+                       base::Unretained(this), target_transport,
+                       std::move(transport_info)),
         transport_info_delay_);
   }
 
   void DeliverTransportInfo(std::unique_ptr<IceTransport>* target_transport,
-                            std::unique_ptr<buzz::XmlElement> transport_info) {
+                            std::unique_ptr<jingle_xmpp::XmlElement> transport_info) {
     ASSERT_TRUE(target_transport);
     EXPECT_TRUE(
         (*target_transport)->ProcessTransportInfo(transport_info.get()));
@@ -114,8 +115,7 @@ class IceTransportTest : public testing::Test {
     jingle_glue::JingleThreadWrapper::EnsureForCurrentMessageLoop();
 
     host_transport_.reset(new IceTransport(
-        new TransportContext(nullptr,
-                             base::MakeUnique<ChromiumPortAllocatorFactory>(),
+        new TransportContext(std::make_unique<ChromiumPortAllocatorFactory>(),
                              nullptr, network_settings_, TransportRole::SERVER),
         &host_event_handler_));
     if (!host_authenticator_) {
@@ -124,8 +124,7 @@ class IceTransportTest : public testing::Test {
     }
 
     client_transport_.reset(new IceTransport(
-        new TransportContext(nullptr,
-                             base::MakeUnique<ChromiumPortAllocatorFactory>(),
+        new TransportContext(std::make_unique<ChromiumPortAllocatorFactory>(),
                              nullptr, network_settings_, TransportRole::CLIENT),
         &client_event_handler_));
     if (!client_authenticator_) {

@@ -9,14 +9,14 @@
 #include "base/i18n/encoding_detection.h"
 #include "base/i18n/icu_string_conversions.h"
 #include "base/stl_util.h"
-#include "base/strings/string_util.h"
 #include "base/strings/string_split.h"
+#include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "net/base/net_errors.h"
 #include "net/ftp/ftp_directory_listing_parser_ls.h"
 #include "net/ftp/ftp_directory_listing_parser_vms.h"
 #include "net/ftp/ftp_directory_listing_parser_windows.h"
-#include "net/ftp/ftp_server_type_histograms.h"
+#include "net/ftp/ftp_server_type.h"
 
 namespace net {
 
@@ -66,7 +66,7 @@ int ParseListing(const base::string16& text,
     },
   };
 
-  for (size_t i = 0; i < arraysize(parsers); i++) {
+  for (size_t i = 0; i < base::size(parsers); i++) {
     entries->clear();
     if (parsers[i].callback.Run()) {
       *server_type = parsers[i].server_type;
@@ -95,7 +95,7 @@ int DecodeAndParse(const std::string& text,
                             &converted_text)) {
     const char* const kNewlineSeparators[] = {"\n", "\r\n"};
 
-    for (size_t j = 0; j < arraysize(kNewlineSeparators); j++) {
+    for (size_t j = 0; j < base::size(kNewlineSeparators); j++) {
       int rv = ParseListing(converted_text,
                             base::ASCIIToUTF16(kNewlineSeparators[j]),
                             encoding_name, current_time, entries, server_type);
@@ -121,7 +121,6 @@ int ParseFtpDirectoryListing(const std::string& text,
                              std::vector<FtpDirectoryListingEntry>* entries) {
   FtpServerType server_type = SERVER_UNKNOWN;
   int rv = DecodeAndParse(text, current_time, entries, &server_type);
-  UpdateFtpServerTypeHistograms(server_type);
   return rv;
 }
 

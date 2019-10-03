@@ -12,11 +12,12 @@
 
 #include "base/callback.h"
 #include "base/files/scoped_temp_dir.h"
-#include "base/memory/ptr_util.h"
-#include "base/message_loop/message_loop.h"
+#include "base/optional.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/stl_util.h"
+#include "base/test/scoped_task_environment.h"
+#include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "components/policy/core/common/cloud/cloud_policy_constants.h"
 #include "components/policy/core/common/cloud/mock_cloud_policy_client.h"
@@ -32,10 +33,9 @@
 #include "components/policy/proto/device_management_backend.pb.h"
 #include "crypto/rsa_private_key.h"
 #include "crypto/sha2.h"
-#include "net/url_request/test_url_fetcher_factory.h"
-#include "net/url_request/url_fetcher_delegate.h"
-#include "net/url_request/url_request_context.h"
-#include "net/url_request/url_request_context_getter.h"
+#include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
+#include "services/network/test/test_network_connection_tracker.h"
+#include "services/network/test/test_url_loader_factory.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -86,26 +86,9 @@ const char kTestSchema[] =
 class MockComponentCloudPolicyDelegate
     : public ComponentCloudPolicyService::Delegate {
  public:
-  virtual ~MockComponentCloudPolicyDelegate() {}
+  ~MockComponentCloudPolicyDelegate() override {}
 
   MOCK_METHOD0(OnComponentCloudPolicyUpdated, void());
-};
-
-class TestURLRequestContextGetter : public net::URLRequestContextGetter {
- public:
-  explicit TestURLRequestContextGetter(
-      scoped_refptr<base::SingleThreadTaskRunner> task_runner)
-      : task_runner_(task_runner) {}
-  net::URLRequestContext* GetURLRequestContext() override { return nullptr; }
-  scoped_refptr<base::SingleThreadTaskRunner> GetNetworkTaskRunner()
-      const override {
-    return task_runner_;
-  }
-
- private:
-  ~TestURLRequestContextGetter() override {}
-
-  scoped_refptr<base::SingleThreadTaskRunner> task_runner_;
 };
 
 }  // namespace
@@ -113,13 +96,13 @@ class TestURLRequestContextGetter : public net::URLRequestContextGetter {
 class ComponentCloudPolicyServiceTest : public testing::Test {
  protected:
   ComponentCloudPolicyServiceTest()
-      : request_context_(new TestURLRequestContextGetter(loop_.task_runner())),
-        cache_(nullptr),
+      : cache_(nullptr),
         client_(nullptr),
         core_(dm_protocol::kChromeUserPolicyType,
               std::string(),
               &store_,
-              loop_.task_runner()) {
+              base::ThreadTaskRunnerHandle::Get(),
+              network::TestNetworkConnectionTracker::CreateGetter()) {
     builder_.SetDefaultSigningKey();
     builder_.policy_data().set_policy_type(
         dm_protocol::kChromeExtensionPolicyType);
@@ -131,17 +114,18 @@ class ComponentCloudPolicyServiceTest : public testing::Test {
 
     expected_policy_.Set("Name", POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
                          POLICY_SOURCE_CLOUD,
-                         base::MakeUnique<base::Value>("disabled"), nullptr);
+                         std::make_unique<base::Value>("disabled"), nullptr);
     expected_policy_.Set("Second", POLICY_LEVEL_RECOMMENDED, POLICY_SCOPE_USER,
                          POLICY_SOURCE_CLOUD,
-                         base::MakeUnique<base::Value>("maybe"), nullptr);
+                         std::make_unique<base::Value>("maybe"), nullptr);
   }
 
   void SetUp() override {
     ASSERT_TRUE(temp_dir_.CreateUniqueTempDir());
 
-    owned_cache_.reset(
-        new ResourceCache(temp_dir_.GetPath(), loop_.task_runner()));
+    owned_cache_.reset(new ResourceCache(temp_dir_.GetPath(),
+                                         base::ThreadTaskRunnerHandle::Get(),
+                                         /* max_cache_size */ base::nullopt));
     cache_ = owned_cache_.get();
   }
 
@@ -151,18 +135,18 @@ class ComponentCloudPolicyServiceTest : public testing::Test {
     RunUntilIdle();
   }
 
-  void RunUntilIdle() {
-    base::RunLoop().RunUntilIdle();
-  }
+  void RunUntilIdle() { base::RunLoop().RunUntilIdle(); }
 
   void Connect() {
-    client_ = new MockCloudPolicyClient();
+    client_ = new MockCloudPolicyClient(
+        base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
+            &loader_factory_));
     service_.reset(new ComponentCloudPolicyService(
-        dm_protocol::kChromeExtensionPolicyType, &delegate_, &registry_, &core_,
-        client_, std::move(owned_cache_), request_context_, loop_.task_runner(),
-        loop_.task_runner()));
+        dm_protocol::kChromeExtensionPolicyType, POLICY_SOURCE_CLOUD,
+        &delegate_, &registry_, &core_, client_, std::move(owned_cache_),
+        base::ThreadTaskRunnerHandle::Get()));
 
-    client_->SetDMToken(ComponentPolicyBuilder::kFakeToken);
+    client_->SetDMToken(ComponentCloudPolicyBuilder::kFakeToken);
     EXPECT_EQ(1u, client_->types_to_fetch_.size());
     core_.Connect(std::unique_ptr<CloudPolicyClient>(client_));
     EXPECT_EQ(2u, client_->types_to_fetch_.size());
@@ -178,10 +162,10 @@ class ComponentCloudPolicyServiceTest : public testing::Test {
 
   void LoadStore() {
     em::PolicyData* data = new em::PolicyData();
-    data->set_username(ComponentPolicyBuilder::kFakeUsername);
-    data->set_request_token(ComponentPolicyBuilder::kFakeToken);
-    data->set_device_id(ComponentPolicyBuilder::kFakeDeviceId);
-    data->set_public_key_version(ComponentPolicyBuilder::kFakePublicKeyVersion);
+    data->set_username(PolicyBuilder::kFakeUsername);
+    data->set_request_token(PolicyBuilder::kFakeToken);
+    data->set_device_id(PolicyBuilder::kFakeDeviceId);
+    data->set_public_key_version(PolicyBuilder::kFakePublicKeyVersion);
     store_.policy_.reset(data);
     store_.policy_signature_public_key_ = public_key_;
     store_.NotifyStoreLoaded();
@@ -197,22 +181,28 @@ class ComponentCloudPolicyServiceTest : public testing::Test {
   }
 
   void PopulateCache() {
-    EXPECT_TRUE(cache_->Store(
-        "extension-policy", kTestExtension, CreateSerializedResponse()));
-    EXPECT_TRUE(
-        cache_->Store("extension-policy-data", kTestExtension, kTestPolicy));
+    EXPECT_FALSE(cache_
+                     ->Store("extension-policy", kTestExtension,
+                             CreateSerializedResponse())
+                     .empty());
+    EXPECT_FALSE(
+        cache_->Store("extension-policy-data", kTestExtension, kTestPolicy)
+            .empty());
 
     builder_.policy_data().set_settings_entity_id(kTestExtension2);
-    EXPECT_TRUE(cache_->Store(
-        "extension-policy", kTestExtension2, CreateSerializedResponse()));
-    EXPECT_TRUE(
-        cache_->Store("extension-policy-data", kTestExtension2, kTestPolicy));
+    EXPECT_FALSE(cache_
+                     ->Store("extension-policy", kTestExtension2,
+                             CreateSerializedResponse())
+                     .empty());
+    EXPECT_FALSE(
+        cache_->Store("extension-policy-data", kTestExtension2, kTestPolicy)
+            .empty());
     builder_.policy_data().set_settings_entity_id(kTestExtension);
   }
 
   std::unique_ptr<em::PolicyFetchResponse> CreateResponse() {
     builder_.Build();
-    return base::MakeUnique<em::PolicyFetchResponse>(builder_.policy());
+    return std::make_unique<em::PolicyFetchResponse>(builder_.policy());
   }
 
   std::string CreateSerializedResponse() {
@@ -232,10 +222,9 @@ class ComponentCloudPolicyServiceTest : public testing::Test {
   const PolicyNamespace kTestExtensionNS2 =
       PolicyNamespace(POLICY_DOMAIN_EXTENSIONS, kTestExtension2);
 
-  base::MessageLoop loop_;
+  base::test::ScopedTaskEnvironment task_environment_;
   base::ScopedTempDir temp_dir_;
-  scoped_refptr<TestURLRequestContextGetter> request_context_;
-  net::TestURLFetcherFactory fetcher_factory_;
+  network::TestURLLoaderFactory loader_factory_;
   MockComponentCloudPolicyDelegate delegate_;
   // |cache_| is owned by the |service_| and is invalid once the |service_|
   // is destroyed.
@@ -246,7 +235,7 @@ class ComponentCloudPolicyServiceTest : public testing::Test {
   CloudPolicyCore core_;
   SchemaRegistry registry_;
   std::unique_ptr<ComponentCloudPolicyService> service_;
-  ComponentPolicyBuilder builder_;
+  ComponentCloudPolicyBuilder builder_;
   PolicyMap expected_policy_;
   std::string public_key_;
 };
@@ -313,8 +302,8 @@ TEST_F(ComponentCloudPolicyServiceTest, InitializeWithCachedPolicy) {
   std::map<std::string, std::string> contents;
   cache_->LoadAllSubkeys("extension-policy", &contents);
   ASSERT_EQ(2u, contents.size());
-  EXPECT_TRUE(base::ContainsKey(contents, kTestExtension));
-  EXPECT_TRUE(base::ContainsKey(contents, kTestExtension2));
+  EXPECT_TRUE(base::Contains(contents, kTestExtension));
+  EXPECT_TRUE(base::Contains(contents, kTestExtension2));
 
   // Only policy for extension 1 is now being served, as the registry contains
   // only its schema.
@@ -363,12 +352,8 @@ TEST_F(ComponentCloudPolicyServiceTest, FetchPolicy) {
   RunUntilIdle();
 
   // That should have triggered the download fetch.
-  net::TestURLFetcher* fetcher = fetcher_factory_.GetFetcherByID(0);
-  ASSERT_TRUE(fetcher);
-  EXPECT_EQ(GURL(kTestDownload), fetcher->GetOriginalURL());
-  fetcher->set_response_code(200);
-  fetcher->SetResponseString(kTestPolicy);
-  fetcher->delegate()->OnURLFetchComplete(fetcher);
+  EXPECT_TRUE(loader_factory_.IsPending(kTestDownload));
+  loader_factory_.AddResponse(kTestDownload, kTestPolicy);
 
   EXPECT_CALL(delegate_, OnComponentCloudPolicyUpdated());
   RunUntilIdle();
@@ -408,12 +393,8 @@ TEST_F(ComponentCloudPolicyServiceTest, FetchPolicyBeforeStoreLoaded) {
   Mock::VerifyAndClearExpectations(&delegate_);
 
   // The download started.
-  net::TestURLFetcher* fetcher = fetcher_factory_.GetFetcherByID(0);
-  ASSERT_TRUE(fetcher);
-  EXPECT_EQ(GURL(kTestDownload), fetcher->GetOriginalURL());
-  fetcher->set_response_code(200);
-  fetcher->SetResponseString(kTestPolicy);
-  fetcher->delegate()->OnURLFetchComplete(fetcher);
+  EXPECT_TRUE(loader_factory_.IsPending(kTestDownload));
+  loader_factory_.AddResponse(kTestDownload, kTestPolicy);
 
   EXPECT_CALL(delegate_, OnComponentCloudPolicyUpdated());
   RunUntilIdle();
@@ -486,8 +467,8 @@ TEST_F(ComponentCloudPolicyServiceTest, LoadCacheAndDeleteExtensions) {
   std::map<std::string, std::string> contents;
   cache_->LoadAllSubkeys("extension-policy", &contents);
   EXPECT_EQ(2u, contents.size());
-  EXPECT_TRUE(base::ContainsKey(contents, kTestExtension));
-  EXPECT_TRUE(base::ContainsKey(contents, kTestExtension2));
+  EXPECT_TRUE(base::Contains(contents, kTestExtension));
+  EXPECT_TRUE(base::Contains(contents, kTestExtension2));
 }
 
 TEST_F(ComponentCloudPolicyServiceTest, SignInAfterStartup) {
@@ -517,20 +498,16 @@ TEST_F(ComponentCloudPolicyServiceTest, SignInAfterStartup) {
 
   // The policy was ignored and no download is started because the store
   // doesn't have credentials.
-  net::TestURLFetcher* fetcher = fetcher_factory_.GetFetcherByID(0);
-  EXPECT_FALSE(fetcher);
+  EXPECT_EQ(0, loader_factory_.NumPending());
 
   // Now update the |store_| with the updated policy, which includes
   // credentials. The responses in the |client_| will be reloaded.
   LoadStore();
 
   // The extension policy was validated this time, and the download is started.
-  fetcher = fetcher_factory_.GetFetcherByID(0);
-  ASSERT_TRUE(fetcher);
-  EXPECT_EQ(GURL(kTestDownload), fetcher->GetOriginalURL());
-  fetcher->set_response_code(200);
-  fetcher->SetResponseString(kTestPolicy);
-  fetcher->delegate()->OnURLFetchComplete(fetcher);
+  ASSERT_EQ(1, loader_factory_.NumPending());
+  EXPECT_TRUE(loader_factory_.IsPending(kTestDownload));
+  loader_factory_.AddResponse(kTestDownload, kTestPolicy);
 
   EXPECT_CALL(delegate_, OnComponentCloudPolicyUpdated());
   RunUntilIdle();
@@ -581,10 +558,13 @@ TEST_F(ComponentCloudPolicyServiceTest, LoadInvalidPolicyFromCache) {
   // loaded, the other should be filtered out by the schema.
   builder_.payload().set_secure_hash(
       crypto::SHA256HashString(kInvalidTestPolicy));
-  EXPECT_TRUE(cache_->Store(
-      "extension-policy", kTestExtension, CreateSerializedResponse()));
-  EXPECT_TRUE(cache_->Store(
-      "extension-policy-data", kTestExtension, kInvalidTestPolicy));
+  EXPECT_FALSE(cache_
+                   ->Store("extension-policy", kTestExtension,
+                           CreateSerializedResponse())
+                   .empty());
+  EXPECT_FALSE(
+      cache_->Store("extension-policy-data", kTestExtension, kInvalidTestPolicy)
+          .empty());
 
   LoadStore();
   InitializeRegistry();
@@ -597,7 +577,7 @@ TEST_F(ComponentCloudPolicyServiceTest, LoadInvalidPolicyFromCache) {
   PolicyBundle expected_bundle;
   expected_bundle.Get(kTestExtensionNS)
       .Set("Name", POLICY_LEVEL_MANDATORY, POLICY_SCOPE_USER,
-           POLICY_SOURCE_CLOUD, base::MakeUnique<base::Value>("published"),
+           POLICY_SOURCE_CLOUD, std::make_unique<base::Value>("published"),
            nullptr);
   EXPECT_TRUE(service_->policy().Equals(expected_bundle));
 }
@@ -622,8 +602,8 @@ TEST_F(ComponentCloudPolicyServiceTest, PurgeWhenServerRemovesPolicy) {
   std::map<std::string, std::string> contents;
   cache_->LoadAllSubkeys("extension-policy", &contents);
   ASSERT_EQ(2u, contents.size());
-  EXPECT_TRUE(base::ContainsKey(contents, kTestExtension));
-  EXPECT_TRUE(base::ContainsKey(contents, kTestExtension2));
+  EXPECT_TRUE(base::Contains(contents, kTestExtension));
+  EXPECT_TRUE(base::Contains(contents, kTestExtension2));
 
   PolicyBundle expected_bundle;
   expected_bundle.Get(kTestExtensionNS).CopyFrom(expected_policy_);
@@ -644,8 +624,8 @@ TEST_F(ComponentCloudPolicyServiceTest, PurgeWhenServerRemovesPolicy) {
   contents.clear();
   cache_->LoadAllSubkeys("extension-policy", &contents);
   ASSERT_EQ(1u, contents.size());
-  EXPECT_TRUE(base::ContainsKey(contents, kTestExtension));
-  EXPECT_FALSE(base::ContainsKey(contents, kTestExtension2));
+  EXPECT_TRUE(base::Contains(contents, kTestExtension));
+  EXPECT_FALSE(base::Contains(contents, kTestExtension2));
 
   // And the service isn't publishing policy for the second extension anymore.
   expected_bundle.Clear();
@@ -662,10 +642,9 @@ TEST_F(ComponentCloudPolicyServiceTest, KeyRotation) {
   EXPECT_TRUE(service_->is_initialized());
 
   // Send back a fake policy fetch response with the new signing key.
-  const int kNewPublicKeyVersion =
-      ComponentPolicyBuilder::kFakePublicKeyVersion + 1;
+  const int kNewPublicKeyVersion = PolicyBuilder::kFakePublicKeyVersion + 1;
   std::unique_ptr<crypto::RSAPrivateKey> new_signing_key =
-      ComponentPolicyBuilder::CreateTestOtherSigningKey();
+      PolicyBuilder::CreateTestOtherSigningKey();
   builder_.SetSigningKey(*new_signing_key);
   builder_.policy_data().set_public_key_version(kNewPublicKeyVersion);
   client_->SetPolicy(dm_protocol::kChromeExtensionPolicyType, kTestExtension,
@@ -676,7 +655,7 @@ TEST_F(ComponentCloudPolicyServiceTest, KeyRotation) {
 
   // The download fetch shouldn't have been triggered, as the component policy
   // validation should fail due to the old key returned by the store.
-  ASSERT_FALSE(fetcher_factory_.GetFetcherByID(0));
+  ASSERT_EQ(0, loader_factory_.NumPending());
 
   // Update the signing key in the store.
   store_.policy_signature_public_key_ = builder_.GetPublicSigningKeyAsString();
@@ -686,11 +665,8 @@ TEST_F(ComponentCloudPolicyServiceTest, KeyRotation) {
 
   // The validation of the component policy should have finished successfully
   // and trigger the download fetch.
-  net::TestURLFetcher* fetcher = fetcher_factory_.GetFetcherByID(0);
-  ASSERT_TRUE(fetcher);
-  fetcher->set_response_code(200);
-  fetcher->SetResponseString(kTestPolicy);
-  fetcher->delegate()->OnURLFetchComplete(fetcher);
+  EXPECT_TRUE(loader_factory_.IsPending(kTestDownload));
+  loader_factory_.AddResponse(kTestDownload, kTestPolicy);
 
   EXPECT_CALL(delegate_, OnComponentCloudPolicyUpdated());
   RunUntilIdle();

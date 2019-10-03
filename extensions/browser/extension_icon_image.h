@@ -66,6 +66,17 @@ class IconImage : public content::NotificationObserver {
   // |context| is required by the underlying implementation to retrieve the
   // |ImageLoader| instance associated with the given context. |ImageLoader| is
   // used to perform the asynchronous image load work.
+  // Set |keep_original_size| to true to load the icon at the original size
+  // without resizing. In this case |resource_size_in_dip| will still be used to
+  // pick the correct icon representation. This is useful if the client code
+  // performs its own resizing.
+  IconImage(content::BrowserContext* context,
+            const Extension* extension,
+            const ExtensionIconSet& icon_set,
+            int resource_size_in_dip,
+            bool keep_original_size,
+            const gfx::ImageSkia& default_icon,
+            Observer* observer);
   IconImage(content::BrowserContext* context,
             const Extension* extension,
             const ExtensionIconSet& icon_set,
@@ -79,6 +90,8 @@ class IconImage : public content::NotificationObserver {
 
   // Returns true if the icon is attached to an existing extension.
   bool is_valid() const { return extension_ ? true : false; }
+
+  bool did_complete_initial_load() const { return did_complete_initial_load_; }
 
   void AddObserver(Observer* observer);
   void RemoveObserver(Observer* observer);
@@ -102,8 +115,14 @@ class IconImage : public content::NotificationObserver {
   scoped_refptr<const Extension> extension_;
   ExtensionIconSet icon_set_;
   const int resource_size_in_dip_;
+  // Whether the loaded icon should be kept at the original size.
+  const bool keep_original_size_;
 
-  base::ObserverList<Observer> observers_;
+  // Set to true when the icon finishes the very first load (which can be
+  // asynchronous from creation).
+  bool did_complete_initial_load_;
+
+  base::ObserverList<Observer>::Unchecked observers_;
 
   Source* source_;  // Owned by ImageSkia storage.
   gfx::ImageSkia image_skia_;
@@ -117,7 +136,7 @@ class IconImage : public content::NotificationObserver {
 
   content::NotificationRegistrar registrar_;
 
-  base::WeakPtrFactory<IconImage> weak_ptr_factory_;
+  base::WeakPtrFactory<IconImage> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(IconImage);
 };

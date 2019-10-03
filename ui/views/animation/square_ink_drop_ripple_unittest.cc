@@ -6,7 +6,8 @@
 
 #include <memory>
 
-#include "base/macros.h"
+#include "base/stl_util.h"
+#include "base/time/time.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/size.h"
@@ -114,7 +115,7 @@ SquareInkDropRippleCalculateTransformsTest::
       test_api_(&ink_drop_ripple_) {}
 
 SquareInkDropRippleCalculateTransformsTest::
-    ~SquareInkDropRippleCalculateTransformsTest() {}
+    ~SquareInkDropRippleCalculateTransformsTest() = default;
 
 }  // namespace
 
@@ -158,20 +159,20 @@ TEST_F(SquareInkDropRippleCalculateTransformsTest,
        gfx::Point(0, 0), gfx::Point(0, -kHalfTransformedSize),
        gfx::Point(0, kHalfTransformedSize)}};
 
-  for (size_t i = 0; i < arraysize(test_cases); ++i) {
-    PaintedShape shape = test_cases[i].shape;
-    SCOPED_TRACE(testing::Message() << "i=" << i << " shape=" << shape);
+  for (const auto& test_case : test_cases) {
+    PaintedShape shape = test_case.shape;
+    SCOPED_TRACE(testing::Message() << " shape=" << shape);
     gfx::Transform transform = transforms_[shape];
 
-    EXPECT_EQ(test_cases[i].center_point,
+    EXPECT_EQ(test_case.center_point,
               TransformPoint(transform, kDrawnCenterPoint));
-    EXPECT_EQ(test_cases[i].mid_left_point,
+    EXPECT_EQ(test_case.mid_left_point,
               TransformPoint(transform, kDrawnMidLeftPoint));
-    EXPECT_EQ(test_cases[i].mid_right_point,
+    EXPECT_EQ(test_case.mid_right_point,
               TransformPoint(transform, kDrawnMidRightPoint));
-    EXPECT_EQ(test_cases[i].top_mid_point,
+    EXPECT_EQ(test_case.top_mid_point,
               TransformPoint(transform, kDrawnTopMidPoint));
-    EXPECT_EQ(test_cases[i].bottom_mid_point,
+    EXPECT_EQ(test_case.bottom_mid_point,
               TransformPoint(transform, kDrawnBottomMidPoint));
   }
 }
@@ -221,20 +222,20 @@ TEST_F(SquareInkDropRippleCalculateTransformsTest,
        gfx::Point(x_offset, 0), gfx::Point(0, -kHalfTransformedSize),
        gfx::Point(0, kHalfTransformedSize)}};
 
-  for (size_t i = 0; i < arraysize(test_cases); ++i) {
-    PaintedShape shape = test_cases[i].shape;
-    SCOPED_TRACE(testing::Message() << "i=" << i << " shape=" << shape);
+  for (const auto& test_case : test_cases) {
+    PaintedShape shape = test_case.shape;
+    SCOPED_TRACE(testing::Message() << " shape=" << shape);
     gfx::Transform transform = transforms_[shape];
 
-    EXPECT_EQ(test_cases[i].center_point,
+    EXPECT_EQ(test_case.center_point,
               TransformPoint(transform, kDrawnCenterPoint));
-    EXPECT_EQ(test_cases[i].mid_left_point,
+    EXPECT_EQ(test_case.mid_left_point,
               TransformPoint(transform, kDrawnMidLeftPoint));
-    EXPECT_EQ(test_cases[i].mid_right_point,
+    EXPECT_EQ(test_case.mid_right_point,
               TransformPoint(transform, kDrawnMidRightPoint));
-    EXPECT_EQ(test_cases[i].top_mid_point,
+    EXPECT_EQ(test_case.top_mid_point,
               TransformPoint(transform, kDrawnTopMidPoint));
-    EXPECT_EQ(test_cases[i].bottom_mid_point,
+    EXPECT_EQ(test_case.bottom_mid_point,
               TransformPoint(transform, kDrawnBottomMidPoint));
   }
 }
@@ -265,8 +266,8 @@ TEST_F(SquareInkDropRippleCalculateTransformsTest, RippleIsPixelAligned) {
     for (int target_size : target_sizes) {
       SCOPED_TRACE(testing::Message()
                    << "target_size=" << target_size << " dsf=" << dsf);
-      host_view->layer()->GetCompositor()->SetScaleAndSize(dsf,
-                                                           gfx::Size(100, 100));
+      host_view->layer()->GetCompositor()->SetScaleAndSize(
+          dsf, gfx::Size(100, 100), viz::LocalSurfaceIdAllocation());
 
       SquareInkDropRippleTestApi::InkDropTransforms transforms;
       test_api.CalculateRectTransforms(gfx::Size(target_size, target_size), 0,

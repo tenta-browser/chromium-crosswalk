@@ -4,18 +4,16 @@
 
 #import "ios/chrome/browser/ssl/captive_portal_metrics_tab_helper.h"
 
-#include "base/mac/bind_objc_block.h"
+#include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "components/captive_portal/captive_portal_detector.h"
 #import "ios/chrome/browser/ssl/captive_portal_detector_tab_helper.h"
-#import "ios/web/public/web_state/navigation_context.h"
+#import "ios/web/public/navigation/navigation_context.h"
 #import "ios/web/public/web_state/web_state.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
 #endif
-
-DEFINE_WEB_STATE_USER_DATA_KEY(CaptivePortalMetricsTabHelper);
 
 // Result of captive portal network check after a request takes longer than
 // |kCaptivePortalTestDelayInMilliseconds|.
@@ -40,19 +38,20 @@ CaptivePortalMetricsTabHelper::CaptivePortalMetricsTabHelper(
 CaptivePortalMetricsTabHelper::~CaptivePortalMetricsTabHelper() = default;
 
 void CaptivePortalMetricsTabHelper::TimerTriggered() {
-  TestForCaptivePortal(base::Bind(&HandleTimeoutCaptivePortalDetectionResult));
+  TestForCaptivePortal(
+      base::BindOnce(&HandleTimeoutCaptivePortalDetectionResult));
 }
 
 void CaptivePortalMetricsTabHelper::TestForCaptivePortal(
-    const captive_portal::CaptivePortalDetector::DetectionCallback& callback) {
+    captive_portal::CaptivePortalDetector::DetectionCallback callback) {
   CaptivePortalDetectorTabHelper* tab_helper =
       CaptivePortalDetectorTabHelper::FromWebState(web_state_);
   // TODO(crbug.com/760873): replace test with DCHECK when this method is only
   // called on WebStates attached to tabs.
   if (tab_helper) {
     tab_helper->detector()->DetectCaptivePortal(
-        GURL(captive_portal::CaptivePortalDetector::kDefaultURL), callback,
-        NO_TRAFFIC_ANNOTATION_YET);
+        GURL(captive_portal::CaptivePortalDetector::kDefaultURL),
+        std::move(callback), NO_TRAFFIC_ANNOTATION_YET);
   }
 }
 
@@ -145,3 +144,5 @@ void CaptivePortalMetricsTabHelper::WebStateDestroyed(
   web_state_->RemoveObserver(this);
   web_state_ = nullptr;
 }
+
+WEB_STATE_USER_DATA_KEY_IMPL(CaptivePortalMetricsTabHelper)

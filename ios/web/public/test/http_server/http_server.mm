@@ -8,11 +8,12 @@
 
 #include <string>
 
+#include "base/bind.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/sys_string_conversions.h"
+#include "ios/net/url_test_util.h"
 #import "net/base/mac/url_conversions.h"
 #include "net/test/embedded_test_server/embedded_test_server.h"
 #include "net/test/embedded_test_server/http_request.h"
@@ -57,6 +58,7 @@ HttpServer& HttpServer::GetSharedInstance() {
   static dispatch_once_t once;
   dispatch_once(&once, ^{
     shared_instance = new HttpServer();
+    shared_instance->AddRef();
   });
   return *shared_instance;
 }
@@ -75,7 +77,7 @@ HttpServer& HttpServer::GetSharedInstanceWithResponseProviders(
 std::unique_ptr<net::test_server::HttpResponse> HttpServer::GetResponse(
     const net::test_server::HttpRequest& request) {
   if (isSuspended) {
-    return base::MakeUnique<net::test_server::HungResponse>();
+    return std::make_unique<net::test_server::HungResponse>();
   }
   ResponseProvider::Request provider_request =
       ResponseProviderRequestFromEmbeddedTestServerRequest(request);
@@ -101,15 +103,14 @@ HttpServer::HttpServer() : port_(0) {}
 
 HttpServer::~HttpServer() {}
 
-void HttpServer::StartOrDie() {
+void HttpServer::StartOrDie(const base::FilePath& files_path) {
   DCHECK([NSThread isMainThread]);
 
   // Registers request handler which serves files from the http test files
   // directory. The current tests calls full path relative to DIR_SOURCE_ROOT.
   // Registers the DIR_SOURCE_ROOT to avoid massive test changes.
-  embedded_test_server_ = base::MakeUnique<net::EmbeddedTestServer>();
-  embedded_test_server_->ServeFilesFromSourceDirectory(".");
-
+  embedded_test_server_ = std::make_unique<net::EmbeddedTestServer>();
+  embedded_test_server_->ServeFilesFromDirectory(files_path);
   embedded_test_server_->RegisterDefaultHandler(
       base::Bind(&HttpServer::GetResponse, this));
 
@@ -155,7 +156,8 @@ GURL HttpServer::MakeUrl(const std::string& url) {
 GURL HttpServer::MakeUrlForHttpServer(const std::string& url) const {
   GURL result(url);
   DCHECK(result.is_valid());
-  return embedded_test_server_->GetURL("/" + result.GetContent());
+  return embedded_test_server_->GetURL(
+      "/" + net::GetContentAndFragmentForUrl(result));
 }
 
 scoped_refptr<RefCountedResponseProviderWrapper>

@@ -8,9 +8,8 @@
 
 #include "base/bind.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/optional.h"
-#include "components/feature_engagement/internal/proto/event.pb.h"
+#include "components/feature_engagement/internal/proto/feature_event.pb.h"
 #include "components/feature_engagement/internal/test/event_util.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -50,9 +49,9 @@ class InitAwareEventModelTest : public testing::Test {
   ~InitAwareEventModelTest() override = default;
 
   void SetUp() override {
-    auto mocked_model = base::MakeUnique<MockEventModel>();
+    auto mocked_model = std::make_unique<MockEventModel>();
     mocked_model_ = mocked_model.get();
-    model_ = base::MakeUnique<InitAwareEventModel>(std::move(mocked_model));
+    model_ = std::make_unique<InitAwareEventModel>(std::move(mocked_model));
   }
 
  protected:

@@ -20,10 +20,6 @@ class TemplateURLService;
 struct AutocompleteMatch;
 struct OmniboxLog;
 
-namespace base {
-class CancelableTaskTracker;
-}
-
 namespace bookmarks {
 class BookmarkModel;
 }
@@ -32,8 +28,12 @@ namespace gfx {
 class Image;
 }
 
-typedef base::Callback<void(const SkBitmap& bitmap)> BitmapFetchedCallback;
-typedef base::Callback<void(const gfx::Image& favicon)> FaviconFetchedCallback;
+class OmniboxControllerEmitter;
+
+using BitmapFetchedCallback =
+    base::RepeatingCallback<void(int result_index, const SkBitmap& bitmap)>;
+using FaviconFetchedCallback =
+    base::OnceCallback<void(const gfx::Image& favicon)>;
 
 // Interface that allows the omnibox component to interact with its embedder
 // (e.g., getting information about the current page, retrieving objects
@@ -67,28 +67,20 @@ class OmniboxClient {
   // Returns the favicon of the current page.
   virtual gfx::Image GetFavicon() const;
 
-  // Returns true if the visible entry is a New Tab Page rendered by Instant.
-  virtual bool IsInstantNTP() const;
-
-  // Returns true if the committed entry is a search results page.
-  virtual bool IsSearchResultsPage() const;
-
   // Returns whether the current page is loading.
   virtual bool IsLoading() const;
 
   // Returns whether paste-and-go functionality is enabled.
   virtual bool IsPasteAndGoEnabled() const;
 
-  // Returns whether |url| corresponds to the new tab page.
-  virtual bool IsNewTabPage(const GURL& url) const;
-
-  // Returns whether |url| corresponds to the user's home page.
-  virtual bool IsHomePage(const GURL& url) const;
+  // Returns false if Default Search is disabled by a policy.
+  virtual bool IsDefaultSearchProviderEnabled() const;
 
   // Returns the session ID of the current page.
   virtual const SessionID& GetSessionID() const = 0;
 
   virtual bookmarks::BookmarkModel* GetBookmarkModel();
+  virtual OmniboxControllerEmitter* GetOmniboxControllerEmitter();
   virtual TemplateURLService* GetTemplateURLService();
   virtual const AutocompleteSchemeClassifier& GetSchemeClassifier() const = 0;
   virtual AutocompleteClassifier* GetAutocompleteClassifier();
@@ -97,6 +89,13 @@ class OmniboxClient {
   // and an empty icon otherwise.
   virtual gfx::Image GetIconIfExtensionMatch(
       const AutocompleteMatch& match) const;
+
+  // Returns the given |vector_icon_type| with the correct size.
+  virtual gfx::Image GetSizedIcon(const gfx::VectorIcon& vector_icon_type,
+                                  SkColor vector_icon_color) const;
+
+  // Returns the given |icon| with the correct size.
+  virtual gfx::Image GetSizedIcon(const gfx::Image& icon) const;
 
   // Checks whether |template_url| is an extension keyword; if so, asks the
   // ExtensionOmniboxEventRouter to process |match| for it and returns true.
@@ -124,13 +123,19 @@ class OmniboxClient {
                                const BitmapFetchedCallback& on_bitmap_fetched) {
   }
 
-  // Fetchs the favicon for |page_url|. If the embedder supports fetching
-  // favicons (not all embedders do), |on_favicon_fetched| will be be called
-  // once the favicon has been fetched.
-  virtual void GetFaviconForPageUrl(
-      base::CancelableTaskTracker* tracker,
+  // These two methods fetch favicons if the embedder supports it. Not all
+  // embedders do. These methods return the favicon synchronously if possible.
+  // Otherwise, they return an empty gfx::Image and |on_favicon_fetched| may or
+  // may not be called asynchronously later. |on_favicon_fetched| will never be
+  // run synchronously, and will never be run with an empty result.
+  virtual gfx::Image GetFaviconForPageUrl(
       const GURL& page_url,
-      const FaviconFetchedCallback& on_favicon_fetched) {}
+      FaviconFetchedCallback on_favicon_fetched);
+  virtual gfx::Image GetFaviconForDefaultSearchProvider(
+      FaviconFetchedCallback on_favicon_fetched);
+  virtual gfx::Image GetFaviconForKeywordSearchProvider(
+      const TemplateURL* template_url,
+      FaviconFetchedCallback on_favicon_fetched);
 
   // Called when the current autocomplete match has changed.
   virtual void OnCurrentMatchChanged(const AutocompleteMatch& match) {}
@@ -140,7 +145,6 @@ class OmniboxClient {
                              bool user_input_in_progress,
                              const base::string16& user_text,
                              const AutocompleteResult& result,
-                             bool is_popup_open,
                              bool has_focus) {}
 
   // Called when input has been accepted.
@@ -157,6 +161,15 @@ class OmniboxClient {
 
   // Discards the state for all pending and transient navigations.
   virtual void DiscardNonCommittedNavigations() {}
+
+  // Opens and shows a new incognito browser window.
+  virtual void NewIncognitoWindow() {}
+
+  // Presents translation prompt for current tab web contents.
+  virtual void PromptPageTranslation() {}
+
+  // Presents prompt to update Chrome.
+  virtual void OpenUpdateChromeDialog() {}
 };
 
 #endif  // COMPONENTS_OMNIBOX_BROWSER_OMNIBOX_CLIENT_H_

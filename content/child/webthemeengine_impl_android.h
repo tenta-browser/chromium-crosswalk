@@ -5,17 +5,18 @@
 #ifndef CONTENT_CHILD_WEBTHEMEENGINE_IMPL_ANDROID_H_
 #define CONTENT_CHILD_WEBTHEMEENGINE_IMPL_ANDROID_H_
 
-#include "third_party/WebKit/public/platform/WebThemeEngine.h"
+#include "third_party/blink/public/platform/web_theme_engine.h"
 
 namespace content {
 
-class WebThemeEngineImpl : public blink::WebThemeEngine {
+class WebThemeEngineAndroid : public blink::WebThemeEngine {
  public:
   // WebThemeEngine methods:
+  ~WebThemeEngineAndroid() override;
   blink::WebSize GetSize(blink::WebThemeEngine::Part) override;
   void GetOverlayScrollbarStyle(
       blink::WebThemeEngine::ScrollbarStyle*) override;
-  void Paint(blink::WebCanvas* canvas,
+  void Paint(cc::PaintCanvas* canvas,
              blink::WebThemeEngine::Part part,
              blink::WebThemeEngine::State state,
              const blink::WebRect& rect,

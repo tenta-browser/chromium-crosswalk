@@ -10,12 +10,12 @@
 #include "base/logging.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_dialogs.h"
-#include "chrome/browser/ui/views/harmony/chrome_layout_provider.h"
+#include "chrome/browser/ui/views/chrome_layout_provider.h"
 #include "chrome/common/url_constants.h"
 #include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/constrained_window/constrained_window_views.h"
-#include "components/google/core/browser/google_util.h"
+#include "components/google/core/common/google_util.h"
 #include "components/strings/grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/resource_bundle.h"
@@ -43,12 +43,12 @@ void OneClickSigninDialogView::ShowDialog(
     const base::string16& email,
     std::unique_ptr<OneClickSigninLinksDelegate> delegate,
     gfx::NativeWindow window,
-    const BrowserWindow::StartSyncCallback& start_sync) {
+    base::OnceCallback<void(bool)> confirmed_callback) {
   if (IsShowing())
     return;
 
-  dialog_view_ =
-      new OneClickSigninDialogView(email, std::move(delegate), start_sync);
+  dialog_view_ = new OneClickSigninDialogView(email, std::move(delegate),
+                                              std::move(confirmed_callback));
   dialog_view_->Init();
   constrained_window::CreateBrowserModalDialogViews(dialog_view_, window)
       ->Show();
@@ -68,49 +68,50 @@ void OneClickSigninDialogView::Hide() {
 OneClickSigninDialogView::OneClickSigninDialogView(
     const base::string16& email,
     std::unique_ptr<OneClickSigninLinksDelegate> delegate,
-    const BrowserWindow::StartSyncCallback& start_sync_callback)
+    base::OnceCallback<void(bool)> confirmed_callback)
     : delegate_(std::move(delegate)),
       email_(email),
-      start_sync_callback_(start_sync_callback),
+      confirmed_callback_(std::move(confirmed_callback)),
       advanced_link_(nullptr),
       learn_more_link_(nullptr) {
-  DCHECK(!start_sync_callback_.is_null());
+  DCHECK(!confirmed_callback_.is_null());
   set_margins(ChromeLayoutProvider::Get()->GetDialogInsetsForContentType(
       views::TEXT, views::TEXT));
   chrome::RecordDialogCreation(chrome::DialogIdentifier::ONE_CLICK_SIGNIN);
 }
 
 OneClickSigninDialogView::~OneClickSigninDialogView() {
-  if (!start_sync_callback_.is_null()) {
-    base::ResetAndReturn(&start_sync_callback_)
-        .Run(OneClickSigninSyncStarter::UNDO_SYNC);
-  }
+  if (!confirmed_callback_.is_null())
+    std::move(confirmed_callback_).Run(false);
 }
 
 void OneClickSigninDialogView::Init() {
-  views::GridLayout* layout = views::GridLayout::CreateAndInstall(this);
+  views::GridLayout* layout =
+      SetLayoutManager(std::make_unique<views::GridLayout>());
 
   // Column set for descriptive text and link.
   views::ColumnSet* cs = layout->AddColumnSet(0);
-  cs->AddColumn(views::GridLayout::FILL, views::GridLayout::CENTER, 1,
+  cs->AddColumn(views::GridLayout::FILL, views::GridLayout::CENTER, 1.0,
                 views::GridLayout::USE_PREF, 0, 0);
 
-  layout->StartRow(0, 0);
+  layout->StartRow(views::GridLayout::kFixedSize, 0);
 
-  views::Label* label = new views::Label(l10n_util::GetStringFUTF16(
+  auto label = std::make_unique<views::Label>(l10n_util::GetStringFUTF16(
       IDS_ONE_CLICK_SIGNIN_DIALOG_MESSAGE_NEW, email_));
   label->SetMultiLine(true);
   label->SetHorizontalAlignment(gfx::ALIGN_LEFT);
   label->SizeToFit(kMinimumDialogLabelWidth);
-  layout->AddView(label);
+  layout->AddView(std::move(label));
 
-  layout->StartRow(0, 0);
+  layout->StartRow(views::GridLayout::kFixedSize, 0);
 
-  learn_more_link_ = new views::Link(l10n_util::GetStringUTF16(IDS_LEARN_MORE));
-  learn_more_link_->set_listener(this);
-  learn_more_link_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-  layout->AddView(learn_more_link_, 1, 1, views::GridLayout::TRAILING,
-                  views::GridLayout::CENTER);
+  auto learn_more_link =
+      std::make_unique<views::Link>(l10n_util::GetStringUTF16(IDS_LEARN_MORE));
+  learn_more_link->set_listener(this);
+  learn_more_link->SetHorizontalAlignment(gfx::ALIGN_LEFT);
+  learn_more_link_ =
+      layout->AddView(std::move(learn_more_link), 1, 1,
+                      views::GridLayout::TRAILING, views::GridLayout::CENTER);
 }
 
 base::string16 OneClickSigninDialogView::GetWindowTitle() const {
@@ -129,13 +130,14 @@ void OneClickSigninDialogView::WindowClosing() {
   dialog_view_ = NULL;
 }
 
-views::View* OneClickSigninDialogView::CreateExtraView() {
-  advanced_link_ = new views::Link(
+std::unique_ptr<views::View> OneClickSigninDialogView::CreateExtraView() {
+  auto advanced_link = std::make_unique<views::Link>(
       l10n_util::GetStringUTF16(IDS_ONE_CLICK_SIGNIN_DIALOG_ADVANCED));
 
-  advanced_link_->set_listener(this);
-  advanced_link_->SetHorizontalAlignment(gfx::ALIGN_LEFT);
-  return advanced_link_;
+  advanced_link->set_listener(this);
+  advanced_link->SetHorizontalAlignment(gfx::ALIGN_LEFT);
+  advanced_link_ = advanced_link.get();
+  return advanced_link;
 }
 
 base::string16 OneClickSigninDialogView::GetDialogButtonLabel(
@@ -150,14 +152,12 @@ void OneClickSigninDialogView::LinkClicked(views::Link* source,
   if (source == learn_more_link_) {
     delegate_->OnLearnMoreLinkClicked(true);
   } else if (source == advanced_link_) {
-    base::ResetAndReturn(&start_sync_callback_)
-        .Run(OneClickSigninSyncStarter::CONFIGURE_SYNC_FIRST);
+    std::move(confirmed_callback_).Run(true);
     GetWidget()->Close();
   }
 }
 
 bool OneClickSigninDialogView::Accept() {
-  base::ResetAndReturn(&start_sync_callback_)
-      .Run(OneClickSigninSyncStarter::SYNC_WITH_DEFAULT_SETTINGS);
+  std::move(confirmed_callback_).Run(true);
   return true;
 }

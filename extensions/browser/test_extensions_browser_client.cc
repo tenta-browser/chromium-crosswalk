@@ -10,10 +10,11 @@
 #include "extensions/browser/extension_host_delegate.h"
 #include "extensions/browser/test_runtime_api_delegate.h"
 #include "extensions/browser/updater/null_extension_cache.h"
+#include "services/network/public/mojom/url_loader.mojom.h"
 #include "ui/base/l10n/l10n_util.h"
 
 #if defined(OS_CHROMEOS)
-#include "chromeos/login/login_state.h"
+#include "chromeos/login/login_state/login_state.h"
 #endif
 
 using content::BrowserContext;
@@ -27,7 +28,7 @@ TestExtensionsBrowserClient::TestExtensionsBrowserClient(
       lock_screen_context_(nullptr),
       process_manager_delegate_(nullptr),
       extension_system_factory_(nullptr),
-      extension_cache_(new NullExtensionCache) {
+      extension_cache_(std::make_unique<NullExtensionCache>()) {
   if (main_context)
     SetMainContext(main_context);
 }
@@ -121,14 +122,24 @@ bool TestExtensionsBrowserClient::CanExtensionCrossIncognito(
   return false;
 }
 
-net::URLRequestJob*
-TestExtensionsBrowserClient::MaybeCreateResourceBundleRequestJob(
-    net::URLRequest* request,
-    net::NetworkDelegate* network_delegate,
-    const base::FilePath& directory_path,
+base::FilePath TestExtensionsBrowserClient::GetBundleResourcePath(
+    const network::ResourceRequest& request,
+    const base::FilePath& extension_resources_path,
+    int* resource_id) const {
+  *resource_id = 0;
+  return base::FilePath();
+}
+
+void TestExtensionsBrowserClient::LoadResourceFromResourceBundle(
+    const network::ResourceRequest& request,
+    network::mojom::URLLoaderRequest loader,
+    const base::FilePath& resource_relative_path,
+    int resource_id,
     const std::string& content_security_policy,
+    network::mojom::URLLoaderClientPtr client,
     bool send_cors_header) {
-  return nullptr;
+  // Should not be called because GetBundleResourcePath() returned empty path.
+  NOTREACHED() << "Resource is not from a bundle.";
 }
 
 bool TestExtensionsBrowserClient::AllowCrossRendererResourceLoad(
@@ -150,7 +161,7 @@ PrefService* TestExtensionsBrowserClient::GetPrefServiceForContext(
 
 void TestExtensionsBrowserClient::GetEarlyExtensionPrefsObservers(
     content::BrowserContext* context,
-    std::vector<ExtensionPrefsObserver*>* observers) const {}
+    std::vector<EarlyExtensionPrefsObserver*>* observers) const {}
 
 ProcessManagerDelegate* TestExtensionsBrowserClient::GetProcessManagerDelegate()
     const {
@@ -169,7 +180,21 @@ bool TestExtensionsBrowserClient::DidVersionUpdate(BrowserContext* context) {
 void TestExtensionsBrowserClient::PermitExternalProtocolHandler() {
 }
 
+bool TestExtensionsBrowserClient::IsInDemoMode() {
+  return false;
+}
+
+bool TestExtensionsBrowserClient::IsScreensaverInDemoMode(
+    const std::string& app_id) {
+  return false;
+}
+
 bool TestExtensionsBrowserClient::IsRunningInForcedAppMode() { return false; }
+
+bool TestExtensionsBrowserClient::IsAppModeForcedForApp(
+    const ExtensionId& extension_id) {
+  return false;
+}
 
 bool TestExtensionsBrowserClient::IsLoggedInAsPublicAccount() {
   return false;
@@ -180,9 +205,6 @@ TestExtensionsBrowserClient::GetExtensionSystemFactory() {
   DCHECK(extension_system_factory_);
   return extension_system_factory_;
 }
-
-void TestExtensionsBrowserClient::RegisterExtensionFunctions(
-    ExtensionFunctionRegistry* registry) const {}
 
 void TestExtensionsBrowserClient::RegisterExtensionInterfaces(
     service_manager::BinderRegistryWithArgs<content::RenderFrameHost*>*
@@ -205,10 +227,6 @@ void TestExtensionsBrowserClient::BroadcastEventToRenderers(
     events::HistogramValue histogram_value,
     const std::string& event_name,
     std::unique_ptr<base::ListValue> args) {}
-
-net::NetLog* TestExtensionsBrowserClient::GetNetLog() {
-  return nullptr;
-}
 
 ExtensionCache* TestExtensionsBrowserClient::GetExtensionCache() {
   return extension_cache_.get();

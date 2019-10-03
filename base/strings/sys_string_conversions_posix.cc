@@ -18,7 +18,7 @@ std::string SysWideToUTF8(const std::wstring& wide) {
   // than our ICU, but this will do for now.
   return WideToUTF8(wide);
 }
-std::wstring SysUTF8ToWide(const StringPiece& utf8) {
+std::wstring SysUTF8ToWide(StringPiece utf8) {
   // In theory this should be using the system-provided conversion rather
   // than our ICU, but this will do for now.
   std::wstring out;
@@ -34,7 +34,7 @@ std::string SysWideToNativeMB(const std::wstring& wide) {
   return WideToUTF8(wide);
 }
 
-std::wstring SysNativeMBToWide(const StringPiece& native_mb) {
+std::wstring SysNativeMBToWide(StringPiece native_mb) {
   return SysUTF8ToWide(native_mb);
 }
 
@@ -47,8 +47,7 @@ std::string SysWideToNativeMB(const std::wstring& wide) {
   // without writing the output, counting the number of multi-byte characters.
   size_t num_out_chars = 0;
   memset(&ps, 0, sizeof(ps));
-  for (size_t i = 0; i < wide.size(); ++i) {
-    const wchar_t src = wide[i];
+  for (auto src : wide) {
     // Use a temp buffer since calling wcrtomb with an output of NULL does not
     // calculate the output length.
     char buf[16];
@@ -100,7 +99,7 @@ std::string SysWideToNativeMB(const std::wstring& wide) {
   return out;
 }
 
-std::wstring SysNativeMBToWide(const StringPiece& native_mb) {
+std::wstring SysNativeMBToWide(StringPiece native_mb) {
   mbstate_t ps;
 
   // Calculate the number of wide characters.  We walk through the string
@@ -118,7 +117,8 @@ std::wstring SysNativeMBToWide(const StringPiece& native_mb) {
         break;
       case 0:
         // We hit an embedded null byte, keep going.
-        i += 1;  // Fall through.
+        i += 1;
+        FALLTHROUGH;
       default:
         i += res;
         ++num_out_chars;

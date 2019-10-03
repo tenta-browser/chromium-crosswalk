@@ -7,7 +7,6 @@
 #include <memory>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/safe_browsing/chrome_cleaner/chrome_cleaner_controller_win.h"
 #include "chrome/browser/safe_browsing/chrome_cleaner/chrome_cleaner_dialog_controller_win.h"
 #include "chrome/browser/safe_browsing/chrome_cleaner/mock_chrome_cleaner_controller_win.h"
@@ -34,15 +33,16 @@ class MockChromeCleanerDialogController
   MOCK_METHOD1(DetailsButtonClicked, void(bool));
   MOCK_METHOD1(SetLogsEnabled, void(bool));
   MOCK_METHOD0(LogsEnabled, bool());
+  MOCK_METHOD0(LogsManaged, bool());
 };
 
 class ChromeCleanerDialogTest : public DialogBrowserTest {
  public:
   ChromeCleanerDialogTest()
       : mock_dialog_controller_(
-            base::MakeUnique<NiceMock<MockChromeCleanerDialogController>>()),
+            std::make_unique<NiceMock<MockChromeCleanerDialogController>>()),
         mock_cleaner_controller_(
-            base::MakeUnique<
+            std::make_unique<
                 NiceMock<safe_browsing::MockChromeCleanerController>>()) {
     ON_CALL(*mock_dialog_controller_, LogsEnabled())
         .WillByDefault(Return(true));
@@ -51,7 +51,7 @@ class ChromeCleanerDialogTest : public DialogBrowserTest {
             Return(safe_browsing::ChromeCleanerController::State::kInfected));
   }
 
-  void ShowDialog(const std::string& name) override {
+  void ShowUi(const std::string& name) override {
     chrome::ShowChromeCleanerPrompt(browser(), mock_dialog_controller_.get(),
                                     mock_cleaner_controller_.get());
   }
@@ -68,8 +68,8 @@ class ChromeCleanerDialogTest : public DialogBrowserTest {
   DISALLOW_COPY_AND_ASSIGN(ChromeCleanerDialogTest);
 };
 
-IN_PROC_BROWSER_TEST_F(ChromeCleanerDialogTest, InvokeDialog_default) {
-  RunDialog();
+IN_PROC_BROWSER_TEST_F(ChromeCleanerDialogTest, InvokeUi_default) {
+  ShowAndVerifyUi();
 }
 
 }  // namespace

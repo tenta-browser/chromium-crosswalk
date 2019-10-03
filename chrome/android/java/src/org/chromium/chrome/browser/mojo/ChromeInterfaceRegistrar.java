@@ -5,8 +5,11 @@
 package org.chromium.chrome.browser.mojo;
 
 import org.chromium.base.annotations.CalledByNative;
+import org.chromium.blink.mojom.Authenticator;
+import org.chromium.chrome.browser.AppHooks;
 import org.chromium.chrome.browser.installedapp.InstalledAppProviderFactory;
 import org.chromium.chrome.browser.payments.PaymentRequestFactory;
+import org.chromium.chrome.browser.webauth.AuthenticatorFactory;
 import org.chromium.chrome.browser.webshare.ShareServiceImplementationFactory;
 import org.chromium.content_public.browser.InterfaceRegistrar;
 import org.chromium.content_public.browser.RenderFrameHost;
@@ -15,8 +18,6 @@ import org.chromium.installedapp.mojom.InstalledAppProvider;
 import org.chromium.payments.mojom.PaymentRequest;
 import org.chromium.services.service_manager.InterfaceRegistry;
 import org.chromium.webshare.mojom.ShareService;
-
-@SuppressWarnings("MultipleTopLevelClassesInFile")
 
 /** Registers mojo interface implementations exposed to C++ code at the Chrome layer. */
 class ChromeInterfaceRegistrar {
@@ -34,6 +35,7 @@ class ChromeInterfaceRegistrar {
         public void registerInterfaces(InterfaceRegistry registry, final WebContents webContents) {
             registry.addInterface(
                     ShareService.MANAGER, new ShareServiceImplementationFactory(webContents));
+            AppHooks.get().registerChromeWebContentsInterfaces(registry, webContents);
         }
     }
 
@@ -46,6 +48,8 @@ class ChromeInterfaceRegistrar {
                     PaymentRequest.MANAGER, new PaymentRequestFactory(renderFrameHost));
             registry.addInterface(
                     InstalledAppProvider.MANAGER, new InstalledAppProviderFactory(renderFrameHost));
+            registry.addInterface(Authenticator.MANAGER, new AuthenticatorFactory(renderFrameHost));
+            AppHooks.get().registerChromeRenderFrameHostInterfaces(registry, renderFrameHost);
         }
     }
 }

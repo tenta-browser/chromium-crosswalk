@@ -10,11 +10,11 @@
 
 class ChromeBrowserMainPartsPosix : public ChromeBrowserMainParts {
  public:
-  explicit ChromeBrowserMainPartsPosix(
-      const content::MainFunctionParams& parameters);
+  ChromeBrowserMainPartsPosix(const content::MainFunctionParams& parameters,
+                              StartupData* startup_data);
 
   // content::BrowserMainParts overrides.
-  void PreEarlyInitialization() override;
+  int PreEarlyInitialization() override;
   void PostMainMessageLoopStart() override;
 
   // ChromeBrowserMainParts overrides.

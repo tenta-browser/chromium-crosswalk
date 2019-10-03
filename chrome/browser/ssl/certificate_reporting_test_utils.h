@@ -9,11 +9,14 @@
 #include <string>
 
 #include "base/macros.h"
+#include "build/build_config.h"
+#include "chrome/browser/ssl/cert_logger.pb.h"
+#include "chrome/browser/ssl/certificate_error_reporter.h"
 #include "chrome/browser/ssl/ssl_cert_reporter.h"
-#include "components/certificate_reporting/cert_logger.pb.h"
-#include "components/certificate_reporting/error_reporter.h"
 
+#if !defined(OS_ANDROID)
 class Browser;
+#endif
 
 namespace base {
 class RunLoop;
@@ -38,23 +41,25 @@ class SSLCertReporterCallback {
   ~SSLCertReporterCallback();
 
   void ReportSent(const std::string& hostname,
-                  const certificate_reporting::CertLoggerRequest::ChromeChannel
+                  const chrome_browser_ssl::CertLoggerRequest::ChromeChannel
                       chrome_channel);
 
   const std::string& GetLatestHostnameReported() const;
-  certificate_reporting::CertLoggerRequest::ChromeChannel
+  chrome_browser_ssl::CertLoggerRequest::ChromeChannel
   GetLatestChromeChannelReported() const;
 
  private:
   base::RunLoop* run_loop_;
   std::string latest_hostname_reported_;
-  certificate_reporting::CertLoggerRequest::ChromeChannel chrome_channel_;
+  chrome_browser_ssl::CertLoggerRequest::ChromeChannel chrome_channel_;
 
   DISALLOW_COPY_AND_ASSIGN(SSLCertReporterCallback);
 };
 
+#if !defined(OS_ANDROID)
 // Sets the browser preference to enable or disable extended reporting.
 void SetCertReportingOptIn(Browser* browser, OptIn opt_in);
+#endif
 
 // Creates a mock SSLCertReporter and return a pointer to it, which will
 // be owned by the caller. The mock SSLCertReporter will call
@@ -63,7 +68,7 @@ void SetCertReportingOptIn(Browser* browser, OptIn opt_in);
 std::unique_ptr<SSLCertReporter> CreateMockSSLCertReporter(
     const base::Callback<
         void(const std::string&,
-             const certificate_reporting::CertLoggerRequest_ChromeChannel)>&
+             const chrome_browser_ssl::CertLoggerRequest_ChromeChannel)>&
         report_sent_callback,
     ExpectReport expect_report);
 

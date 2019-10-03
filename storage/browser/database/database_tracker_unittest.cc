@@ -106,34 +106,34 @@ class TestQuotaManagerProxy : public storage::QuotaManagerProxy {
   }
 
   void NotifyStorageAccessed(storage::QuotaClient::ID client_id,
-                             const GURL& origin,
-                             storage::StorageType type) override {
+                             const url::Origin& origin,
+                             blink::mojom::StorageType type) override {
     EXPECT_EQ(storage::QuotaClient::kDatabase, client_id);
-    EXPECT_EQ(storage::kStorageTypeTemporary, type);
+    EXPECT_EQ(blink::mojom::StorageType::kTemporary, type);
     accesses_[origin] += 1;
   }
 
   void NotifyStorageModified(storage::QuotaClient::ID client_id,
-                             const GURL& origin,
-                             storage::StorageType type,
+                             const url::Origin& origin,
+                             blink::mojom::StorageType type,
                              int64_t delta) override {
     EXPECT_EQ(storage::QuotaClient::kDatabase, client_id);
-    EXPECT_EQ(storage::kStorageTypeTemporary, type);
+    EXPECT_EQ(blink::mojom::StorageType::kTemporary, type);
     modifications_[origin].first += 1;
     modifications_[origin].second += delta;
   }
 
   // Not needed for our tests.
-  void NotifyOriginInUse(const GURL& origin) override {}
-  void NotifyOriginNoLongerInUse(const GURL& origin) override {}
+  void NotifyOriginInUse(const url::Origin& origin) override {}
+  void NotifyOriginNoLongerInUse(const url::Origin& origin) override {}
   void SetUsageCacheEnabled(storage::QuotaClient::ID client_id,
-                            const GURL& origin,
-                            storage::StorageType type,
+                            const url::Origin& origin,
+                            blink::mojom::StorageType type,
                             bool enabled) override {}
   void GetUsageAndQuota(base::SequencedTaskRunner* original_task_runner,
-                        const GURL& origin,
-                        storage::StorageType type,
-                        const UsageAndQuotaCallback& callback) override {}
+                        const url::Origin& origin,
+                        blink::mojom::StorageType type,
+                        UsageAndQuotaCallback callback) override {}
 
   void SimulateQuotaManagerDestroyed() {
     if (registered_client_) {
@@ -142,9 +142,11 @@ class TestQuotaManagerProxy : public storage::QuotaManagerProxy {
     }
   }
 
-  bool WasAccessNotified(const GURL& origin) { return accesses_[origin] != 0; }
+  bool WasAccessNotified(const url::Origin& origin) {
+    return accesses_[origin] != 0;
+  }
 
-  bool WasModificationNotified(const GURL& origin, int64_t amount) {
+  bool WasModificationNotified(const url::Origin& origin, int64_t amount) {
     return modifications_[origin].first != 0 &&
            modifications_[origin].second == amount;
   }
@@ -157,10 +159,10 @@ class TestQuotaManagerProxy : public storage::QuotaManagerProxy {
   storage::QuotaClient* registered_client_;
 
   // Map from origin to count of access notifications.
-  std::map<GURL, int> accesses_;
+  std::map<url::Origin, int> accesses_;
 
   // Map from origin to <count, sum of deltas>
-  std::map<GURL, std::pair<int, int64_t>> modifications_;
+  std::map<url::Origin, std::pair<int, int64_t>> modifications_;
 
  protected:
   ~TestQuotaManagerProxy() override { EXPECT_FALSE(registered_client_); }
@@ -215,12 +217,8 @@ class DatabaseTracker_TestHelper_Test {
     tracker->DatabaseOpened(kOrigin2, kDB2, kDescription, 0, &database_size);
     tracker->DatabaseOpened(kOrigin2, kDB3, kDescription, 0, &database_size);
 
-    EXPECT_TRUE(base::CreateDirectory(
-        tracker->DatabaseDirectory().Append(base::FilePath::FromUTF16Unsafe(
-            tracker->GetOriginDirectory(kOrigin1)))));
-    EXPECT_TRUE(base::CreateDirectory(
-        tracker->DatabaseDirectory().Append(base::FilePath::FromUTF16Unsafe(
-            tracker->GetOriginDirectory(kOrigin2)))));
+    EXPECT_TRUE(base::CreateDirectory(tracker->GetOriginDirectory(kOrigin1)));
+    EXPECT_TRUE(base::CreateDirectory(tracker->GetOriginDirectory(kOrigin2)));
     EXPECT_EQ(
         1, base::WriteFile(tracker->GetFullDBFilePath(kOrigin1, kDB1), "a", 1));
     EXPECT_EQ(2, base::WriteFile(tracker->GetFullDBFilePath(kOrigin2, kDB2),
@@ -234,24 +232,21 @@ class DatabaseTracker_TestHelper_Test {
     // Delete db1. Should also delete origin1.
     TestObserver observer;
     tracker->AddObserver(&observer);
-    net::TestCompletionCallback callback;
-    int result = tracker->DeleteDatabase(kOrigin1, kDB1, callback.callback());
+    net::TestCompletionCallback callback1;
+    int result = tracker->DeleteDatabase(kOrigin1, kDB1, callback1.callback());
     EXPECT_EQ(net::ERR_IO_PENDING, result);
-    ASSERT_FALSE(callback.have_result());
+    ASSERT_FALSE(callback1.have_result());
     EXPECT_TRUE(observer.DidReceiveNewNotification());
     EXPECT_EQ(kOrigin1, observer.GetNotificationOriginIdentifier());
     EXPECT_EQ(kDB1, observer.GetNotificationDatabaseName());
     tracker->DatabaseClosed(kOrigin1, kDB1);
-    result = callback.GetResult(result);
+    result = callback1.GetResult(result);
     EXPECT_EQ(net::OK, result);
-    EXPECT_FALSE(
-        base::PathExists(tracker->DatabaseDirectory().AppendASCII(kOrigin1)));
+    EXPECT_FALSE(base::PathExists(tracker->GetOriginDirectory(kOrigin1)));
 
     // Recreate db1.
     tracker->DatabaseOpened(kOrigin1, kDB1, kDescription, 0, &database_size);
-    EXPECT_TRUE(base::CreateDirectory(
-        tracker->DatabaseDirectory().Append(base::FilePath::FromUTF16Unsafe(
-            tracker->GetOriginDirectory(kOrigin1)))));
+    EXPECT_TRUE(base::CreateDirectory(tracker->GetOriginDirectory(kOrigin1)));
     EXPECT_EQ(
         1, base::WriteFile(tracker->GetFullDBFilePath(kOrigin1, kDB1), "a", 1));
     tracker->DatabaseModified(kOrigin1, kDB1);
@@ -270,16 +265,17 @@ class DatabaseTracker_TestHelper_Test {
     // Delete databases modified since yesterday. db2 is whitelisted.
     base::Time yesterday = base::Time::Now();
     yesterday -= base::TimeDelta::FromDays(1);
-    result = tracker->DeleteDataModifiedSince(yesterday, callback.callback());
+
+    net::TestCompletionCallback callback2;
+    result = tracker->DeleteDataModifiedSince(yesterday, callback2.callback());
     EXPECT_EQ(net::ERR_IO_PENDING, result);
-    ASSERT_FALSE(callback.have_result());
+    ASSERT_FALSE(callback2.have_result());
     EXPECT_TRUE(observer.DidReceiveNewNotification());
     tracker->DatabaseClosed(kOrigin1, kDB1);
     tracker->DatabaseClosed(kOrigin2, kDB2);
-    result = callback.GetResult(result);
+    result = callback2.GetResult(result);
     EXPECT_EQ(net::OK, result);
-    EXPECT_FALSE(
-        base::PathExists(tracker->DatabaseDirectory().AppendASCII(kOrigin1)));
+    EXPECT_FALSE(base::PathExists(tracker->GetOriginDirectory(kOrigin1)));
     EXPECT_TRUE(base::PathExists(tracker->GetFullDBFilePath(kOrigin2, kDB2)));
     EXPECT_TRUE(base::PathExists(tracker->GetFullDBFilePath(kOrigin2, kDB3)));
 
@@ -336,12 +332,8 @@ class DatabaseTracker_TestHelper_Test {
 
     // Write some data to each file and check that the listeners are
     // called with the appropriate values.
-    EXPECT_TRUE(base::CreateDirectory(
-        tracker->DatabaseDirectory().Append(base::FilePath::FromUTF16Unsafe(
-            tracker->GetOriginDirectory(kOrigin1)))));
-    EXPECT_TRUE(base::CreateDirectory(
-        tracker->DatabaseDirectory().Append(base::FilePath::FromUTF16Unsafe(
-            tracker->GetOriginDirectory(kOrigin2)))));
+    EXPECT_TRUE(base::CreateDirectory(tracker->GetOriginDirectory(kOrigin1)));
+    EXPECT_TRUE(base::CreateDirectory(tracker->GetOriginDirectory(kOrigin2)));
     EXPECT_EQ(
         1, base::WriteFile(tracker->GetFullDBFilePath(kOrigin1, kDB1), "a", 1));
     EXPECT_EQ(2, base::WriteFile(tracker->GetFullDBFilePath(kOrigin2, kDB2),
@@ -428,8 +420,8 @@ class DatabaseTracker_TestHelper_Test {
     EXPECT_EQ(0, origin1_info->TotalSize());
   }
 
-  static void DatabaseTrackerQuotaIntegration() {
-    const GURL kOrigin(kOrigin1Url);
+  static void DatabaseTrackerQuotaIntegration(bool incognito_mode) {
+    const url::Origin kOrigin(url::Origin::Create(GURL(kOrigin1Url)));
     const std::string kOriginId = storage::GetIdentifierFromOrigin(kOrigin);
     const base::string16 kName = ASCIIToUTF16("name");
     const base::string16 kDescription = ASCIIToUTF16("description");
@@ -443,7 +435,7 @@ class DatabaseTracker_TestHelper_Test {
         new TestQuotaManagerProxy);
     scoped_refptr<DatabaseTracker> tracker(
         base::MakeRefCounted<DatabaseTracker>(temp_dir.GetPath(),
-                                              false /* incognito */, nullptr,
+                                              incognito_mode, nullptr,
                                               test_quota_proxy.get()));
     tracker->set_task_runner_for_testing(
         base::SequencedTaskRunnerHandle::Get());
@@ -459,8 +451,10 @@ class DatabaseTracker_TestHelper_Test {
     test_quota_proxy->reset();
 
     base::FilePath db_file(tracker->GetFullDBFilePath(kOriginId, kName));
+    EXPECT_FALSE(base::PathExists(tracker->GetOriginDirectory(kOriginId)));
     EXPECT_TRUE(base::CreateDirectory(db_file.DirName()));
     EXPECT_TRUE(EnsureFileOfSize(db_file, 10));
+    EXPECT_TRUE(base::PathExists(tracker->GetOriginDirectory(kOriginId)));
     tracker->DatabaseModified(kOriginId, kName);
     EXPECT_TRUE(test_quota_proxy->WasModificationNotified(kOrigin, 10));
     test_quota_proxy->reset();
@@ -473,9 +467,11 @@ class DatabaseTracker_TestHelper_Test {
     tracker->DatabaseClosed(kOriginId, kName);
     EXPECT_TRUE(test_quota_proxy->WasAccessNotified(kOrigin));
     EXPECT_EQ(net::OK, tracker->DeleteDatabase(kOriginId, kName,
-                                               net::CompletionCallback()));
+                                               net::CompletionOnceCallback()));
     EXPECT_TRUE(test_quota_proxy->WasModificationNotified(kOrigin, -100));
     test_quota_proxy->reset();
+
+    EXPECT_FALSE(base::PathExists(tracker->GetOriginDirectory(kOriginId)));
 
     // Create a database and modify it, try to delete it while open,
     // then close it (at which time deletion will actually occur).
@@ -486,20 +482,24 @@ class DatabaseTracker_TestHelper_Test {
     test_quota_proxy->reset();
 
     db_file = tracker->GetFullDBFilePath(kOriginId, kName);
+    EXPECT_FALSE(base::PathExists(tracker->GetOriginDirectory(kOriginId)));
     EXPECT_TRUE(base::CreateDirectory(db_file.DirName()));
     EXPECT_TRUE(EnsureFileOfSize(db_file, 100));
+    EXPECT_TRUE(base::PathExists(tracker->GetOriginDirectory(kOriginId)));
     tracker->DatabaseModified(kOriginId, kName);
     EXPECT_TRUE(test_quota_proxy->WasModificationNotified(kOrigin, 100));
     test_quota_proxy->reset();
 
-    EXPECT_EQ(
-        net::ERR_IO_PENDING,
-        tracker->DeleteDatabase(kOriginId, kName, net::CompletionCallback()));
+    EXPECT_EQ(net::ERR_IO_PENDING,
+              tracker->DeleteDatabase(kOriginId, kName,
+                                      net::CompletionOnceCallback()));
     EXPECT_FALSE(test_quota_proxy->WasModificationNotified(kOrigin, -100));
+    EXPECT_TRUE(base::PathExists(tracker->GetOriginDirectory(kOriginId)));
 
     tracker->DatabaseClosed(kOriginId, kName);
     EXPECT_TRUE(test_quota_proxy->WasAccessNotified(kOrigin));
     EXPECT_TRUE(test_quota_proxy->WasModificationNotified(kOrigin, -100));
+    EXPECT_FALSE(base::PathExists(tracker->GetOriginDirectory(kOriginId)));
     test_quota_proxy->reset();
 
     // Create a database and up the file size without telling
@@ -511,7 +511,9 @@ class DatabaseTracker_TestHelper_Test {
     EXPECT_TRUE(test_quota_proxy->WasAccessNotified(kOrigin));
     test_quota_proxy->reset();
     db_file = tracker->GetFullDBFilePath(kOriginId, kName);
+    EXPECT_FALSE(base::PathExists(tracker->GetOriginDirectory(kOriginId)));
     EXPECT_TRUE(base::CreateDirectory(db_file.DirName()));
+    EXPECT_TRUE(base::PathExists(tracker->GetOriginDirectory(kOriginId)));
     EXPECT_TRUE(EnsureFileOfSize(db_file, 100));
     DatabaseConnections crashed_renderer_connections;
     crashed_renderer_connections.AddConnection(kOriginId, kName);
@@ -726,7 +728,7 @@ class DatabaseTracker_TestHelper_Test {
 
     // Deleting it should return to the initial state.
     EXPECT_EQ(net::OK, tracker->DeleteDatabase(kOriginId, kEmptyName,
-                                               net::CompletionCallback()));
+                                               net::CompletionOnceCallback()));
     infos.clear();
     EXPECT_TRUE(tracker->GetAllOriginsInfo(&infos));
     EXPECT_TRUE(infos.empty());
@@ -826,8 +828,11 @@ TEST(DatabaseTrackerTest, DatabaseTrackerIncognitoMode) {
 }
 
 TEST(DatabaseTrackerTest, DatabaseTrackerQuotaIntegration) {
-  // There is no difference in behavior between incognito and not.
-  DatabaseTracker_TestHelper_Test::DatabaseTrackerQuotaIntegration();
+  DatabaseTracker_TestHelper_Test::DatabaseTrackerQuotaIntegration(false);
+}
+
+TEST(DatabaseTrackerTest, DatabaseTrackerQuotaIntegrationIncognitoMode) {
+  DatabaseTracker_TestHelper_Test::DatabaseTrackerQuotaIntegration(true);
 }
 
 TEST(DatabaseTrackerTest, DatabaseTrackerClearSessionOnlyDatabasesOnExit) {

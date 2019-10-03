@@ -8,11 +8,11 @@
 
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/ui/views/payments/validating_textfield.h"
-#include "components/autofill/core/browser/autofill_country.h"
-#include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/autofill_type.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/geo/autofill_country.h"
+#include "components/autofill/core/browser/geo/phone_number_i18n.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
-#include "components/autofill/core/browser/phone_number_i18n.h"
 #include "components/autofill/core/browser/validation.h"
 #include "components/autofill/core/common/autofill_constants.h"
 #include "components/payments/content/payment_request_spec.h"
@@ -33,8 +33,13 @@ ContactInfoEditorViewController::ContactInfoEditorViewController(
     BackNavigationType back_navigation_type,
     base::OnceClosure on_edited,
     base::OnceCallback<void(const autofill::AutofillProfile&)> on_added,
-    autofill::AutofillProfile* profile)
-    : EditorViewController(spec, state, dialog, back_navigation_type),
+    autofill::AutofillProfile* profile,
+    bool is_incognito)
+    : EditorViewController(spec,
+                           state,
+                           dialog,
+                           back_navigation_type,
+                           is_incognito),
       profile_to_edit_(profile),
       on_edited_(std::move(on_edited)),
       on_added_(std::move(on_added)) {}
@@ -74,6 +79,7 @@ base::string16 ContactInfoEditorViewController::GetInitialValueForType(
     autofill::ServerFieldType type) {
   if (!profile_to_edit_)
     return base::string16();
+  return GetValueForType(*profile_to_edit_, type);
 
   if (type == autofill::PHONE_HOME_WHOLE_NUMBER) {
     return autofill::i18n::GetFormattedPhoneNumberForDisplay(
@@ -91,15 +97,17 @@ bool ContactInfoEditorViewController::ValidateModelAndSave() {
 
   if (profile_to_edit_) {
     PopulateProfile(profile_to_edit_);
-    state()->GetPersonalDataManager()->UpdateProfile(*profile_to_edit_);
+    if (!is_incognito())
+      state()->GetPersonalDataManager()->UpdateProfile(*profile_to_edit_);
     state()->profile_comparator()->Invalidate(*profile_to_edit_);
     std::move(on_edited_).Run();
     on_added_.Reset();
   } else {
     std::unique_ptr<autofill::AutofillProfile> profile =
-        base::MakeUnique<autofill::AutofillProfile>();
+        std::make_unique<autofill::AutofillProfile>();
     PopulateProfile(profile.get());
-    state()->GetPersonalDataManager()->AddProfile(*profile);
+    if (!is_incognito())
+      state()->GetPersonalDataManager()->AddProfile(*profile);
     std::move(on_added_).Run(*profile);
     on_edited_.Reset();
   }
@@ -109,7 +117,7 @@ bool ContactInfoEditorViewController::ValidateModelAndSave() {
 std::unique_ptr<ValidationDelegate>
 ContactInfoEditorViewController::CreateValidationDelegate(
     const EditorField& field) {
-  return base::MakeUnique<ContactInfoValidationDelegate>(
+  return std::make_unique<ContactInfoValidationDelegate>(
       field, state()->GetApplicationLocale(), this);
 }
 
@@ -143,10 +151,21 @@ bool ContactInfoEditorViewController::GetSheetId(DialogViewID* sheet_id) {
   return true;
 }
 
+base::string16 ContactInfoEditorViewController::GetValueForType(
+    const autofill::AutofillProfile& profile,
+    autofill::ServerFieldType type) {
+  if (type == autofill::PHONE_HOME_WHOLE_NUMBER) {
+    return autofill::i18n::GetFormattedPhoneNumberForDisplay(
+        profile, state()->GetApplicationLocale());
+  }
+
+  return profile.GetInfo(type, state()->GetApplicationLocale());
+}
+
 ContactInfoEditorViewController::ContactInfoValidationDelegate::
     ContactInfoValidationDelegate(const EditorField& field,
                                   const std::string& locale,
-                                  EditorViewController* controller)
+                                  ContactInfoEditorViewController* controller)
     : field_(field), controller_(controller), locale_(locale) {}
 
 ContactInfoEditorViewController::ContactInfoValidationDelegate::
@@ -187,19 +206,30 @@ bool ContactInfoEditorViewController::ContactInfoValidationDelegate::
                       base::string16* error_message) {
   bool is_valid = true;
 
+  // Show errors from merchant's retry() call.
+  autofill::AutofillProfile* invalid_contact_profile =
+      controller_->state()->invalid_contact_profile();
+  if (invalid_contact_profile && error_message &&
+      textfield->text() ==
+          controller_->GetValueForType(*invalid_contact_profile, field_.type)) {
+    *error_message = controller_->spec()->GetPayerError(field_.type);
+    if (!error_message->empty())
+      return false;
+  }
+
   if (textfield->text().empty()) {
     is_valid = false;
     if (error_message) {
       *error_message = l10n_util::GetStringUTF16(
-          IDS_PAYMENTS_FIELD_REQUIRED_VALIDATION_MESSAGE);
+          IDS_PREF_EDIT_DIALOG_FIELD_REQUIRED_VALIDATION_MESSAGE);
     }
   } else {
     switch (field_.type) {
       case autofill::PHONE_HOME_WHOLE_NUMBER: {
         const std::string default_region_code =
             autofill::AutofillCountry::CountryCodeForLocale(locale_);
-        if (!autofill::IsValidPhoneNumber(textfield->text(),
-                                          default_region_code)) {
+        if (!autofill::IsPossiblePhoneNumber(textfield->text(),
+                                             default_region_code)) {
           is_valid = false;
           if (error_message) {
             *error_message = l10n_util::GetStringUTF16(

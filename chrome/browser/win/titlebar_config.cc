@@ -10,12 +10,16 @@
 #include "ui/native_theme/native_theme_win.h"
 
 bool ShouldCustomDrawSystemTitlebar() {
+  // Cache flag lookup.
+  static const bool custom_titlebar_disabled =
+      base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kDisableWindows10CustomTitlebar);
+
   // TODO(bsep): We would like the custom-draw the titlebar in high-contrast
   // mode so that we can correctly draw the caption buttons on the left in RTL
   // mode. But they require a different style and color selection that isn't
   // currently implemented.
-  return !ui::NativeThemeWin::IsUsingHighContrastTheme() &&
-         base::CommandLine::ForCurrentProcess()->HasSwitch(
-             switches::kWindows10CustomTitlebar) &&
-         base::win::GetVersion() >= base::win::VERSION_WIN10;
+  return !custom_titlebar_disabled &&
+         !ui::NativeTheme::GetInstanceForNativeUi()->UsesHighContrastColors() &&
+         base::win::GetVersion() >= base::win::Version::WIN10;
 }

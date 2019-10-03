@@ -5,6 +5,7 @@
 #ifndef CHROME_BROWSER_UI_ASH_LAUNCHER_APP_SHORTCUT_LAUNCHER_ITEM_CONTROLLER_H_
 #define CHROME_BROWSER_UI_ASH_LAUNCHER_APP_SHORTCUT_LAUNCHER_ITEM_CONTROLLER_H_
 
+#include <memory>
 #include <string>
 #include <vector>
 
@@ -13,16 +14,11 @@
 #include "base/time/time.h"
 #include "url/gurl.h"
 
-class Browser;
-class URLPattern;
-
 namespace content {
 class WebContents;
 }
 
-namespace extensions {
-class Extension;
-}
+class LauncherContextMenu;
 
 // Item controller for an app shortcut.
 // If the associated app is a platform or ARC app, launching the app replaces
@@ -39,20 +35,25 @@ class AppShortcutLauncherItemController : public ash::ShelfItemDelegate {
   static std::unique_ptr<AppShortcutLauncherItemController> Create(
       const ash::ShelfID& shelf_id);
 
-  std::vector<content::WebContents*> GetRunningApplications();
+  static std::vector<content::WebContents*> GetRunningApplications(
+      const std::string& app_id,
+      const GURL& refocus_url = GURL());
 
   // ash::ShelfItemDelegate overrides:
   void ItemSelected(std::unique_ptr<ui::Event> event,
                     int64_t display_id,
                     ash::ShelfLaunchSource source,
                     ItemSelectedCallback callback) override;
-  ash::MenuItemList GetAppMenuItems(int event_flags) override;
-  std::unique_ptr<ui::MenuModel> GetContextMenu(int64_t display_id) override;
+  AppMenuItems GetAppMenuItems(int event_flags) override;
+  void GetContextMenu(int64_t display_id,
+                      GetContextMenuCallback callback) override;
   void ExecuteCommand(bool from_context_menu,
                       int64_t command_id,
                       int32_t event_flags,
                       int64_t display_id) override;
   void Close() override;
+
+  std::vector<content::WebContents*> GetRunningApplications();
 
   // Get the refocus url pattern, which can be used to identify this application
   // from a URL link.
@@ -66,16 +67,6 @@ class AppShortcutLauncherItemController : public ash::ShelfItemDelegate {
  private:
   // Get the last running application.
   content::WebContents* GetLRUApplication();
-
-  // Returns true if this app matches the given |web_contents|. To accelerate
-  // the matching, the app managing |extension| as well as the parsed
-  // |refocus_pattern| get passed. If |is_app| is true, the application gets
-  // first checked against its original URL since a windowed app might have
-  // navigated away from its app domain.
-  bool WebContentMatchesApp(const extensions::Extension* extension,
-                            const URLPattern& refocus_pattern,
-                            content::WebContents* web_contents,
-                            Browser* browser);
 
   // Activate the browser with the given |content| and show the associated tab.
   // Returns the action performed by activating the content.
@@ -99,6 +90,8 @@ class AppShortcutLauncherItemController : public ash::ShelfItemDelegate {
 
   // The cached list of open app web contents shown in an application menu.
   std::vector<content::WebContents*> app_menu_items_;
+
+  std::unique_ptr<LauncherContextMenu> context_menu_;
 
   DISALLOW_COPY_AND_ASSIGN(AppShortcutLauncherItemController);
 };

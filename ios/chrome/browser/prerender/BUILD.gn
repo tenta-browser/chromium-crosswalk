@@ -19,17 +19,24 @@ source_set("prerender") {
     "//components/keyed_service/core",
     "//components/keyed_service/ios",
     "//components/prefs",
+    "//components/prefs/ios",
     "//components/signin/ios/browser",
     "//ios/chrome/browser",
+    "//ios/chrome/browser/app_launcher:app_launcher",
     "//ios/chrome/browser/browser_state",
+    "//ios/chrome/browser/crash_report:crash_report_internal",
     "//ios/chrome/browser/geolocation:geolocation_internal",
     "//ios/chrome/browser/history:tab_helper",
+    "//ios/chrome/browser/itunes_urls:itunes_urls",
     "//ios/chrome/browser/net",
-    "//ios/chrome/browser/prefs",
+    "//ios/chrome/browser/sessions:serialisation",
     "//ios/chrome/browser/signin",
     "//ios/chrome/browser/tabs",
-    "//ios/chrome/browser/ui",
-    "//ios/web",
+    "//ios/chrome/browser/ui/ntp:util",
+    "//ios/chrome/browser/web",
+    "//ios/chrome/browser/web_state_list",
+    "//ios/web/public/deprecated",
+    "//ios/web/public/deprecated:deprecated_web_util",
     "//ui/base",
     "//url",
   ]
@@ -54,4 +61,25 @@ source_set("unit_tests") {
     "//net:test_support",
     "//testing/gtest",
   ]
+}
+source_set("eg_tests") {
+  testonly = true
+  sources = [
+    "prerender_egtest.mm",
+  ]
+  deps = [
+    "//base",
+    "//ios/chrome/browser/ui/content_suggestions:content_suggestions_constant",
+    "//ios/chrome/browser/ui/omnibox:omnibox_internal",
+    "//ios/chrome/browser/ui/omnibox/popup:popup_ui",
+    "//ios/chrome/browser/ui/util",
+    "//ios/chrome/test/app:test_support",
+    "//ios/chrome/test/earl_grey:test_support",
+    "//ios/web/public/test/http_server",
+  ]
+  libs = [
+    "UIKit.framework",
+    "XCTest.framework",
+  ]
+  configs += [ "//build/config/compiler:enable_arc" ]
 }

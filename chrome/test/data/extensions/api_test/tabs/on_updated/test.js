@@ -39,7 +39,6 @@ chrome.test.runTests([
     // renderer-initiated navigation.
     expect([
       { status: 'loading', url: getURL('browserThenRendererInitiated/a.html') },
-      { status: 'complete' },
       { status: 'loading', url: getURL('browserThenRendererInitiated/b.html') },
       { status: 'complete' },
     ]);
@@ -47,19 +46,15 @@ chrome.test.runTests([
     chrome.tabs.create({ url: getURL('browserThenRendererInitiated/a.html') });
   },
 
-  function newTab() {
+  function chromeUrls() {
     // Test for crbug.com/27208.
-    //
-    // Note the two title settings. That is expected and due to the unusual way
-    // the NTP code ensures a set title.
     expect([
-      { status: 'loading', url: 'chrome://newtab/' },
-      { title : "New Tab" },
-      { title : "New Tab" },
+      { status: 'loading', url: 'chrome://chrome-urls/' },
+      { title : "Chrome URLs" },
       { status: 'complete' }
     ]);
 
-    chrome.tabs.create({ url: 'chrome://newtab/' });
+    chrome.tabs.create({ url: 'chrome://chrome-urls/' });
   },
 
   /*

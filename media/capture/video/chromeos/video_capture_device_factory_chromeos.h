@@ -8,18 +8,25 @@
 #include <memory>
 
 #include "base/macros.h"
+#include "base/single_thread_task_runner.h"
+#include "components/chromeos_camera/common/mjpeg_decode_accelerator.mojom.h"
 #include "media/capture/video/chromeos/camera_hal_delegate.h"
+#include "media/capture/video/chromeos/mojo/cros_image_capture.mojom.h"
 #include "media/capture/video/video_capture_device_factory.h"
 
 namespace media {
+
+using MojoMjpegDecodeAcceleratorFactoryCB = base::RepeatingCallback<void(
+    chromeos_camera::mojom::MjpegDecodeAcceleratorRequest)>;
+
+class ReprocessManager;
 
 class CAPTURE_EXPORT VideoCaptureDeviceFactoryChromeOS final
     : public VideoCaptureDeviceFactory {
  public:
   explicit VideoCaptureDeviceFactoryChromeOS(
       scoped_refptr<base::SingleThreadTaskRunner>
-          task_runner_for_screen_observer,
-      gpu::GpuMemoryBufferManager* gpu_buffer_manager);
+          task_runner_for_screen_observer);
 
   ~VideoCaptureDeviceFactoryChromeOS() override;
 
@@ -32,20 +39,20 @@ class CAPTURE_EXPORT VideoCaptureDeviceFactoryChromeOS final
   void GetDeviceDescriptors(
       VideoCaptureDeviceDescriptors* device_descriptors) final;
 
-  // A run-time check for whether we should enable
-  // VideoCaptureDeviceFactoryChromeOS on the device.
-  static bool ShouldEnable();
-
   static gpu::GpuMemoryBufferManager* GetBufferManager();
+  static void SetGpuBufferManager(gpu::GpuMemoryBufferManager* buffer_manager);
 
-  // For testing purpose only.
-  static void SetBufferManagerForTesting(
-      gpu::GpuMemoryBufferManager* buffer_manager);
+  void BindCrosImageCaptureRequest(
+      cros::mojom::CrosImageCaptureRequest request);
 
  private:
   // Initializes the factory. The factory is functional only after this call
   // succeeds.
   bool Init();
+
+  // Gets camera info for the given |device_id|. Returns null CameraInfoPtr on
+  // error.
+  cros::mojom::CameraInfoPtr GetCameraInfo(const std::string& device_id);
 
   const scoped_refptr<base::SingleThreadTaskRunner>
       task_runner_for_screen_observer_;
@@ -60,7 +67,11 @@ class CAPTURE_EXPORT VideoCaptureDeviceFactoryChromeOS final
   // |camera_hal_ipc_thread_|.
   scoped_refptr<CameraHalDelegate> camera_hal_delegate_;
 
+  std::unique_ptr<ReprocessManager> reprocess_manager_;
+
   bool initialized_;
+
+  base::WeakPtrFactory<VideoCaptureDeviceFactoryChromeOS> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(VideoCaptureDeviceFactoryChromeOS);
 };

@@ -7,14 +7,15 @@
 #include "base/mac/foundation_util.h"
 #include "components/strings/grit/components_strings.h"
 #import "ios/chrome/browser/ui/collection_view/cells/MDCCollectionViewCell+Chrome.h"
-#import "ios/chrome/browser/ui/collection_view/cells/collection_view_item+collection_view_controller.h"
 #import "ios/chrome/browser/ui/collection_view/cells/collection_view_item.h"
 #import "ios/chrome/browser/ui/collection_view/collection_view_model.h"
 #import "ios/chrome/browser/ui/colors/MDCPalette+CrAdditions.h"
 #import "ios/chrome/browser/ui/icons/chrome_icon.h"
+#import "ios/chrome/browser/ui/list_model/list_item+Controller.h"
 #import "ios/chrome/browser/ui/payments/cells/price_item.h"
 #import "ios/chrome/browser/ui/payments/payment_items_display_view_controller_actions.h"
-#include "ios/chrome/browser/ui/rtl_geometry.h"
+#include "ios/chrome/browser/ui/util/rtl_geometry.h"
+#include "ios/chrome/browser/ui/util/uikit_ui_util.h"
 #include "ios/chrome/grit/ios_strings.h"
 #import "ios/third_party/material_components_ios/src/components/Buttons/src/MaterialButtons.h"
 #import "ios/third_party/material_components_ios/src/components/Typography/src/MaterialTypography.h"
@@ -129,7 +130,6 @@ typedef NS_ENUM(NSInteger, ItemType) {
 - (void)setDataSource:
     (id<PaymentItemsDisplayViewControllerDataSource>)dataSource {
   _dataSource = dataSource;
-  [_payButton setEnabled:[_dataSource canPay]];
 }
 
 #pragma mark - CollectionViewController methods
@@ -137,6 +137,8 @@ typedef NS_ENUM(NSInteger, ItemType) {
 - (void)loadModel {
   [super loadModel];
   CollectionViewModel* model = self.collectionViewModel;
+
+  [_payButton setEnabled:[_dataSource canPay]];
 
   // Add the total entry.
   [model addSectionWithIdentifier:SectionIdentifierPayment];
@@ -180,14 +182,14 @@ typedef NS_ENUM(NSInteger, ItemType) {
     case ItemTypePaymentItemTotal: {
       if ([cell isKindOfClass:[PriceCell class]]) {
         PriceCell* priceCell = base::mac::ObjCCastStrict<PriceCell>(cell);
-        priceCell.priceLabel.font = [MDCTypography body2Font];
+        SetUILabelScaledFont(priceCell.priceLabel, [MDCTypography body2Font]);
       }
       break;
     }
     case ItemTypePaymentItem: {
       if ([cell isKindOfClass:[PriceCell class]]) {
         PriceCell* priceCell = base::mac::ObjCCastStrict<PriceCell>(cell);
-        priceCell.itemLabel.font = [MDCTypography body1Font];
+        SetUILabelScaledFont(priceCell.itemLabel, [MDCTypography body1Font]);
       }
       break;
     }

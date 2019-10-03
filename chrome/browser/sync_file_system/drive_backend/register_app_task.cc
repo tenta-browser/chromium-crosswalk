@@ -37,9 +37,7 @@ RegisterAppTask::RegisterAppTask(SyncEngineContext* sync_context,
                                  const std::string& app_id)
     : sync_context_(sync_context),
       create_folder_retry_count_(0),
-      app_id_(app_id),
-      weak_ptr_factory_(this) {
-}
+      app_id_(app_id) {}
 
 RegisterAppTask::~RegisterAppTask() {
 }
@@ -126,8 +124,7 @@ bool RegisterAppTask::FilterCandidates(const TrackerIDSet& trackers,
   }
 
   std::unique_ptr<FileTracker> oldest_tracker;
-  for (TrackerIDSet::const_iterator itr = trackers.begin();
-       itr != trackers.end(); ++itr) {
+  for (auto itr = trackers.begin(); itr != trackers.end(); ++itr) {
     std::unique_ptr<FileTracker> tracker(new FileTracker);
     if (!metadata_database()->FindTrackerByTrackerID(
             *itr, tracker.get())) {

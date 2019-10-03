@@ -52,7 +52,7 @@ FAKE_GPU_INFO = {
               'GL_EXT_map_buffer_range GL_OES_texture_half_float '
               'GL_OES_texture_half_float_linear GL_OES_texture_float '
               'GL_OES_texture_float_linear GL_EXT_texture_rg '
-              'GL_EXT_texture_compression_dxt1 '
+              'GL_ANGLE_texture_compression_dxt1 '
               'GL_ANGLE_texture_compression_dxt3 '
               'GL_ANGLE_texture_compression_dxt5 GL_EXT_sRGB '
               'GL_ANGLE_depth_texture GL_EXT_texture_storage '
@@ -91,7 +91,6 @@ FAKE_GPU_INFO = {
             'min_resolution_width': 48,
             'optimus': False,
             'pixel_shader_version': '5.0',
-            'process_crash_count': 0,
             'profile': 12,
             'sandboxed': True,
             'software_rendering': False,
@@ -118,6 +117,5 @@ FAKE_GPU_INFO = {
             'exit_on_context_lost',
             'force_cube_complete',
             'scalarize_vec_and_mat_constructor_args',
-            'texsubimage_faster_than_teximage'
         ]
 }

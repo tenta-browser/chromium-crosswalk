@@ -16,36 +16,29 @@
 #include "base/location.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/metrics/field_trial.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
+#include "content/public/common/buildflags.h"
 #include "content/public/common/content_client.h"
 #include "content/public/common/content_features.h"
 #include "content/public/common/content_switches.h"
 #include "content/public/common/feature_h264_with_openh264_ffmpeg.h"
-#include "content/public/common/features.h"
-#include "content/public/common/renderer_preferences.h"
 #include "content/public/common/webrtc_ip_handling_policy.h"
 #include "content/public/renderer/content_renderer_client.h"
-#include "content/renderer/media/gpu/rtc_video_decoder_factory.h"
-#include "content/renderer/media/gpu/rtc_video_encoder_factory.h"
-#include "content/renderer/media/media_stream_video_source.h"
-#include "content/renderer/media/media_stream_video_track.h"
-#include "content/renderer/media/rtc_peer_connection_handler.h"
 #include "content/renderer/media/webrtc/audio_codec_factory.h"
+#include "content/renderer/media/webrtc/rtc_peer_connection_handler.h"
 #include "content/renderer/media/webrtc/stun_field_trial.h"
-#include "content/renderer/media/webrtc/webrtc_video_capturer_adapter.h"
-#include "content/renderer/media/webrtc_audio_device_impl.h"
-#include "content/renderer/media/webrtc_logging.h"
-#include "content/renderer/media/webrtc_uma_histograms.h"
+#include "content/renderer/media/webrtc/video_codec_factory.h"
+#include "content/renderer/media/webrtc/webrtc_audio_device_impl.h"
 #include "content/renderer/p2p/empty_network_manager.h"
 #include "content/renderer/p2p/filtering_network_manager.h"
 #include "content/renderer/p2p/ipc_network_manager.h"
 #include "content/renderer/p2p/ipc_socket_factory.h"
+#include "content/renderer/p2p/mdns_responder_adapter.h"
 #include "content/renderer/p2p/port_allocator.h"
 #include "content/renderer/render_frame_impl.h"
 #include "content/renderer/render_thread_impl.h"
@@ -53,27 +46,31 @@
 #include "crypto/openssl_util.h"
 #include "jingle/glue/thread_wrapper.h"
 #include "media/base/media_permission.h"
-#include "media/filters/ffmpeg_glue.h"
+#include "media/media_buildflags.h"
 #include "media/video/gpu_video_accelerator_factories.h"
-#include "third_party/WebKit/public/platform/WebMediaConstraints.h"
-#include "third_party/WebKit/public/platform/WebMediaStream.h"
-#include "third_party/WebKit/public/platform/WebMediaStreamSource.h"
-#include "third_party/WebKit/public/platform/WebMediaStreamTrack.h"
-#include "third_party/WebKit/public/platform/WebURL.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/webrtc/api/mediaconstraintsinterface.h"
-#include "third_party/webrtc/api/video_codecs/video_decoder_factory.h"
-#include "third_party/webrtc/api/video_codecs/video_encoder_factory.h"
-#include "third_party/webrtc/api/videosourceproxy.h"
-#include "third_party/webrtc/media/engine/convert_legacy_video_factory.h"
+#include "third_party/blink/public/platform/modules/mediastream/webrtc_uma_histograms.h"
+#include "third_party/blink/public/platform/modules/webrtc/webrtc_logging.h"
+#include "third_party/blink/public/platform/web_media_constraints.h"
+#include "third_party/blink/public/platform/web_media_stream.h"
+#include "third_party/blink/public/platform/web_media_stream_source.h"
+#include "third_party/blink/public/platform/web_media_stream_track.h"
+#include "third_party/blink/public/platform/web_url.h"
+#include "third_party/blink/public/web/modules/mediastream/media_stream_video_source.h"
+#include "third_party/blink/public/web/modules/mediastream/media_stream_video_track.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/webrtc/api/call/call_factory_interface.h"
+#include "third_party/webrtc/api/peer_connection_interface.h"
+#include "third_party/webrtc/api/rtc_event_log/rtc_event_log_factory.h"
+#include "third_party/webrtc/api/video_track_source_proxy.h"
+#include "third_party/webrtc/media/engine/fake_video_codec_factory.h"
+#include "third_party/webrtc/media/engine/multiplex_codec_factory.h"
+#include "third_party/webrtc/media/engine/webrtc_media_engine.h"
+#include "third_party/webrtc/modules/audio_processing/include/audio_processing.h"
 #include "third_party/webrtc/modules/video_coding/codecs/h264/include/h264.h"
-#include "third_party/webrtc/rtc_base/refcountedobject.h"
-#include "third_party/webrtc/rtc_base/ssladapter.h"
-
-#if defined(OS_ANDROID)
-#include "media/base/android/media_codec_util.h"
-#endif
+#include "third_party/webrtc/rtc_base/ref_counted_object.h"
+#include "third_party/webrtc/rtc_base/ssl_adapter.h"
+#include "third_party/webrtc_overrides/task_queue_factory.h"
 
 namespace content {
 
@@ -102,6 +99,25 @@ bool IsValidPortRange(uint16_t min_port, uint16_t max_port) {
   return min_port != 0 && max_port != 0;
 }
 
+// PeerConnectionDependencies wants to own the factory, so we provide a simple
+// object that delegates calls to the IpcPacketSocketFactory.
+// TODO(zstein): Move the creation logic from IpcPacketSocketFactory in to this
+// class.
+class ProxyAsyncResolverFactory final : public webrtc::AsyncResolverFactory {
+ public:
+  ProxyAsyncResolverFactory(IpcPacketSocketFactory* ipc_psf)
+      : ipc_psf_(ipc_psf) {
+    DCHECK(ipc_psf);
+  }
+
+  rtc::AsyncResolverInterface* Create() override {
+    return ipc_psf_->CreateAsyncResolver();
+  }
+
+ private:
+  IpcPacketSocketFactory* ipc_psf_;
+};
+
 }  // namespace
 
 PeerConnectionDependencyFactory::PeerConnectionDependencyFactory(
@@ -123,13 +139,14 @@ PeerConnectionDependencyFactory::~PeerConnectionDependencyFactory() {
 
 std::unique_ptr<blink::WebRTCPeerConnectionHandler>
 PeerConnectionDependencyFactory::CreateRTCPeerConnectionHandler(
-    blink::WebRTCPeerConnectionHandlerClient* client) {
+    blink::WebRTCPeerConnectionHandlerClient* client,
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
   // Save histogram data so we can see how much PeerConnetion is used.
   // The histogram counts the number of calls to the JS API
   // webKitRTCPeerConnection.
-  UpdateWebRTCMethodCount(WEBKIT_RTC_PEER_CONNECTION);
+  UpdateWebRTCMethodCount(blink::WebRTCAPIName::kRTCPeerConnection);
 
-  return std::make_unique<RTCPeerConnectionHandler>(client, this);
+  return std::make_unique<RTCPeerConnectionHandler>(client, this, task_runner);
 }
 
 const scoped_refptr<webrtc::PeerConnectionFactoryInterface>&
@@ -155,21 +172,17 @@ void PeerConnectionDependencyFactory::CreatePeerConnectionFactory() {
 
   DVLOG(1) << "PeerConnectionDependencyFactory::CreatePeerConnectionFactory()";
 
-#if BUILDFLAG(RTC_USE_H264) && !defined(MEDIA_DISABLE_FFMPEG)
+#if BUILDFLAG(RTC_USE_H264) && BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS)
   // Building /w |rtc_use_h264|, is the corresponding run-time feature enabled?
-  if (base::FeatureList::IsEnabled(kWebRtcH264WithOpenH264FFmpeg)) {
-    // |H264DecoderImpl| may be used which depends on FFmpeg, therefore we need
-    // to initialize FFmpeg before going further.
-    media::FFmpegGlue::InitializeFFmpeg();
-  } else {
-    // Feature is to be disabled, no need to make sure FFmpeg is initialized.
+  if (!base::FeatureList::IsEnabled(kWebRtcH264WithOpenH264FFmpeg)) {
+    // Feature is to be disabled.
     webrtc::DisableRtcUseH264();
   }
 #else
   webrtc::DisableRtcUseH264();
-#endif  // BUILDFLAG(RTC_USE_H264) && !defined(MEDIA_DISABLE_FFMPEG)
+#endif  // BUILDFLAG(RTC_USE_H264) && BUILDFLAG(ENABLE_FFMPEG_VIDEO_DECODERS)
 
-  base::MessageLoop::current()->AddDestructionObserver(this);
+  base::MessageLoopCurrent::Get()->AddDestructionObserver(this);
   // To allow sending to the signaling/worker threads.
   jingle_glue::JingleThreadWrapper::EnsureForCurrentMessageLoop();
   jingle_glue::JingleThreadWrapper::current()->set_send_allowed(true);
@@ -191,11 +204,20 @@ void PeerConnectionDependencyFactory::CreatePeerConnectionFactory() {
   base::WaitableEvent create_network_manager_event(
       base::WaitableEvent::ResetPolicy::MANUAL,
       base::WaitableEvent::InitialState::NOT_SIGNALED);
+  std::unique_ptr<MdnsResponderAdapter> mdns_responder;
+#if BUILDFLAG(ENABLE_MDNS)
+  if (base::FeatureList::IsEnabled(features::kWebRtcHideLocalIpsWithMdns)) {
+    // Note that MdnsResponderAdapter is created on the main thread to have
+    // access to the connector to the service manager.
+    mdns_responder = std::make_unique<MdnsResponderAdapter>();
+  }
+#endif  // BUILDFLAG(ENABLE_MDNS)
   chrome_worker_thread_.task_runner()->PostTask(
       FROM_HERE,
       base::BindOnce(&PeerConnectionDependencyFactory::
                          CreateIpcNetworkManagerOnWorkerThread,
-                     base::Unretained(this), &create_network_manager_event));
+                     base::Unretained(this), &create_network_manager_event,
+                     std::move(mdns_responder)));
 
   start_worker_event.Wait();
   create_network_manager_event.Wait();
@@ -235,48 +257,91 @@ void PeerConnectionDependencyFactory::InitializeSignalingThread(
   jingle_glue::JingleThreadWrapper::current()->set_send_allowed(true);
   signaling_thread_ = jingle_glue::JingleThreadWrapper::current();
 
-  socket_factory_.reset(
-      new IpcPacketSocketFactory(p2p_socket_dispatcher_.get()));
-
-  std::unique_ptr<cricket::WebRtcVideoDecoderFactory> decoder_factory;
-  std::unique_ptr<cricket::WebRtcVideoEncoderFactory> encoder_factory;
+  net::NetworkTrafficAnnotationTag traffic_annotation =
+      net::DefineNetworkTrafficAnnotation("webrtc_peer_connection", R"(
+        semantics {
+          sender: "WebRTC"
+          description:
+            "WebRTC is an API that provides web applications with Real Time "
+            "Communication (RTC) capabilities. It is used to establish a "
+            "secure session with a remote peer, transmitting and receiving "
+            "audio, video and potentially other data."
+          trigger:
+            "Application creates an RTCPeerConnection and connects it to a "
+            "remote peer by exchanging an SDP offer and answer."
+          data:
+            "Media encrypted using DTLS-SRTP, and protocol-level messages for "
+            "the various subprotocols employed by WebRTC (including ICE, DTLS, "
+            "RTCP, etc.). Note that ICE connectivity checks may leak the "
+            "user's IP address(es), subject to the restrictions/guidance in "
+            "https://datatracker.ietf.org/doc/draft-ietf-rtcweb-ip-handling."
+          destination: OTHER
+          destination_other:
+            "A destination determined by the web application that created the "
+            "connection."
+        }
+        policy {
+          cookies_allowed: NO
+          setting:
+            "This feature cannot be disabled in settings, but it won't be used "
+            "unless the application creates an RTCPeerConnection. Media can "
+            "only be captured with user's consent, but data may be sent "
+            "withouth that."
+          policy_exception_justification:
+            "Not implemented. 'WebRtcUdpPortRange' policy can limit the range "
+            "of ports used by WebRTC, but there is no policy to generally "
+            "block it."
+        }
+    )");
+  socket_factory_.reset(new IpcPacketSocketFactory(p2p_socket_dispatcher_.get(),
+                                                   traffic_annotation));
 
   const base::CommandLine* cmd_line = base::CommandLine::ForCurrentProcess();
-  if (gpu_factories && gpu_factories->IsGpuVideoAcceleratorEnabled()) {
-    if (!cmd_line->HasSwitch(switches::kDisableWebRtcHWDecoding))
-      decoder_factory.reset(new RTCVideoDecoderFactory(gpu_factories));
 
-    if (!cmd_line->HasSwitch(switches::kDisableWebRtcHWEncoding)) {
-      encoder_factory.reset(new RTCVideoEncoderFactory(gpu_factories));
-    }
+  std::unique_ptr<webrtc::VideoEncoderFactory> webrtc_encoder_factory =
+      CreateWebrtcVideoEncoderFactory(gpu_factories);
+  std::unique_ptr<webrtc::VideoDecoderFactory> webrtc_decoder_factory =
+      CreateWebrtcVideoDecoderFactory(gpu_factories);
+
+  // Enable Multiplex codec in SDP optionally.
+  if (base::FeatureList::IsEnabled(features::kWebRtcMultiplexCodec)) {
+    webrtc_encoder_factory = std::make_unique<webrtc::MultiplexEncoderFactory>(
+        std::move(webrtc_encoder_factory));
+    webrtc_decoder_factory = std::make_unique<webrtc::MultiplexDecoderFactory>(
+        std::move(webrtc_decoder_factory));
   }
 
-#if defined(OS_ANDROID)
-  if (!media::MediaCodecUtil::SupportsSetParameters())
-    encoder_factory.reset();
-#endif
+  if (cmd_line->HasSwitch(switches::kUseFakeCodecForPeerConnection)) {
+    webrtc_encoder_factory =
+        std::make_unique<webrtc::FakeVideoEncoderFactory>();
+    webrtc_decoder_factory =
+        std::make_unique<webrtc::FakeVideoDecoderFactory>();
+  }
 
-  // TODO(magjed): Update RTCVideoEncoderFactory/RTCVideoDecoderFactory to new
-  // interface and let Chromium be responsible in what order video codecs are
-  // listed, instead of using
-  // cricket::ConvertVideoEncoderFactory/cricket::ConvertVideoDecoderFactory.
-  pc_factory_ = webrtc::CreatePeerConnectionFactory(
-      worker_thread_ /* network thread */, worker_thread_, signaling_thread_,
-      audio_device_.get(), CreateWebrtcAudioEncoderFactory(),
-      CreateWebrtcAudioDecoderFactory(),
-      cricket::ConvertVideoEncoderFactory(std::move(encoder_factory)),
-      cricket::ConvertVideoDecoderFactory(std::move(decoder_factory)),
-      nullptr /* audio_mixer */, nullptr /* audio_processing */);
+  webrtc::PeerConnectionFactoryDependencies pcf_deps;
+  pcf_deps.worker_thread = worker_thread_;
+  pcf_deps.network_thread = worker_thread_;
+  pcf_deps.signaling_thread = signaling_thread_;
+  pcf_deps.task_queue_factory = CreateWebRtcTaskQueueFactory();
+  pcf_deps.call_factory = webrtc::CreateCallFactory();
+  pcf_deps.event_log_factory = std::make_unique<webrtc::RtcEventLogFactory>(
+      pcf_deps.task_queue_factory.get());
+  cricket::MediaEngineDependencies media_deps;
+  media_deps.task_queue_factory = pcf_deps.task_queue_factory.get();
+  media_deps.adm = audio_device_.get();
+  media_deps.audio_encoder_factory = CreateWebrtcAudioEncoderFactory();
+  media_deps.audio_decoder_factory = CreateWebrtcAudioDecoderFactory();
+  media_deps.video_encoder_factory = std::move(webrtc_encoder_factory);
+  media_deps.video_decoder_factory = std::move(webrtc_decoder_factory);
+  media_deps.audio_processing = webrtc::AudioProcessingBuilder().Create();
+  pcf_deps.media_engine = cricket::CreateMediaEngine(std::move(media_deps));
+  pc_factory_ = webrtc::CreateModularPeerConnectionFactory(std::move(pcf_deps));
   CHECK(pc_factory_.get());
 
   webrtc::PeerConnectionFactoryInterface::Options factory_options;
   factory_options.disable_sctp_data_channels = false;
   factory_options.disable_encryption =
       cmd_line->HasSwitch(switches::kDisableWebRtcEncryption);
-  factory_options.crypto_options.enable_gcm_crypto_suites =
-      cmd_line->HasSwitch(switches::kEnableWebRtcSrtpAesGcm);
-  factory_options.crypto_options.enable_encrypted_rtp_header_extensions =
-      cmd_line->HasSwitch(switches::kEnableWebRtcSrtpEncryptedHeaders);
   pc_factory_->SetOptions(factory_options);
 
   event->Signal();
@@ -295,6 +360,19 @@ PeerConnectionDependencyFactory::CreatePeerConnection(
   CHECK(observer);
   if (!GetPcFactory().get())
     return nullptr;
+
+  webrtc::PeerConnectionDependencies dependencies(observer);
+  dependencies.allocator = CreatePortAllocator(web_frame);
+  dependencies.async_resolver_factory = CreateAsyncResolverFactory();
+  return GetPcFactory()
+      ->CreatePeerConnection(config, std::move(dependencies))
+      .get();
+}
+
+std::unique_ptr<P2PPortAllocator>
+PeerConnectionDependencyFactory::CreatePortAllocator(
+    blink::WebLocalFrame* web_frame) {
+  DCHECK(web_frame);
 
   // Copy the flag from Preference associated with this WebLocalFrame.
   P2PPortAllocator::Config port_config;
@@ -393,23 +471,24 @@ PeerConnectionDependencyFactory::CreatePeerConnection(
 
   std::unique_ptr<rtc::NetworkManager> network_manager;
   if (port_config.enable_multiple_routes) {
-    FilteringNetworkManager* filtering_network_manager =
-        new FilteringNetworkManager(network_manager_, requesting_origin,
-                                    media_permission);
-    network_manager.reset(filtering_network_manager);
+    network_manager = std::make_unique<FilteringNetworkManager>(
+        network_manager_.get(), requesting_origin, media_permission);
   } else {
-    network_manager.reset(new EmptyNetworkManager(network_manager_));
+    network_manager =
+        std::make_unique<EmptyNetworkManager>(network_manager_.get());
   }
-  std::unique_ptr<P2PPortAllocator> port_allocator(new P2PPortAllocator(
+  auto port_allocator = std::make_unique<P2PPortAllocator>(
       p2p_socket_dispatcher_, std::move(network_manager), socket_factory_.get(),
-      port_config, requesting_origin));
+      port_config, requesting_origin);
   if (IsValidPortRange(min_port, max_port))
     port_allocator->SetPortRange(min_port, max_port);
 
-  return GetPcFactory()
-      ->CreatePeerConnection(config, std::move(port_allocator),
-                             nullptr, observer)
-      .get();
+  return port_allocator;
+}
+
+std::unique_ptr<webrtc::AsyncResolverFactory>
+PeerConnectionDependencyFactory::CreateAsyncResolverFactory() {
+  return std::make_unique<ProxyAsyncResolverFactory>(socket_factory_.get());
 }
 
 scoped_refptr<webrtc::MediaStreamInterface>
@@ -476,22 +555,6 @@ void PeerConnectionDependencyFactory::TryScheduleStunProbeTrial() {
   if (!cmd_line->HasSwitch(switches::kWebRtcStunProbeTrialParameter))
     return;
 
-  // The underneath IPC channel has to be connected before sending any IPC
-  // message.
-  if (!p2p_socket_dispatcher_->connected()) {
-    base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-        FROM_HERE,
-        base::BindOnce(
-            &PeerConnectionDependencyFactory::TryScheduleStunProbeTrial,
-            base::Unretained(this)),
-        base::TimeDelta::FromSeconds(1));
-    return;
-  }
-
-  // GetPcFactory could trigger an IPC message. If done before
-  // |p2p_socket_dispatcher_| is connected, that'll put the
-  // |p2p_socket_dispatcher_| in a bad state such that no other IPC message can
-  // be processed.
   GetPcFactory();
 
   const std::string params =
@@ -509,21 +572,22 @@ void PeerConnectionDependencyFactory::StartStunProbeTrialOnWorkerThread(
     const std::string& params) {
   DCHECK(network_manager_);
   DCHECK(chrome_worker_thread_.task_runner()->BelongsToCurrentThread());
-  stun_trial_.reset(
-      new StunProberTrial(network_manager_, params, socket_factory_.get()));
+  stun_trial_.reset(new StunProberTrial(network_manager_.get(), params,
+                                        socket_factory_.get()));
 }
 
 void PeerConnectionDependencyFactory::CreateIpcNetworkManagerOnWorkerThread(
-    base::WaitableEvent* event) {
+    base::WaitableEvent* event,
+    std::unique_ptr<MdnsResponderAdapter> mdns_responder) {
   DCHECK(chrome_worker_thread_.task_runner()->BelongsToCurrentThread());
-  network_manager_ = new IpcNetworkManager(p2p_socket_dispatcher_.get());
+  network_manager_ = std::make_unique<IpcNetworkManager>(
+      p2p_socket_dispatcher_.get(), std::move(mdns_responder));
   event->Signal();
 }
 
 void PeerConnectionDependencyFactory::DeleteIpcNetworkManager() {
   DCHECK(chrome_worker_thread_.task_runner()->BelongsToCurrentThread());
-  delete network_manager_;
-  network_manager_ = nullptr;
+  network_manager_.reset();
 }
 
 void PeerConnectionDependencyFactory::CleanupPeerConnectionFactory() {
@@ -560,6 +624,12 @@ PeerConnectionDependencyFactory::GetWebRtcWorkerThread() const {
                                            : nullptr;
 }
 
+rtc::Thread* PeerConnectionDependencyFactory::GetWebRtcWorkerThreadRtcThread()
+    const {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  return chrome_worker_thread_.IsRunning() ? worker_thread_ : nullptr;
+}
+
 scoped_refptr<base::SingleThreadTaskRunner>
 PeerConnectionDependencyFactory::GetWebRtcSignalingThread() const {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
@@ -574,6 +644,32 @@ void PeerConnectionDependencyFactory::EnsureWebRtcAudioDeviceImpl() {
     return;
 
   audio_device_ = new rtc::RefCountedObject<WebRtcAudioDeviceImpl>();
+}
+
+std::unique_ptr<webrtc::RtpCapabilities>
+PeerConnectionDependencyFactory::GetSenderCapabilities(
+    const std::string& kind) {
+  if (kind == "audio") {
+    return std::make_unique<webrtc::RtpCapabilities>(
+        GetPcFactory()->GetRtpSenderCapabilities(cricket::MEDIA_TYPE_AUDIO));
+  } else if (kind == "video") {
+    return std::make_unique<webrtc::RtpCapabilities>(
+        GetPcFactory()->GetRtpSenderCapabilities(cricket::MEDIA_TYPE_VIDEO));
+  }
+  return nullptr;
+}
+
+std::unique_ptr<webrtc::RtpCapabilities>
+PeerConnectionDependencyFactory::GetReceiverCapabilities(
+    const std::string& kind) {
+  if (kind == "audio") {
+    return std::make_unique<webrtc::RtpCapabilities>(
+        GetPcFactory()->GetRtpReceiverCapabilities(cricket::MEDIA_TYPE_AUDIO));
+  } else if (kind == "video") {
+    return std::make_unique<webrtc::RtpCapabilities>(
+        GetPcFactory()->GetRtpReceiverCapabilities(cricket::MEDIA_TYPE_VIDEO));
+  }
+  return nullptr;
 }
 
 }  // namespace content

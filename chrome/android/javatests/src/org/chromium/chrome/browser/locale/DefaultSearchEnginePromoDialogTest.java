@@ -1,4 +1,4 @@
-// Copyright 2017 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
@@ -13,20 +13,21 @@ import org.junit.Before;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.library_loader.ProcessInitException;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.ChromeTabbedActivity;
 import org.chromium.chrome.browser.init.ChromeBrowserInitializer;
-import org.chromium.chrome.browser.search_engines.TemplateUrlService;
-import org.chromium.chrome.browser.search_engines.TemplateUrlService.TemplateUrl;
+import org.chromium.chrome.browser.search_engines.TemplateUrlServiceFactory;
 import org.chromium.chrome.browser.searchwidget.SearchActivity;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.util.ActivityUtils;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
+import org.chromium.components.search_engines.TemplateUrl;
+import org.chromium.components.search_engines.TemplateUrlService;
+import org.chromium.content_public.browser.test.util.Criteria;
+import org.chromium.content_public.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 import java.util.List;
 import java.util.concurrent.Callable;
@@ -39,24 +40,21 @@ import java.util.concurrent.ExecutionException;
 @CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class DefaultSearchEnginePromoDialogTest {
     @Before
-    public void setUp() throws Exception {
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
+    public void setUp() throws ExecutionException, ProcessInitException {
+        TestThreadUtils.runOnUiThreadBlocking(new Callable<Void>() {
             @Override
-            public void run() {
-                try {
-                    ChromeBrowserInitializer.getInstance(InstrumentationRegistry.getTargetContext())
-                            .handleSynchronousStartup();
-                } catch (ProcessInitException e) {
-                    Assert.fail("Failed to initialize Chrome process");
-                }
+            public Void call() throws ProcessInitException {
+                ChromeBrowserInitializer.getInstance(InstrumentationRegistry.getTargetContext())
+                        .handleSynchronousStartup();
 
                 LocaleManager mockManager = new LocaleManager() {
                     @Override
                     public List<TemplateUrl> getSearchEnginesForPromoDialog(int promoType) {
-                        return TemplateUrlService.getInstance().getSearchEngines();
+                        return TemplateUrlServiceFactory.get().getTemplateUrls();
                     }
                 };
                 LocaleManager.setInstanceForTest(mockManager);
+                return null;
             }
         });
     }
@@ -65,19 +63,17 @@ public class DefaultSearchEnginePromoDialogTest {
     @LargeTest
     public void testOnlyOneLiveDialog() throws Exception {
         final CallbackHelper templateUrlServiceInit = new CallbackHelper();
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                TemplateUrlService.getInstance().registerLoadListener(
-                        new TemplateUrlService.LoadListener() {
-                            @Override
-                            public void onTemplateUrlServiceLoaded() {
-                                TemplateUrlService.getInstance().unregisterLoadListener(this);
-                                templateUrlServiceInit.notifyCalled();
-                            }
-                        });
-            }
-        });
+        TestThreadUtils.runOnUiThreadBlocking(
+                ()
+                        -> TemplateUrlServiceFactory.get().registerLoadListener(
+                                new TemplateUrlService.LoadListener() {
+                                    @Override
+                                    public void onTemplateUrlServiceLoaded() {
+                                        TemplateUrlServiceFactory.get().unregisterLoadListener(
+                                                this);
+                                        templateUrlServiceInit.notifyCalled();
+                                    }
+                                }));
         templateUrlServiceInit.waitForCallback(0);
 
         final SearchActivity searchActivity = ActivityUtils.waitForActivity(
@@ -104,12 +100,7 @@ public class DefaultSearchEnginePromoDialogTest {
             }
         }));
 
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                tabbedDialog.dismiss();
-            }
-        });
+        TestThreadUtils.runOnUiThreadBlocking(() -> tabbedDialog.dismiss());
         CriteriaHelper.pollUiThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
@@ -120,14 +111,15 @@ public class DefaultSearchEnginePromoDialogTest {
 
     private DefaultSearchEnginePromoDialog showDialog(final Activity activity)
             throws ExecutionException {
-        return ThreadUtils.runOnUiThreadBlocking(new Callable<DefaultSearchEnginePromoDialog>() {
-            @Override
-            public DefaultSearchEnginePromoDialog call() throws Exception {
-                DefaultSearchEnginePromoDialog dialog = new DefaultSearchEnginePromoDialog(
-                        activity, LocaleManager.SEARCH_ENGINE_PROMO_SHOW_EXISTING, null);
-                dialog.show();
-                return dialog;
-            }
-        });
+        return TestThreadUtils.runOnUiThreadBlocking(
+                new Callable<DefaultSearchEnginePromoDialog>() {
+                    @Override
+                    public DefaultSearchEnginePromoDialog call() throws Exception {
+                        DefaultSearchEnginePromoDialog dialog = new DefaultSearchEnginePromoDialog(
+                                activity, LocaleManager.SearchEnginePromoType.SHOW_EXISTING, null);
+                        dialog.show();
+                        return dialog;
+                    }
+                });
     }
 }

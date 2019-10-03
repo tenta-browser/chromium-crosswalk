@@ -36,7 +36,7 @@ std::unique_ptr<base::Value> ConvertStringToValue(const std::string& str,
   if (type == base::Value::Type::STRING) {
     value.reset(new base::Value(str));
   } else {
-    value = base::JSONReader::Read(str);
+    value = base::JSONReader::ReadDeprecated(str);
   }
   if (value && value->type() != type)
     return nullptr;
@@ -436,6 +436,7 @@ void ShillToONCTranslator::TranslateCellularWithState() {
 
   const base::DictionaryValue* device_dictionary = NULL;
   bool requires_roaming = false;
+  bool scanning = false;
   shill_dictionary_->GetDictionaryWithoutPathExpansion(shill::kDeviceProperty,
                                                        &device_dictionary);
   if (device_dictionary) {
@@ -448,9 +449,11 @@ void ShillToONCTranslator::TranslateCellularWithState() {
         nested_translator.CreateTranslatedONCObject();
     onc_object_->MergeDictionary(nested_object.get());
 
-    /// Get the requires_roaming from the Device dictionary.
+    /// Get requires_roaming and scanning from the Device dictionary.
     device_dictionary->GetBooleanWithoutPathExpansion(
         shill::kProviderRequiresRoamingProperty, &requires_roaming);
+    device_dictionary->GetBooleanWithoutPathExpansion(shill::kScanningProperty,
+                                                      &scanning);
   }
   if (requires_roaming) {
     onc_object_->SetKey(::onc::cellular::kRoamingState,
@@ -459,6 +462,7 @@ void ShillToONCTranslator::TranslateCellularWithState() {
     TranslateWithTableAndSet(shill::kRoamingStateProperty, kRoamingStateTable,
                              ::onc::cellular::kRoamingState);
   }
+  onc_object_->SetKey(::onc::cellular::kScanning, base::Value(scanning));
 }
 
 void ShillToONCTranslator::TranslateCellularDevice() {
@@ -532,14 +536,11 @@ void ShillToONCTranslator::TranslateNetworkWithState() {
     }
   }
 
-  // 'ErrorState' reflects the most recent error maintained in NetworkState
-  // (which may not match Shill's Error or PreviousError properties). Non
-  // visible networks (with null network_state_) do not set ErrorState.
+  // Non-visible networks (with null network_state_) do not set ErrorState.
   if (network_state_) {
-    std::string error_state = network_state_->GetErrorState();
-    if (!error_state.empty()) {
+    if (!network_state_->GetError().empty()) {
       onc_object_->SetKey(::onc::network_config::kErrorState,
-                          base::Value(error_state));
+                          base::Value(network_state_->GetError()));
     }
   }
 
@@ -619,14 +620,14 @@ void ShillToONCTranslator::TranslateNetworkWithState() {
   if (shill_dictionary_->GetStringWithoutPathExpansion(
           shill::kProxyConfigProperty, &proxy_config_str) &&
       !proxy_config_str.empty()) {
-    std::unique_ptr<base::DictionaryValue> proxy_config_value(
+    std::unique_ptr<base::Value> proxy_config_value(
         ReadDictionaryFromJson(proxy_config_str));
     if (proxy_config_value) {
-      std::unique_ptr<base::DictionaryValue> proxy_settings =
-          ConvertProxyConfigToOncProxySettings(std::move(proxy_config_value));
-      if (proxy_settings) {
-        onc_object_->SetWithoutPathExpansion(
-            ::onc::network_config::kProxySettings, std::move(proxy_settings));
+      base::Value proxy_settings =
+          ConvertProxyConfigToOncProxySettings(*proxy_config_value);
+      if (!proxy_settings.is_none()) {
+        onc_object_->SetKey(::onc::network_config::kProxySettings,
+                            std::move(proxy_settings));
       }
     }
   }
@@ -699,6 +700,15 @@ void ShillToONCTranslator::TranslateEap() {
     //       shill::kEapCertIdProperty and is ignored.
     onc_object_->SetKey(::onc::client_cert::kClientCertPKCS11Id,
                         base::Value(shill_cert_id));
+  }
+
+  bool use_login_password = false;
+  if (shill_dictionary_->GetBooleanWithoutPathExpansion(
+          shill::kEapUseLoginPasswordProperty, &use_login_password) &&
+      use_login_password) {
+    onc_object_->SetKey(
+        ::onc::eap::kPassword,
+        base::Value(::onc::substitutes::kPasswordPlaceholderVerbatim));
   }
 }
 

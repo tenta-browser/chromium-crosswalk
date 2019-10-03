@@ -10,6 +10,7 @@
 #include <map>
 #include <set>
 
+#include "base/stl_util.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/events/keycodes/dom/dom_code.h"
@@ -23,13 +24,13 @@ namespace {
 // These are in the same order as the columns in keycode_converter_data.inc
 // as reflected in the USB_KEYMAP() macro below.
 const size_t expected_mapped_key_count[] = {
-  208, // evdev
-  208, // xkb
-  157, // windows
-  118, // mac
+  212,  // evdev
+  212,  // xkb
+  157,  // windows
+  118,  // mac
 };
 
-const size_t kNativeColumns = arraysize(expected_mapped_key_count);
+const size_t kNativeColumns = base::size(expected_mapped_key_count);
 
 struct KeycodeConverterData {
   uint32_t usb_keycode;
@@ -50,6 +51,8 @@ const uint32_t kUsbNonExistentKeycode = 0xffffff;
 const uint32_t kUsbUsBackslash =        0x070031;
 const uint32_t kUsbNonUsHash =          0x070032;
 
+// TODO(crbug.com/956756)
+#if !defined(NOTOUCH_BUILD)
 TEST(UsbKeycodeMap, KeycodeConverterData) {
   // This test looks at all kinds of supported native codes.
   // Verify that there are no duplicate entries in the mapping.
@@ -105,6 +108,7 @@ TEST(UsbKeycodeMap, EvdevXkb) {
     }
   }
 }
+#endif
 
 TEST(UsbKeycodeMap, Basic) {
   // Verify that the first element in the table is the "invalid" code.

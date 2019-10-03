@@ -12,14 +12,17 @@
 
 #include "base/memory/ref_counted.h"
 #include "gpu/command_buffer/client/gpu_control.h"
-#include "gpu/command_buffer/common/gles2_cmd_utils.h"
+#include "gpu/command_buffer/client/shared_memory_limits.h"
+#include "gpu/command_buffer/common/context_creation_attribs.h"
 #include "gpu/command_buffer/service/feature_info.h"
-#include "gpu/command_buffer/service/gpu_preferences.h"
 #include "gpu/command_buffer/service/gpu_tracer.h"
 #include "gpu/command_buffer/service/image_manager.h"
 #include "gpu/command_buffer/service/mailbox_manager_impl.h"
+#include "gpu/command_buffer/service/passthrough_discardable_manager.h"
 #include "gpu/command_buffer/service/service_discardable_manager.h"
+#include "gpu/command_buffer/service/shared_image_manager.h"
 #include "gpu/config/gpu_feature_info.h"
+#include "gpu/config/gpu_preferences.h"
 #include "ui/gfx/geometry/size.h"
 #include "ui/gfx/gpu_memory_buffer.h"
 
@@ -34,17 +37,17 @@ class GLSurface;
 namespace gpu {
 
 class CommandBufferDirect;
+class GpuMemoryBufferFactory;
 class ImageFactory;
-class SyncPointManager;
+class MailboxManager;
 class TransferBuffer;
 
 namespace gles2 {
 
-class MailboxManager;
 class GLES2CmdHelper;
 class GLES2Implementation;
 
-};
+}  // namespace gles2
 
 class GLManager : private GpuControl {
  public:
@@ -52,8 +55,6 @@ class GLManager : private GpuControl {
     Options();
     // The size of the backbuffer.
     gfx::Size size = gfx::Size(4, 4);
-    // If not null will have a corresponding sync point manager.
-    SyncPointManager* sync_point_manager = nullptr;
     // If not null will share resources with this context.
     GLManager* share_group_manager = nullptr;
     // If not null will share a mailbox manager with this context.
@@ -66,7 +67,7 @@ class GLManager : private GpuControl {
     bool lose_context_when_out_of_memory = false;
     // Whether or not it's ok to lose the context.
     bool context_lost_allowed = false;
-    gles2::ContextType context_type = gles2::CONTEXT_TYPE_OPENGLES2;
+    ContextType context_type = CONTEXT_TYPE_OPENGLES2;
     // Force shader name hashing for all context types.
     bool force_shader_name_hashing = false;
     // Whether the buffer is multisampled.
@@ -77,6 +78,8 @@ class GLManager : private GpuControl {
     gpu::ImageFactory* image_factory = nullptr;
     // Whether to preserve the backbuffer after a call to SwapBuffers().
     bool preserve_backbuffer = false;
+    // Shared memory limits
+    SharedMemoryLimits shared_memory_limits = {};
   };
   GLManager();
   ~GLManager() override;
@@ -107,13 +110,16 @@ class GLManager : private GpuControl {
     use_iosurface_memory_buffers_ = use_iosurface_memory_buffers;
   }
 
-  void SetCommandsPaused(bool paused);
+  void set_use_native_pixmap_memory_buffers(
+      bool use_native_pixmap_memory_buffers) {
+    use_native_pixmap_memory_buffers_ = use_native_pixmap_memory_buffers;
+  }
 
   gles2::GLES2Decoder* decoder() const {
     return decoder_.get();
   }
 
-  gles2::MailboxManager* mailbox_manager() const { return mailbox_manager_; }
+  MailboxManager* mailbox_manager() const { return mailbox_manager_; }
 
   gl::GLShareGroup* share_group() const { return share_group_.get(); }
 
@@ -122,6 +128,13 @@ class GLManager : private GpuControl {
   }
 
   gl::GLContext* context() { return context_.get(); }
+
+  ServiceDiscardableManager* discardable_manager() {
+    return &discardable_manager_;
+  }
+  PassthroughDiscardableManager* passthrough_discardable_manager() {
+    return &passthrough_discardable_manager_;
+  }
 
   const GpuDriverBugWorkarounds& workarounds() const;
   const gpu::GpuPreferences& gpu_preferences() const {
@@ -133,27 +146,30 @@ class GLManager : private GpuControl {
   const Capabilities& GetCapabilities() const override;
   int32_t CreateImage(ClientBuffer buffer,
                       size_t width,
-                      size_t height,
-                      unsigned internalformat) override;
+                      size_t height) override;
   void DestroyImage(int32_t id) override;
-  void SignalQuery(uint32_t query, const base::Closure& callback) override;
+  void SignalQuery(uint32_t query, base::OnceClosure callback) override;
+  void CreateGpuFence(uint32_t gpu_fence_id, ClientGpuFence source) override;
+  void GetGpuFence(uint32_t gpu_fence_id,
+                   base::OnceCallback<void(std::unique_ptr<gfx::GpuFence>)>
+                       callback) override;
   void SetLock(base::Lock*) override;
   void EnsureWorkVisible() override;
   gpu::CommandBufferNamespace GetNamespaceID() const override;
   CommandBufferId GetCommandBufferID() const override;
   void FlushPendingWork() override;
   uint64_t GenerateFenceSyncRelease() override;
-  bool IsFenceSyncRelease(uint64_t release) override;
-  bool IsFenceSyncFlushed(uint64_t release) override;
-  bool IsFenceSyncFlushReceived(uint64_t release) override;
   bool IsFenceSyncReleased(uint64_t release) override;
   void SignalSyncToken(const gpu::SyncToken& sync_token,
-                       const base::Closure& callback) override;
-  void WaitSyncTokenHint(const gpu::SyncToken& sync_token) override;
+                       base::OnceClosure callback) override;
+  void WaitSyncToken(const gpu::SyncToken& sync_token) override;
   bool CanWaitUnverifiedSyncToken(const gpu::SyncToken& sync_token) override;
-  void SetSnapshotRequested() override;
+  void SetDisplayTransform(gfx::OverlayTransform transform) override;
 
   size_t GetSharedMemoryBytesAllocated() const;
+  ContextType GetContextType() const;
+
+  void Reset();
 
  private:
   void SetupBaseContext();
@@ -168,9 +184,10 @@ class GLManager : private GpuControl {
   gles2::TraceOutputter outputter_;
   gles2::ImageManager image_manager_;
   ServiceDiscardableManager discardable_manager_;
+  PassthroughDiscardableManager passthrough_discardable_manager_;
   std::unique_ptr<gles2::ShaderTranslatorCache> translator_cache_;
   gles2::FramebufferCompletenessCache completeness_cache_;
-  gles2::MailboxManager* mailbox_manager_ = nullptr;
+  MailboxManager* mailbox_manager_ = nullptr;
   scoped_refptr<gl::GLShareGroup> share_group_;
   std::unique_ptr<CommandBufferDirect> command_buffer_;
   std::unique_ptr<gles2::GLES2Decoder> decoder_;
@@ -179,10 +196,11 @@ class GLManager : private GpuControl {
   std::unique_ptr<gles2::GLES2CmdHelper> gles2_helper_;
   std::unique_ptr<TransferBuffer> transfer_buffer_;
   std::unique_ptr<gles2::GLES2Implementation> gles2_implementation_;
-
-  uint64_t next_fence_sync_release_ = 1;
+  std::unique_ptr<gpu::GpuMemoryBufferFactory> gpu_memory_buffer_factory_;
+  SharedImageManager shared_image_manager_;
 
   bool use_iosurface_memory_buffers_ = false;
+  bool use_native_pixmap_memory_buffers_ = false;
 
   Capabilities capabilities_;
 
@@ -191,6 +209,7 @@ class GLManager : private GpuControl {
   static scoped_refptr<gl::GLShareGroup>* base_share_group_;
   static scoped_refptr<gl::GLSurface>* base_surface_;
   static scoped_refptr<gl::GLContext>* base_context_;
+  ContextType context_type_ = CONTEXT_TYPE_OPENGLES2;
 };
 
 }  // namespace gpu

@@ -8,14 +8,14 @@
 #include "chrome/browser/lifetime/application_lifetime_android.h"
 
 BrowserProcessPlatformPart::BrowserProcessPlatformPart() {
-  base::android::MemoryPressureListenerAndroid::RegisterSystemCallback(
+  base::android::MemoryPressureListenerAndroid::Initialize(
       base::android::AttachCurrentThread());
 }
 
 BrowserProcessPlatformPart::~BrowserProcessPlatformPart() {
 }
 
-void BrowserProcessPlatformPart::AttemptExit() {
+void BrowserProcessPlatformPart::AttemptExit(bool try_to_quit_application) {
   // Tell the Java code to finish() the Activity.
   chrome::TerminateAndroid();
 }

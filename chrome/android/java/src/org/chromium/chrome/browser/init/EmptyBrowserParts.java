@@ -14,7 +14,8 @@ public class EmptyBrowserParts implements BrowserParts {
     }
 
     @Override
-    public void setContentViewAndLoadLibrary() {
+    public void setContentViewAndLoadLibrary(Runnable onInflationCompleteCallback) {
+        onInflationCompleteCallback.run();
     }
 
     @Override
@@ -42,12 +43,7 @@ public class EmptyBrowserParts implements BrowserParts {
     }
 
     @Override
-    public boolean isActivityDestroyed() {
-        return false;
-    }
-
-    @Override
-    public boolean isActivityFinishing() {
+    public boolean isActivityFinishingOrDestroyed() {
         return false;
     }
 

@@ -7,7 +7,7 @@
 #include <utility>
 
 #include "base/containers/flat_set.h"
-#include "base/memory/memory_coordinator_client_registry.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/stringprintf.h"
 #include "base/time/clock.h"
 #include "base/time/default_clock.h"
@@ -16,19 +16,31 @@
 
 namespace net {
 
+namespace {
+
+bool IsTLS13(const SSL_SESSION* session) {
+  return SSL_SESSION_get_protocol_version(session) >= TLS1_3_VERSION;
+}
+
+}  // namespace
+
 SSLClientSessionCache::SSLClientSessionCache(const Config& config)
-    : clock_(new base::DefaultClock),
+    : clock_(base::DefaultClock::GetInstance()),
       config_(config),
       cache_(config.max_entries),
       lookups_since_flush_(0) {
   memory_pressure_listener_.reset(new base::MemoryPressureListener(base::Bind(
       &SSLClientSessionCache::OnMemoryPressure, base::Unretained(this))));
-  base::MemoryCoordinatorClientRegistry::GetInstance()->Register(this);
+  CertDatabase::GetInstance()->AddObserver(this);
 }
 
 SSLClientSessionCache::~SSLClientSessionCache() {
+  CertDatabase::GetInstance()->RemoveObserver(this);
   Flush();
-  base::MemoryCoordinatorClientRegistry::GetInstance()->Unregister(this);
+}
+
+void SSLClientSessionCache::OnCertDBChanged() {
+  Flush();
 }
 
 size_t SSLClientSessionCache::size() const {
@@ -37,8 +49,6 @@ size_t SSLClientSessionCache::size() const {
 
 bssl::UniquePtr<SSL_SESSION> SSLClientSessionCache::Lookup(
     const std::string& cache_key) {
-  base::AutoLock lock(lock_);
-
   // Expire stale sessions.
   lookups_since_flush_++;
   if (lookups_since_flush_ >= config_.expiration_check_count) {
@@ -57,62 +67,61 @@ bssl::UniquePtr<SSL_SESSION> SSLClientSessionCache::Lookup(
 
   if (IsExpired(session.get(), now))
     session = nullptr;
+
+  if (session != nullptr && IsTLS13(session.get())) {
+    base::Time session_created =
+        base::Time::FromTimeT(SSL_SESSION_get_time(session.get()));
+    base::TimeDelta time_to_use = clock_->Now() - session_created;
+    UMA_HISTOGRAM_CUSTOM_TIMES("Net.SSLTLS13SessionTimeToUse", time_to_use,
+                               base::TimeDelta::FromMinutes(1),
+                               base::TimeDelta::FromDays(7), 50);
+  }
   return session;
 }
 
-void SSLClientSessionCache::ResetLookupCount(const std::string& cache_key) {
-  base::AutoLock lock(lock_);
-
-  // It's possible that the cached session for this key was deleted after the
-  // Lookup. If that's the case, don't do anything.
-  auto iter = cache_.Get(cache_key);
-  if (iter == cache_.end())
-    return;
-}
-
 void SSLClientSessionCache::Insert(const std::string& cache_key,
-                                   SSL_SESSION* session) {
-  base::AutoLock lock(lock_);
+                                   bssl::UniquePtr<SSL_SESSION> session) {
+  if (IsTLS13(session.get())) {
+    base::TimeDelta lifetime =
+        base::TimeDelta::FromSeconds(SSL_SESSION_get_timeout(session.get()));
+    UMA_HISTOGRAM_CUSTOM_TIMES("Net.SSLTLS13SessionLifetime", lifetime,
+                               base::TimeDelta::FromMinutes(1),
+                               base::TimeDelta::FromDays(7), 50);
+  }
 
-  SSL_SESSION_up_ref(session);
   auto iter = cache_.Get(cache_key);
   if (iter == cache_.end())
     iter = cache_.Put(cache_key, Entry());
-  iter->second.Push(bssl::UniquePtr<SSL_SESSION>(session));
+  iter->second.Push(std::move(session));
 }
 
 void SSLClientSessionCache::Flush() {
-  base::AutoLock lock(lock_);
-
   cache_.Clear();
 }
 
-void SSLClientSessionCache::SetClockForTesting(
-    std::unique_ptr<base::Clock> clock) {
-  clock_ = std::move(clock);
+void SSLClientSessionCache::SetClockForTesting(base::Clock* clock) {
+  clock_ = clock;
 }
 
 bool SSLClientSessionCache::IsExpired(SSL_SESSION* session, time_t now) {
   if (now < 0)
     return true;
   uint64_t now_u64 = static_cast<uint64_t>(now);
-  return now_u64 < SSL_SESSION_get_time(session) ||
+
+  // now_u64 may be slightly behind because of differences in how
+  // time is calculated at this layer versus BoringSSL.
+  // Add a second of wiggle room to account for this.
+  return now_u64 < SSL_SESSION_get_time(session) - 1 ||
          now_u64 >=
              SSL_SESSION_get_time(session) + SSL_SESSION_get_timeout(session);
 }
 
 void SSLClientSessionCache::DumpMemoryStats(
-    base::trace_event::ProcessMemoryDump* pmd) {
-  std::string absolute_name = "net/ssl_session_cache";
+    base::trace_event::ProcessMemoryDump* pmd,
+    const std::string& parent_absolute_name) const {
+  std::string name = parent_absolute_name + "/ssl_client_session_cache";
   base::trace_event::MemoryAllocatorDump* cache_dump =
-      pmd->GetAllocatorDump(absolute_name);
-  // This method can be reached from different URLRequestContexts. Since this is
-  // a singleton, only log memory stats once.
-  // TODO(xunjieli): Change this once crbug.com/458365 is fixed.
-  if (cache_dump)
-    return;
-  cache_dump = pmd->CreateAllocatorDump(absolute_name);
-  base::AutoLock lock(lock_);
+      pmd->CreateAllocatorDump(name);
   size_t cert_size = 0;
   size_t cert_count = 0;
   size_t undeduped_cert_size = 0;
@@ -121,7 +130,8 @@ void SSLClientSessionCache::DumpMemoryStats(
     for (const auto& session : pair.second.sessions) {
       if (!session)
         continue;
-      undeduped_cert_count += sk_CRYPTO_BUFFER_num(session->certs);
+      undeduped_cert_count += sk_CRYPTO_BUFFER_num(
+          SSL_SESSION_get0_peer_certificates(session.get()));
     }
   }
   // Use a flat_set here to avoid malloc upon insertion.
@@ -131,7 +141,8 @@ void SSLClientSessionCache::DumpMemoryStats(
     for (const auto& session : pair.second.sessions) {
       if (!session)
         continue;
-      for (const CRYPTO_BUFFER* cert : session->certs) {
+      for (const CRYPTO_BUFFER* cert :
+           SSL_SESSION_get0_peer_certificates(session.get())) {
         undeduped_cert_size += CRYPTO_BUFFER_len(cert);
         auto result = crypto_buffer_set.insert(cert);
         if (!result.second)
@@ -173,13 +184,12 @@ void SSLClientSessionCache::Entry::Push(bssl::UniquePtr<SSL_SESSION> session) {
 bssl::UniquePtr<SSL_SESSION> SSLClientSessionCache::Entry::Pop() {
   if (sessions[0] == nullptr)
     return nullptr;
-  SSL_SESSION* session = sessions[0].get();
-  SSL_SESSION_up_ref(session);
-  if (SSL_SESSION_should_be_single_use(session)) {
+  bssl::UniquePtr<SSL_SESSION> session = bssl::UpRef(sessions[0]);
+  if (SSL_SESSION_should_be_single_use(session.get())) {
     sessions[0] = std::move(sessions[1]);
     sessions[1] = nullptr;
   }
-  return bssl::UniquePtr<SSL_SESSION>(session);
+  return session;
 }
 
 bool SSLClientSessionCache::Entry::ExpireSessions(time_t now) {
@@ -222,10 +232,6 @@ void SSLClientSessionCache::OnMemoryPressure(
       Flush();
       break;
   }
-}
-
-void SSLClientSessionCache::OnPurgeMemory() {
-  Flush();
 }
 
 }  // namespace net

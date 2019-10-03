@@ -17,23 +17,20 @@
 #include "gpu/command_buffer/service/texture_manager.h"
 #include "gpu/command_buffer/service/vertex_array_manager.h"
 #include "gpu/command_buffer/service/vertex_attrib_manager.h"
-#include "gpu/gpu_export.h"
+#include "gpu/gpu_gles2_export.h"
 
 namespace gpu {
 namespace gles2 {
 
 class Buffer;
-class ErrorState;
-class ErrorStateClient;
 class FeatureInfo;
 class IndexedBufferBindingHost;
-class Logger;
 class Program;
 class Renderbuffer;
 class TransformFeedback;
 
 // State associated with each texture unit.
-struct GPU_EXPORT TextureUnit {
+struct GPU_GLES2_EXPORT TextureUnit {
   TextureUnit();
   TextureUnit(const TextureUnit& other);
   ~TextureUnit();
@@ -62,6 +59,12 @@ struct GPU_EXPORT TextureUnit {
   // texture currently bound to this unit's GL_TEXTURE_2D_ARRAY with
   // glBindTexture
   scoped_refptr<TextureRef> bound_texture_2d_array;
+
+  bool AnyTargetBound() const {
+    return bound_texture_2d || bound_texture_cube_map ||
+           bound_texture_external_oes || bound_texture_rectangle_arb ||
+           bound_texture_3d || bound_texture_2d_array;
+  }
 
   TextureRef* GetInfoForSamplerType(GLenum type) {
     switch (type) {
@@ -140,7 +143,7 @@ struct GPU_EXPORT TextureUnit {
   }
 };
 
-class GPU_EXPORT Vec4 {
+class GPU_GLES2_EXPORT Vec4 {
  public:
   Vec4() {
     v_[0].float_value = 0.0f;
@@ -156,9 +159,7 @@ class GPU_EXPORT Vec4 {
   template <typename T>
   void SetValues(const T* values);
 
-  ShaderVariableBaseType type() const {
-    return type_;
-  }
+  ShaderVariableBaseType type() const { return type_; }
 
   bool Equal(const Vec4& other) const;
 
@@ -174,34 +175,32 @@ class GPU_EXPORT Vec4 {
 };
 
 template <>
-GPU_EXPORT void Vec4::GetValues<GLfloat>(GLfloat* values) const;
+GPU_GLES2_EXPORT void Vec4::GetValues<GLfloat>(GLfloat* values) const;
 template <>
-GPU_EXPORT void Vec4::GetValues<GLint>(GLint* values) const;
+GPU_GLES2_EXPORT void Vec4::GetValues<GLint>(GLint* values) const;
 template <>
-GPU_EXPORT void Vec4::GetValues<GLuint>(GLuint* values) const;
+GPU_GLES2_EXPORT void Vec4::GetValues<GLuint>(GLuint* values) const;
 
 template <>
-GPU_EXPORT void Vec4::SetValues<GLfloat>(const GLfloat* values);
+GPU_GLES2_EXPORT void Vec4::SetValues<GLfloat>(const GLfloat* values);
 template <>
-GPU_EXPORT void Vec4::SetValues<GLint>(const GLint* values);
+GPU_GLES2_EXPORT void Vec4::SetValues<GLint>(const GLint* values);
 template <>
-GPU_EXPORT void Vec4::SetValues<GLuint>(const GLuint* values);
+GPU_GLES2_EXPORT void Vec4::SetValues<GLuint>(const GLuint* values);
 
-struct GPU_EXPORT ContextState {
-  enum Dimension {
-    k2D,
-    k3D
-  };
+struct GPU_GLES2_EXPORT ContextState {
+  enum Dimension { k2D, k3D };
 
   ContextState(FeatureInfo* feature_info,
-               ErrorStateClient* error_state_client,
-               Logger* logger);
+               bool track_texture_and_sampler_units = true);
   ~ContextState();
 
   void set_api(gl::GLApi* api) { api_ = api; }
   gl::GLApi* api() const { return api_; }
 
   void Initialize();
+
+  void MarkContextLost() { context_lost_ = true; }
 
   void SetLineWidthBounds(GLfloat min, GLfloat max);
 
@@ -220,15 +219,15 @@ struct GPU_EXPORT ContextState {
   void RestoreVertexAttribValues() const;
   void RestoreVertexAttribArrays(
       const scoped_refptr<VertexAttribManager> attrib_manager) const;
-  void RestoreVertexAttribs() const;
+  void RestoreVertexAttribs(const ContextState* prev_state) const;
   void RestoreBufferBindings() const;
   void RestoreGlobalState(const ContextState* prev_state) const;
   void RestoreProgramSettings(const ContextState* prev_state,
                               bool restore_transform_feedback_bindings) const;
   void RestoreRenderbufferBindings();
   void RestoreIndexedUniformBufferBindings(const ContextState* prev_state);
-  void RestoreTextureUnitBindings(
-      GLuint unit, const ContextState* prev_state) const;
+  void RestoreTextureUnitBindings(GLuint unit,
+                                  const ContextState* prev_state) const;
   void RestoreSamplerBinding(GLuint unit, const ContextState* prev_state) const;
 
   void PushTextureUnpackState() const;
@@ -236,10 +235,10 @@ struct GPU_EXPORT ContextState {
   void DoLineWidth(GLfloat width) const;
 
   // Helper for getting cached state.
-  bool GetStateAsGLint(
-      GLenum pname, GLint* params, GLsizei* num_written) const;
-  bool GetStateAsGLfloat(
-      GLenum pname, GLfloat* params, GLsizei* num_written) const;
+  bool GetStateAsGLint(GLenum pname, GLint* params, GLsizei* num_written) const;
+  bool GetStateAsGLfloat(GLenum pname,
+                         GLfloat* params,
+                         GLsizei* num_written) const;
   bool GetEnabled(GLenum cap) const;
 
   inline void SetDeviceColorMask(GLboolean red,
@@ -279,8 +278,6 @@ struct GPU_EXPORT ContextState {
     }
     api()->glStencilMaskSeparateFn(op, mask);
   }
-
-  ErrorState* GetErrorState();
 
   void SetBoundBuffer(GLenum target, Buffer* buffer);
   void RemoveBoundBuffer(Buffer* buffer);
@@ -337,14 +334,18 @@ struct GPU_EXPORT ContextState {
 
   void EnableDisableFramebufferSRGB(bool enable);
 
-  #include "gpu/command_buffer/service/context_state_autogen.h"
+#include "gpu/command_buffer/service/context_state_autogen.h"
+
+  // if false, we will not track individual texture and sampler units, instead
+  // we only track if all units are in ground state or not.
+  const bool track_texture_and_sampler_units;
 
   EnableFlags enable_flags;
 
   // Current active texture by 0 - n index.
   // In other words, if we call glActiveTexture(GL_TEXTURE2) this value would
   // be 2.
-  GLuint active_texture_unit;
+  GLuint active_texture_unit = 0u;
 
   // The currently bound array buffer. If this is 0 it is illegal to call
   // glVertexAttribPointer.
@@ -359,9 +360,11 @@ struct GPU_EXPORT ContextState {
 
   // Which textures are bound to texture units through glActiveTexture.
   std::vector<TextureUnit> texture_units;
+  mutable bool texture_units_in_ground_state = true;
 
   // Which samplers are bound to each texture unit;
   std::vector<scoped_refptr<Sampler>> sampler_units;
+  mutable bool sampler_units_in_ground_state = true;
 
   // We create a transform feedback as the default one per ES3 enabled context
   // instead of using GL's default one to make context switching easier.
@@ -385,12 +388,13 @@ struct GPU_EXPORT ContextState {
 
   // The currently bound renderbuffer
   scoped_refptr<Renderbuffer> bound_renderbuffer;
-  bool bound_renderbuffer_valid;
+  bool bound_renderbuffer_valid = false;
 
-  bool pack_reverse_row_order;
-  bool ignore_cached_state;
+  bool pack_reverse_row_order = false;
+  bool ignore_cached_state = false;
 
-  mutable bool fbo_binding_for_scissor_workaround_dirty;
+  mutable bool fbo_binding_for_scissor_workaround_dirty = false;
+  mutable bool stencil_state_changed_since_validation = true;
 
   GLuint current_draw_framebuffer_client_id = 0;
 
@@ -419,7 +423,8 @@ struct GPU_EXPORT ContextState {
 
   gl::GLApi* api_ = nullptr;
   FeatureInfo* feature_info_;
-  std::unique_ptr<ErrorState> error_state_;
+
+  bool context_lost_ = false;
 };
 
 }  // namespace gles2

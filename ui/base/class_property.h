@@ -8,11 +8,9 @@
 #include <stdint.h>
 
 #include <map>
-#include <memory>
 #include <set>
 
 #include "base/time/time.h"
-#include "ui/base/property_data.h"
 #include "ui/base/ui_base_export.h"
 #include "ui/base/ui_base_types.h"
 
@@ -23,32 +21,30 @@
 //  #include "foo/foo_export.h"
 //  #include "ui/base/class_property.h"
 //
-//  DECLARE_EXPORTED_UI_CLASS_PROPERTY_TYPE(FOO_EXPORT, MyType);
+//  DEFINE_EXPORTED_UI_CLASS_PROPERTY_TYPE(FOO_EXPORT, MyType)
 //  namespace foo {
 //    // Use this to define an exported property that is primitive,
 //    // or a pointer you don't want automatically deleted.
-//    DEFINE_UI_CLASS_PROPERTY_KEY(MyType, kMyKey, MyDefault);
+//    DEFINE_UI_CLASS_PROPERTY_KEY(MyType, kMyKey, MyDefault)
 //
 //    // Use this to define an exported property whose value is a heap
 //    // allocated object, and has to be owned and freed by the class.
-//    DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(gfx::Rect, kRestoreBoundsKey, nullptr);
-//
-//    // Use this to define a non exported property that is primitive,
-//    // or a pointer you don't want to automatically deleted, and is used
-//    // only in a specific file. This will define the property in an unnamed
-//    // namespace which cannot be accessed from another file.
-//    DEFINE_LOCAL_UI_CLASS_PROPERTY_KEY(MyType, kMyKey, MyDefault);
+//    DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(gfx::Rect, kRestoreBoundsKey, nullptr)
 //
 //  }  // foo namespace
 //
 // To define a new type used for ClassProperty.
 //
 //  // outside all namespaces:
-//  DECLARE_EXPORTED_UI_CLASS_PROPERTY_TYPE(FOO_EXPORT, MyType)
+//  DEFINE_EXPORTED_UI_CLASS_PROPERTY_TYPE(FOO_EXPORT, MyType)
 //
 // If a property type is not exported, use
-// DECLARE_UI_CLASS_PROPERTY_TYPE(MyType) which is a shorthand for
-// DECLARE_EXPORTED_UI_CLASS_PROPERTY_TYPE(, MyType).
+// DEFINE_UI_CLASS_PROPERTY_TYPE(MyType) which is a shorthand for
+// DEFINE_EXPORTED_UI_CLASS_PROPERTY_TYPE(, MyType).
+//
+// If the properties are used outside the file where they are defined
+// their accessor methods should also be declared in a suitable header
+// using DECLARE_EXPORTED_UI_CLASS_PROPERTY_TYPE(FOO_EXPORT, MyType)
 
 namespace ui {
 
@@ -74,10 +70,25 @@ class UI_BASE_EXPORT PropertyHandler {
   ~PropertyHandler();
 
   // Sets the |value| of the given class |property|. Setting to the default
-  // value (e.g., NULL) removes the property. The caller is responsible for the
-  // lifetime of any object set as a property on the class.
+  // value (e.g., NULL) removes the property. The lifetime of objects set as
+  // values of unowned properties is managed by the caller (owned properties are
+  // freed when they are overwritten or cleared).
   template<typename T>
   void SetProperty(const ClassProperty<T>* property, T value);
+
+  // Sets the |value| of the given class |property|, which must be an owned
+  // property of pointer type. The property will be assigned a copy of |value|;
+  // if no property object exists one will be allocated. T must support copy
+  // construction and assignment.
+  template <typename T>
+  void SetProperty(const ClassProperty<T*>* property, const T& value);
+
+  // Sets the |value| of the given class |property|, which must be an owned
+  // property and of pointer type. The property will be move-assigned or move-
+  // constructed from |value|; if no property object exists one will be
+  // allocated. T must support at least copy (and ideally move) semantics.
+  template <typename T>
+  void SetProperty(const ClassProperty<T*>* property, T&& value);
 
   // Returns the value of the given class |property|.  Returns the
   // property-specific default value if the property was not previously set.
@@ -95,10 +106,7 @@ class UI_BASE_EXPORT PropertyHandler {
  protected:
   friend class subtle::PropertyHelper;
 
-  virtual void AfterPropertyChange(const void* key,
-                                   int64_t old_value,
-                                   std::unique_ptr<PropertyData> data) {}
-  virtual std::unique_ptr<PropertyData> BeforePropertyChange(const void* key);
+  virtual void AfterPropertyChange(const void* key, int64_t old_value) {}
   void ClearProperties();
 
   // Called by the public {Set,Get,Clear}Property functions.
@@ -189,19 +197,67 @@ class UI_BASE_EXPORT PropertyHelper {
 
 }  // namespace subtle
 
+// Template implementation is necessary in the .h file unless we want to break
+// [DECLARE|DEFINE]_EXPORTED_UI_CLASS_PROPERTY_TYPE() below into different
+// macros for owned and unowned properties; implementing them as pure templates
+// makes them nearly impossible to implement or use incorrectly at the cost of a
+// small amount of code duplication across libraries.
+
+template <typename T>
+void PropertyHandler::SetProperty(const ClassProperty<T*>* property,
+                                  const T& value) {
+  // Prevent additional heap allocation if possible.
+  T* const old = GetProperty(property);
+  if (old) {
+    T temp(*old);
+    *old = value;
+    AfterPropertyChange(property, reinterpret_cast<int64_t>(&temp));
+  } else {
+    SetProperty(property, new T(value));
+  }
+}
+
+template <typename T>
+void PropertyHandler::SetProperty(const ClassProperty<T*>* property,
+                                  T&& value) {
+  // Prevent additional heap allocation if possible.
+  T* const old = GetProperty(property);
+  if (old) {
+    T temp(std::move(*old));
+    *old = std::forward<T>(value);
+    AfterPropertyChange(property, reinterpret_cast<int64_t>(&temp));
+  } else {
+    SetProperty(property, new T(std::forward<T>(value)));
+  }
+}
+
 }  // namespace ui
 
-// Macros to instantiate the property getter/setter template functions.
+// Macros to declare the property getter/setter template functions.
 #define DECLARE_EXPORTED_UI_CLASS_PROPERTY_TYPE(EXPORT, T)                   \
   namespace ui {                                                             \
   template <>                                                                \
-  EXPORT void PropertyHandler::SetProperty(                                  \
-      const ClassProperty<T>* property, T value) {                           \
+  EXPORT void PropertyHandler::SetProperty(const ClassProperty<T>* property, \
+                                           T value);                         \
+  template <>                                                                \
+  EXPORT T                                                                   \
+  PropertyHandler::GetProperty(const ClassProperty<T>* property) const;      \
+  template <>                                                                \
+  EXPORT void PropertyHandler::ClearProperty(                                \
+      const ClassProperty<T>* property);                                     \
+  }  // namespace ui
+
+// Macros to instantiate the property getter/setter template functions.
+#define DEFINE_EXPORTED_UI_CLASS_PROPERTY_TYPE(EXPORT, T)                    \
+  namespace ui {                                                             \
+  template <>                                                                \
+  EXPORT void PropertyHandler::SetProperty(const ClassProperty<T>* property, \
+                                           T value) {                        \
     subtle::PropertyHelper::Set<T>(this, property, value);                   \
   }                                                                          \
   template <>                                                                \
-  EXPORT T PropertyHandler::GetProperty(                                     \
-      const ClassProperty<T>* property) const {                              \
+  EXPORT T                                                                   \
+  PropertyHandler::GetProperty(const ClassProperty<T>* property) const {     \
     return subtle::PropertyHelper::Get<T>(this, property);                   \
   }                                                                          \
   template <>                                                                \
@@ -209,34 +265,25 @@ class UI_BASE_EXPORT PropertyHelper {
       const ClassProperty<T>* property) {                                    \
     subtle::PropertyHelper::Clear<T>(this, property);                        \
   }                                                                          \
-  }
+  }  // namespace ui
 
-#define DECLARE_UI_CLASS_PROPERTY_TYPE(T)  \
-    DECLARE_EXPORTED_UI_CLASS_PROPERTY_TYPE(, T)
+#define DEFINE_UI_CLASS_PROPERTY_TYPE(T) \
+  DEFINE_EXPORTED_UI_CLASS_PROPERTY_TYPE(, T)
 
 #define DEFINE_UI_CLASS_PROPERTY_KEY(TYPE, NAME, DEFAULT)                    \
   static_assert(sizeof(TYPE) <= sizeof(int64_t), "property type too large"); \
-  namespace {                                                                \
   const ::ui::ClassProperty<TYPE> NAME##_Value = {DEFAULT, #NAME, nullptr};  \
-  }                                                                          \
   const ::ui::ClassProperty<TYPE>* const NAME = &NAME##_Value;
 
-#define DEFINE_LOCAL_UI_CLASS_PROPERTY_KEY(TYPE, NAME, DEFAULT)              \
-  static_assert(sizeof(TYPE) <= sizeof(int64_t), "property type too large"); \
-  namespace {                                                                \
-  const ::ui::ClassProperty<TYPE> NAME##_Value = {DEFAULT, #NAME, nullptr};  \
-  const ::ui::ClassProperty<TYPE>* const NAME = &NAME##_Value;               \
-  }
-
-#define DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(TYPE, NAME, DEFAULT)          \
-  namespace {                                                            \
-  void Deallocator##NAME(int64_t p) {                                    \
-    enum { type_must_be_complete = sizeof(TYPE) };                       \
-    delete ::ui::ClassPropertyCaster<TYPE*>::FromInt64(p);               \
-  }                                                                      \
-  const ::ui::ClassProperty<TYPE*> NAME##_Value = {DEFAULT, #NAME,       \
-                                                 &Deallocator##NAME};    \
-  }                                                                      \
+#define DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(TYPE, NAME, DEFAULT)         \
+  namespace {                                                           \
+  void Deallocator##NAME(int64_t p) {                                   \
+    enum { type_must_be_complete = sizeof(TYPE) };                      \
+    delete ::ui::ClassPropertyCaster<TYPE*>::FromInt64(p);              \
+  }                                                                     \
+  const ::ui::ClassProperty<TYPE*> NAME##_Value = {DEFAULT, #NAME,      \
+                                                   &Deallocator##NAME}; \
+  } /* namespace */                                                     \
   const ::ui::ClassProperty<TYPE*>* const NAME = &NAME##_Value;
 
 #endif  // UI_BASE_CLASS_PROPERTY_H_

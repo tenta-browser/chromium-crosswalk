@@ -4,17 +4,17 @@
 
 #include "chrome/browser/ui/omnibox/chrome_omnibox_navigation_observer.h"
 
-#include <map>
+#include <unordered_map>
 #include <vector>
 
-#include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/infobars/infobar_service.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
 #include "chrome/browser/search_engines/template_url_service_factory_test_util.h"
+#include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_profile.h"
 #include "components/search_engines/template_url.h"
 #include "components/search_engines/template_url_data.h"
@@ -26,78 +26,17 @@
 #include "content/public/browser/notification_source.h"
 #include "content/public/browser/notification_types.h"
 #include "content/public/browser/web_contents.h"
-#include "content/public/test/test_browser_thread_bundle.h"
-#include "content/public/test/web_contents_tester.h"
 #include "net/http/http_response_headers.h"
 #include "net/http/http_status_code.h"
 #include "net/url_request/test_url_fetcher_factory.h"
 #include "net/url_request/url_fetcher.h"
 #include "net/url_request/url_fetcher_factory.h"
 #include "net/url_request/url_request_status.h"
-#include "testing/gtest/include/gtest/gtest.h"
+#include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
+#include "services/network/test/test_url_loader_factory.h"
+#include "services/network/test/test_utils.h"
 
-// Exactly like net::FakeURLFetcher except has GetURL() return the redirect
-// destination.  (Normal FakeURLFetchers return the requested URL in response
-// to GetURL(), not the current URL the fetcher is processing.)
-class RedirectedURLFetcher : public net::FakeURLFetcher {
- public:
-  RedirectedURLFetcher(const GURL& url,
-                       const GURL& destination_url,
-                       net::URLFetcherDelegate* d,
-                       const std::string& response_data,
-                       net::HttpStatusCode response_code,
-                       net::URLRequestStatus::Status status)
-      : net::FakeURLFetcher(url, d, response_data, response_code, status),
-        destination_url_(destination_url) {}
-
-  const GURL& GetURL() const override { return destination_url_; }
-
- private:
-  GURL destination_url_;
-
-  DISALLOW_COPY_AND_ASSIGN(RedirectedURLFetcher);
-};
-
-// Used for constructing a FakeURLFetcher with a server-side redirect.  Server-
-// side redirects are provided using response headers.  FakeURLFetcherFactory
-// do not provide the ability to deliver response headers; this class does.
-class RedirectURLFetcherFactory : public net::URLFetcherFactory {
- public:
-  RedirectURLFetcherFactory() : net::URLFetcherFactory() {}
-
-  // Sets this factory to, in response to a request for |origin|, return a 301
-  // (redirection) response with the appropriate response headers to indicate a
-  // redirect to |destination|.
-  void SetRedirectLocation(const std::string& origin,
-                           const std::string& destination) {
-    redirections_[origin] = destination;
-  }
-
-  // net::URLFetcherFactory:
-  std::unique_ptr<net::URLFetcher> CreateURLFetcher(
-      int id,
-      const GURL& url,
-      net::URLFetcher::RequestType request_type,
-      net::URLFetcherDelegate* delegate,
-      net::NetworkTrafficAnnotationTag traffic_annotation) override {
-    const std::string& url_spec = url.spec();
-    EXPECT_TRUE(redirections_.find(url_spec) != redirections_.end())
-        << url_spec;
-    auto* fetcher = new RedirectedURLFetcher(
-        url, GURL(redirections_[url_spec]), delegate, std::string(),
-        net::HTTP_MOVED_PERMANENTLY, net::URLRequestStatus::CANCELED);
-    std::string headers = "HTTP/1.0 301 Moved Permanently\nLocation: " +
-                          redirections_[url_spec] + "\n";
-    fetcher->set_response_headers(scoped_refptr<net::HttpResponseHeaders>(
-        new net::HttpResponseHeaders(headers)));
-    return std::unique_ptr<net::URLFetcher>(fetcher);
-  }
-
- private:
-  std::unordered_map<std::string, std::string> redirections_;
-
-  DISALLOW_COPY_AND_ASSIGN(RedirectURLFetcherFactory);
-};
+using network::TestURLLoaderFactory;
 
 // A trival ChromeOmniboxNavigationObserver that keeps track of whether
 // CreateAlternateNavInfoBar() has been called.
@@ -131,18 +70,18 @@ class MockChromeOmniboxNavigationObserver
   DISALLOW_COPY_AND_ASSIGN(MockChromeOmniboxNavigationObserver);
 };
 
-class ChromeOmniboxNavigationObserverTest : public testing::Test {
+class ChromeOmniboxNavigationObserverTest
+    : public ChromeRenderViewHostTestHarness {
  protected:
   ChromeOmniboxNavigationObserverTest() {}
   ~ChromeOmniboxNavigationObserverTest() override {}
 
   content::NavigationController* navigation_controller() {
-    return &(web_contents_->GetController());
+    return &(web_contents()->GetController());
   }
 
-  TestingProfile* profile() { return &profile_; }
   TemplateURLService* model() {
-    return TemplateURLServiceFactory::GetForProfile(&profile_);
+    return TemplateURLServiceFactory::GetForProfile(profile());
   }
 
   // Functions that return the name of certain search keywords that are part
@@ -164,21 +103,15 @@ class ChromeOmniboxNavigationObserverTest : public testing::Test {
   }
 
  private:
-  // testing::Test:
+  // ChromeRenderViewHostTestHarness:
   void SetUp() override;
-
-  content::TestBrowserThreadBundle test_browser_thread_bundle_;
-  TestingProfile profile_;
-  std::unique_ptr<content::WebContents> web_contents_;
 
   DISALLOW_COPY_AND_ASSIGN(ChromeOmniboxNavigationObserverTest);
 };
 
 void ChromeOmniboxNavigationObserverTest::SetUp() {
-  web_contents_.reset(content::WebContentsTester::CreateTestWebContents(
-      profile(), content::SiteInstance::Create(profile())));
-
-  InfoBarService::CreateForWebContents(web_contents_.get());
+  ChromeRenderViewHostTestHarness::SetUp();
+  InfoBarService::CreateForWebContents(web_contents());
 
   // Set up a series of search engines for later testing.
   TemplateURLServiceFactoryTestUtil factory_util(profile());
@@ -187,31 +120,31 @@ void ChromeOmniboxNavigationObserverTest::SetUp() {
   TemplateURLData auto_gen_turl;
   auto_gen_turl.SetKeyword(auto_generated_search_keyword());
   auto_gen_turl.safe_for_autoreplace = true;
-  factory_util.model()->Add(base::MakeUnique<TemplateURL>(auto_gen_turl));
+  factory_util.model()->Add(std::make_unique<TemplateURL>(auto_gen_turl));
 
   TemplateURLData non_auto_gen_turl;
   non_auto_gen_turl.SetKeyword(non_auto_generated_search_keyword());
-  factory_util.model()->Add(base::MakeUnique<TemplateURL>(non_auto_gen_turl));
+  factory_util.model()->Add(std::make_unique<TemplateURL>(non_auto_gen_turl));
 
   TemplateURLData default_turl;
   default_turl.SetKeyword(default_search_keyword());
   factory_util.model()->SetUserSelectedDefaultSearchProvider(
-      factory_util.model()->Add(base::MakeUnique<TemplateURL>(default_turl)));
+      factory_util.model()->Add(std::make_unique<TemplateURL>(default_turl)));
 
   TemplateURLData prepopulated_turl;
   prepopulated_turl.SetKeyword(prepopulated_search_keyword());
   prepopulated_turl.prepopulate_id = 1;
-  factory_util.model()->Add(base::MakeUnique<TemplateURL>(prepopulated_turl));
+  factory_util.model()->Add(std::make_unique<TemplateURL>(prepopulated_turl));
 
   TemplateURLData policy_turl;
   policy_turl.SetKeyword(policy_search_keyword());
   policy_turl.created_by_policy = true;
-  factory_util.model()->Add(base::MakeUnique<TemplateURL>(policy_turl));
+  factory_util.model()->Add(std::make_unique<TemplateURL>(policy_turl));
 }
 
 TEST_F(ChromeOmniboxNavigationObserverTest, LoadStateAfterPendingNavigation) {
   std::unique_ptr<ChromeOmniboxNavigationObserver> observer =
-      base::MakeUnique<ChromeOmniboxNavigationObserver>(
+      std::make_unique<ChromeOmniboxNavigationObserver>(
           profile(), base::ASCIIToUTF16("test text"), AutocompleteMatch(),
           AutocompleteMatch());
   EXPECT_EQ(ChromeOmniboxNavigationObserver::LOAD_NOT_SEEN,
@@ -219,8 +152,9 @@ TEST_F(ChromeOmniboxNavigationObserverTest, LoadStateAfterPendingNavigation) {
 
   std::unique_ptr<content::NavigationEntry> entry =
       content::NavigationController::CreateNavigationEntry(
-          GURL(), content::Referrer(), ui::PAGE_TRANSITION_FROM_ADDRESS_BAR,
-          false, std::string(), profile());
+          GURL(), content::Referrer(), base::nullopt,
+          ui::PAGE_TRANSITION_FROM_ADDRESS_BAR, false, std::string(), profile(),
+          nullptr /* blob_url_loader_factory */);
 
   content::NotificationService::current()->Notify(
       content::NOTIFICATION_NAV_ENTRY_PENDING,
@@ -249,7 +183,7 @@ TEST_F(ChromeOmniboxNavigationObserverTest, DeleteBrokenCustomSearchEngines) {
 
   base::string16 query = base::ASCIIToUTF16(" text");
   for (size_t i = 0; i < cases.size(); ++i) {
-    SCOPED_TRACE("case #" + base::IntToString(i));
+    SCOPED_TRACE("case #" + base::NumberToString(i));
     // The keyword should always exist at the beginning.
     EXPECT_TRUE(model()->GetTemplateURLForKeyword(cases[i].keyword) != nullptr);
 
@@ -261,8 +195,9 @@ TEST_F(ChromeOmniboxNavigationObserverTest, DeleteBrokenCustomSearchEngines) {
                                             match, AutocompleteMatch());
     auto navigation_entry =
         content::NavigationController::CreateNavigationEntry(
-            GURL(), content::Referrer(), ui::PAGE_TRANSITION_FROM_ADDRESS_BAR,
-            false, std::string(), profile());
+            GURL(), content::Referrer(), base::nullopt,
+            ui::PAGE_TRANSITION_FROM_ADDRESS_BAR, false, std::string(),
+            profile(), nullptr /* blob_url_loader_factory */);
     content::LoadCommittedDetails details;
     details.http_status_code = cases[i].status_code;
     details.entry = navigation_entry.get();
@@ -279,8 +214,9 @@ TEST_F(ChromeOmniboxNavigationObserverTest, DeleteBrokenCustomSearchEngines) {
           profile(), base::ASCIIToUTF16("url navigation"), AutocompleteMatch(),
           AutocompleteMatch());
   auto navigation_entry = content::NavigationController::CreateNavigationEntry(
-      GURL(), content::Referrer(), ui::PAGE_TRANSITION_FROM_ADDRESS_BAR, false,
-      std::string(), profile());
+      GURL(), content::Referrer(), base::nullopt,
+      ui::PAGE_TRANSITION_FROM_ADDRESS_BAR, false, std::string(), profile(),
+      nullptr /* blob_url_loader_factory */);
   content::LoadCommittedDetails details;
   details.http_status_code = 404;
   details.entry = navigation_entry.get();
@@ -288,95 +224,105 @@ TEST_F(ChromeOmniboxNavigationObserverTest, DeleteBrokenCustomSearchEngines) {
 }
 
 TEST_F(ChromeOmniboxNavigationObserverTest, AlternateNavInfoBar) {
+  TestURLLoaderFactory test_url_loader_factory;
+  scoped_refptr<network::SharedURLLoaderFactory> shared_factory =
+      base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
+          &test_url_loader_factory);
+
+  const int kNetError = 0;
+  const int kNoResponse = -1;
   struct Response {
-    const std::string requested_url;
-    const bool net_request_successful;
+    const std::vector<std::string> urls;  // If more than one, 301 between them.
+    // The final status code to return after all the redirects, or one of
+    // kNetError or kNoResponse.
     const int http_response_code;
-    // Only needed if |http_response_code| is a redirection.
-    const std::string redirected_url;
+    std::string content;
   };
-  const Response kNoResponse = {std::string(), false, 0, std::string()};
 
   // All of these test cases assume the alternate nav URL is http://example/.
   struct Case {
-    const Response responses[2];
+    const Response response;
     const bool expected_alternate_nav_bar_shown;
   } cases[] = {
       // The only response provided is a net error.
-      {{{"http://example/", false, 0, std::string()}, kNoResponse}, false},
+      {{{"http://example/"}, kNetError}, false},
       // The response connected to a valid page.
-      {{{"http://example/", true, 200, std::string()}, kNoResponse}, true},
+      {{{"http://example/"}, 200}, true},
+      // A non-empty page, despite the HEAD.
+      {{{"http://example/"}, 200, "Content"}, true},
       // The response connected to an error page.
-      {{{"http://example/", true, 404, std::string()}, kNoResponse}, false},
+      {{{"http://example/"}, 404}, false},
 
       // The response redirected to same host, just http->https, with a path
       // change as well.  In this case the second URL should not fetched; Chrome
       // will optimistically assume the destination will return a valid page and
       // display the infobar.
-      {{{"http://example/", true, 301, "https://example/path"}, kNoResponse},
-       true},
+      {{{"http://example/", "https://example/path"}, kNoResponse}, true},
       // Ditto, making sure it still holds when the final destination URL
       // returns a valid status code.
-      {{{"http://example/", true, 301, "https://example/path"},
-        {"https://example/path", true, 200, std::string()}},
-       true},
+      {{{"http://example/", "https://example/path"}, 200}, true},
 
       // The response redirected to an entirely different host.  In these cases,
       // no URL should be fetched against this second host; again Chrome will
       // optimistically assume the destination will return a valid page and
       // display the infobar.
-      {{{"http://example/", true, 301, "http://new-destination/"}, kNoResponse},
-       true},
+      {{{"http://example/", "http://new-destination/"}, kNoResponse}, true},
       // Ditto, making sure it still holds when the final destination URL
       // returns a valid status code.
-      {{{"http://example/", true, 301, "http://new-destination/"},
-        {"http://new-destination/", true, 200, std::string()}},
-       true},
+      {{{"http://example/", "http://new-destination/"}, 200}, true},
 
       // The response redirected to same host, just http->https, with no other
       // changes.  In these cases, Chrome will fetch the second URL.
       // The second URL response returned a valid page.
-      {{{"http://example/", true, 301, "https://example/"},
-        {"https://example/", true, 200}},
-       true},
+      {{{"http://example/", "https://example/"}, 200}, true},
       // The second URL response returned an error page.
-      {{{"http://example/", true, 301, "https://example/"},
-        {"https://example/", true, 404}},
-       false},
+      {{{"http://example/", "https://example/"}, 404}, false},
       // The second URL response returned a net error.
-      {{{"http://example/", true, 301, "https://example/"},
-        {"https://example/", false, 0}},
-       false},
+      {{{"http://example/", "https://example/"}, kNetError}, false},
       // The second URL response redirected again.
-      {{{"http://example/", true, 301, "https://example/"},
-        {"https://example/", true, 301, "https://example/root"}},
+      {{{"http://example/", "https://example/", "https://example/root"},
+        kNoResponse},
        true},
   };
-  for (size_t i = 0; i < arraysize(cases); ++i) {
-    SCOPED_TRACE("case #" + base::IntToString(i));
+  for (size_t i = 0; i < base::size(cases); ++i) {
+    SCOPED_TRACE("case #" + base::NumberToString(i));
     const Case& test_case = cases[i];
+    const Response& response = test_case.response;
 
     // Set the URL request responses.
-    RedirectURLFetcherFactory redirecter_factory;
-    net::FakeURLFetcherFactory factory(&redirecter_factory);
-    for (size_t j = 0; (j < 2) && !test_case.responses[j].requested_url.empty();
-         ++j) {
-      if (!test_case.responses[j].redirected_url.empty()) {
-        redirecter_factory.SetRedirectLocation(
-            test_case.responses[j].requested_url,
-            test_case.responses[j].redirected_url);
-      } else {
-        // Not a redirected URL.  Used the regular FakeURLFetcherFactory
-        // interface.
-        factory.SetFakeResponse(GURL(test_case.responses[j].requested_url),
-                                std::string(),  // empty response
-                                static_cast<net::HttpStatusCode>(
-                                    test_case.responses[j].http_response_code),
-                                test_case.responses[j].net_request_successful
-                                    ? net::URLRequestStatus::SUCCESS
-                                    : net::URLRequestStatus::FAILED);
-      }
+    test_url_loader_factory.ClearResponses();
+
+    // Compute URL redirect chain.
+    TestURLLoaderFactory::Redirects redirects;
+    for (size_t dest = 1; dest < response.urls.size(); ++dest) {
+      net::RedirectInfo redir_info;
+      redir_info.new_url = GURL(response.urls[dest]);
+      redir_info.status_code = net::HTTP_MOVED_PERMANENTLY;
+      network::ResourceResponseHead redir_head =
+          network::CreateResourceResponseHead(net::HTTP_MOVED_PERMANENTLY);
+      redirects.push_back({redir_info, redir_head});
     }
+
+    // Fill in final response.
+    network::ResourceResponseHead http_head;
+    network::URLLoaderCompletionStatus net_status;
+    network::TestURLLoaderFactory::ResponseProduceFlags response_flags =
+        network::TestURLLoaderFactory::kResponseDefault;
+
+    if (response.http_response_code == kNoResponse) {
+      response_flags =
+          TestURLLoaderFactory::kResponseOnlyRedirectsNoDestination;
+    } else if (response.http_response_code == kNetError) {
+      net_status = network::URLLoaderCompletionStatus(net::ERR_FAILED);
+    } else {
+      net_status = network::URLLoaderCompletionStatus(net::OK);
+      http_head = network::CreateResourceResponseHead(
+          static_cast<net::HttpStatusCode>(response.http_response_code));
+    }
+
+    test_url_loader_factory.AddResponse(GURL(response.urls[0]), http_head,
+                                        response.content, net_status,
+                                        redirects);
 
     // Create the alternate nav match and the observer.
     // |observer| gets deleted automatically after all fetchers complete.
@@ -387,12 +333,14 @@ TEST_F(ChromeOmniboxNavigationObserverTest, AlternateNavInfoBar) {
         new MockChromeOmniboxNavigationObserver(
             profile(), base::ASCIIToUTF16("example"), AutocompleteMatch(),
             alternate_nav_match, &displayed_infobar);
+    observer->SetURLLoaderFactoryForTesting(shared_factory);
 
     // Send the observer NAV_ENTRY_PENDING to get the URL fetcher to start.
     auto navigation_entry =
         content::NavigationController::CreateNavigationEntry(
-            GURL(), content::Referrer(), ui::PAGE_TRANSITION_FROM_ADDRESS_BAR,
-            false, std::string(), profile());
+            GURL(), content::Referrer(), base::nullopt,
+            ui::PAGE_TRANSITION_FROM_ADDRESS_BAR, false, std::string(),
+            profile(), nullptr /* blob_url_loader_factory */);
     content::NotificationService::current()->Notify(
         content::NOTIFICATION_NAV_ENTRY_PENDING,
         content::Source<content::NavigationController>(navigation_controller()),

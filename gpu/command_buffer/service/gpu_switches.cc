@@ -6,13 +6,6 @@
 
 #include "base/macros.h"
 
-namespace gpu {
-
-const char kCmdDecoderValidatingName[] = "validating";
-const char kCmdDecoderPassthroughName[] = "passthrough";
-
-}  // namespace gpu
-
 namespace switches {
 
 // Always return success when compiling a shader. Linking will still fail.
@@ -69,11 +62,19 @@ const char kGLShaderIntermOutput[] = "gl-shader-interm-output";
 // round intermediate values in ANGLE.
 const char kEmulateShaderPrecision[] = "emulate-shader-precision";
 
-// Use the Pass-through command decoder, skipping all validation and state
-// tracking.
-const char kUseCmdDecoder[] = "use-cmd-decoder";
+// Enable Vulkan support and select Vulkan implementation, must also have
+// ENABLE_VULKAN defined.
+const char kUseVulkan[] = "use-vulkan";
+const char kVulkanImplementationNameNative[] = "native";
+const char kVulkanImplementationNameSwiftshader[] = "swiftshader";
 
-// Use a dedicated RasterInterfaceDecoder instead of generic GLES2Decoder.
-const char kEnableRasterDecoder[] = "enable-raster-decoder";
+// Disables VK_KHR_surface extension. Instead of using swapchain, bitblt will be
+// used for present render result on screen.
+const char kDisableVulkanSurface[] = "disable-vulkan-surface";
+
+// Disables falling back to GL based hardware rendering if initializing Vulkan
+// fails. This is to allow tests to catch regressions in Vulkan.
+const char kDisableVulkanFallbackToGLForTesting[] =
+    "disable-vulkan-fallback-to-gl-for-testing";
 
 }  // namespace switches

@@ -9,7 +9,6 @@
 #include "components/favicon/content/favicon_url_util.h"
 #include "components/favicon/core/favicon_service.h"
 #include "components/favicon/core/favicon_url.h"
-#include "components/history/core/browser/history_service.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/favicon_status.h"
 #include "content/public/browser/navigation_controller.h"
@@ -17,24 +16,22 @@
 #include "content/public/browser/navigation_entry.h"
 #include "content/public/browser/navigation_handle.h"
 #include "content/public/common/favicon_url.h"
-#include "content/public/common/manifest.h"
+#include "third_party/blink/public/common/manifest/manifest.h"
 #include "ui/gfx/image/image.h"
-
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(favicon::ContentFaviconDriver);
 
 namespace favicon {
 namespace {
 
 void ExtractManifestIcons(
-    const ContentFaviconDriver::ManifestDownloadCallback& callback,
+    ContentFaviconDriver::ManifestDownloadCallback callback,
     const GURL& manifest_url,
-    const content::Manifest& manifest) {
+    const blink::Manifest& manifest) {
   std::vector<FaviconURL> candidates;
-  for (const content::Manifest::Icon& icon : manifest.icons) {
+  for (const auto& icon : manifest.icons) {
     candidates.emplace_back(icon.src, favicon_base::IconType::kWebManifestIcon,
                             icon.sizes);
   }
-  callback.Run(candidates);
+  std::move(callback).Run(candidates);
 }
 
 }  // namespace
@@ -42,14 +39,13 @@ void ExtractManifestIcons(
 // static
 void ContentFaviconDriver::CreateForWebContents(
     content::WebContents* web_contents,
-    FaviconService* favicon_service,
-    history::HistoryService* history_service) {
+    FaviconService* favicon_service) {
   if (FromWebContents(web_contents))
     return;
 
-  web_contents->SetUserData(
-      UserDataKey(), base::WrapUnique(new ContentFaviconDriver(
-                         web_contents, favicon_service, history_service)));
+  web_contents->SetUserData(UserDataKey(),
+                            base::WrapUnique(new ContentFaviconDriver(
+                                web_contents, favicon_service)));
 }
 
 void ContentFaviconDriver::SaveFaviconEvenIfInIncognito() {
@@ -60,10 +56,8 @@ void ContentFaviconDriver::SaveFaviconEvenIfInIncognito() {
 
   // Make sure the page is in history, otherwise adding the favicon does
   // nothing.
-  if (!history_service())
-    return;
   GURL page_url = entry->GetURL();
-  history_service()->AddPageNoVisitForBookmark(page_url, entry->GetTitle());
+  favicon_service()->AddPageNoVisitForBookmark(page_url, entry->GetTitle());
 
   const content::FaviconStatus& favicon_status = entry->GetFavicon();
   if (!favicon_service() || !favicon_status.valid ||
@@ -79,8 +73,7 @@ void ContentFaviconDriver::SaveFaviconEvenIfInIncognito() {
 gfx::Image ContentFaviconDriver::GetFavicon() const {
   // Like GetTitle(), we also want to use the favicon for the last committed
   // entry rather than a pending navigation entry.
-  const content::NavigationController& controller =
-      web_contents()->GetController();
+  content::NavigationController& controller = web_contents()->GetController();
   content::NavigationEntry* entry = controller.GetTransientEntry();
   if (entry)
     return entry->GetFavicon().image;
@@ -92,8 +85,7 @@ gfx::Image ContentFaviconDriver::GetFavicon() const {
 }
 
 bool ContentFaviconDriver::FaviconIsValid() const {
-  const content::NavigationController& controller =
-      web_contents()->GetController();
+  content::NavigationController& controller = web_contents()->GetController();
   content::NavigationEntry* entry = controller.GetTransientEntry();
   if (entry)
     return entry->GetFavicon().valid;
@@ -111,12 +103,10 @@ GURL ContentFaviconDriver::GetActiveURL() {
   return entry ? entry->GetURL() : GURL();
 }
 
-ContentFaviconDriver::ContentFaviconDriver(
-    content::WebContents* web_contents,
-    FaviconService* favicon_service,
-    history::HistoryService* history_service)
+ContentFaviconDriver::ContentFaviconDriver(content::WebContents* web_contents,
+                                           FaviconService* favicon_service)
     : content::WebContentsObserver(web_contents),
-      FaviconDriverImpl(favicon_service, history_service),
+      FaviconDriverImpl(favicon_service),
       document_on_load_completed_(false) {}
 
 ContentFaviconDriver::~ContentFaviconDriver() {
@@ -129,12 +119,13 @@ int ContentFaviconDriver::DownloadImage(const GURL& url,
   bypass_cache_page_url_ = GURL();
 
   return web_contents()->DownloadImage(url, true, max_image_size, bypass_cache,
-                                       callback);
+                                       std::move(callback));
 }
 
 void ContentFaviconDriver::DownloadManifest(const GURL& url,
                                             ManifestDownloadCallback callback) {
-  web_contents()->GetManifest(base::Bind(&ExtractManifestIcons, callback));
+  web_contents()->GetManifest(
+      base::BindOnce(&ExtractManifestIcons, std::move(callback)));
 }
 
 bool ContentFaviconDriver::IsOffTheRecord() {
@@ -150,7 +141,8 @@ void ContentFaviconDriver::OnFaviconUpdated(
     const gfx::Image& image) {
   content::NavigationEntry* entry =
       web_contents()->GetController().GetLastCommittedEntry();
-  DCHECK(entry && entry->GetURL() == page_url);
+  DCHECK(entry);
+  DCHECK_EQ(entry->GetURL(), page_url);
 
   if (notification_icon_type == FaviconDriverObserver::NON_TOUCH_16_DIP) {
     entry->GetFavicon().valid = true;
@@ -186,10 +178,15 @@ void ContentFaviconDriver::DidUpdateFaviconURL(
   // occur when loading an initially blank page.
   content::NavigationEntry* entry =
       web_contents()->GetController().GetLastCommittedEntry();
-  if (!entry || !document_on_load_completed_)
+  if (!entry)
     return;
 
+  // We update |favicon_urls_| even if the list is believed to be partial
+  // (checked below), because callers of our getter favicon_urls() expect so.
   favicon_urls_ = candidates;
+
+  if (!document_on_load_completed_)
+    return;
 
   OnUpdateCandidates(entry->GetURL(),
                      FaviconURLsFromContentFaviconURLs(candidates),
@@ -265,5 +262,7 @@ void ContentFaviconDriver::DidFinishNavigation(
 void ContentFaviconDriver::DocumentOnLoadCompletedInMainFrame() {
   document_on_load_completed_ = true;
 }
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(ContentFaviconDriver)
 
 }  // namespace favicon

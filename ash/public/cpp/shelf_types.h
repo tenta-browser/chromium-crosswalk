@@ -53,19 +53,30 @@ enum ShelfBackgroundType {
   // The default transparent background.
   SHELF_BACKGROUND_DEFAULT,
 
-  // The background when a window is overlapping.
-  SHELF_BACKGROUND_OVERLAP,
-
-  // The background when a window is maximized.
+  // The background when a window is maximized or two windows are maximized
+  // for a split view.
   SHELF_BACKGROUND_MAXIMIZED,
 
   // The background when fullscreen app list is visible.
   SHELF_BACKGROUND_APP_LIST,
+
+  // The background when OOBE is active.
+  SHELF_BACKGROUND_OOBE,
+
+  // The background when login/lock/user-add is active.
+  SHELF_BACKGROUND_LOGIN,
+
+  // The background when login/lock/user-add is active and the wallpaper is not
+  // blurred.
+  SHELF_BACKGROUND_LOGIN_NONBLURRED_WALLPAPER,
+
+  // The background when overview is active.
+  SHELF_BACKGROUND_OVERVIEW,
 };
 
 // Source of the launch or activation request, for tracking.
 enum ShelfLaunchSource {
-  // The item was launched from an unknown source (ie. not the app list).
+  // The item was launched from an unknown source.
   LAUNCH_FROM_UNKNOWN,
 
   // The item was launched from a generic app list view.
@@ -73,6 +84,9 @@ enum ShelfLaunchSource {
 
   // The item was launched from an app list search view.
   LAUNCH_FROM_APP_LIST_SEARCH,
+
+  // The item was launched from the shelf itself.
+  LAUNCH_FROM_SHELF,
 };
 
 // The actions that may be performed when a shelf item is selected.
@@ -91,18 +105,15 @@ enum ShelfAction {
 
   // The app list launcher menu was shown.
   SHELF_ACTION_APP_LIST_SHOWN,
+
+  // The app list launcher menu was dismissed.
+  SHELF_ACTION_APP_LIST_DISMISSED,
 };
 
 // The type of a shelf item.
 enum ShelfItemType {
-  // Represents a running app panel.
-  TYPE_APP_PANEL,
-
   // Represents a pinned shortcut to an app, the app may be running or not.
   TYPE_PINNED_APP,
-
-  // Toggles visiblity of the app list.
-  TYPE_APP_LIST,
 
   // The browser shortcut button, the browser may be running or not.
   TYPE_BROWSER_SHORTCUT,
@@ -122,6 +133,11 @@ enum ShelfItemType {
 
 // Returns true if |type| is a valid ShelfItemType.
 ASH_PUBLIC_EXPORT bool IsValidShelfItemType(int64_t type);
+
+// Returns true if types |a| and |b| have the same pin state, i.e. if they
+// are both pinned apps (or a browser shortcut which is always pinned) or both
+// unpinned apps. Returns false if either a or b aren't an app type.
+ASH_PUBLIC_EXPORT bool SamePinState(ShelfItemType a, ShelfItemType b);
 
 // Represents the status of applications in the shelf.
 enum ShelfItemStatus {

@@ -4,11 +4,19 @@
 
 module viz.mojom;
 
-import "services/viz/public/interfaces/compositing/surface_id.mojom";
+import "gpu/ipc/common/vulkan_ycbcr_info.mojom";
+import "mojo/public/mojom/base/unguessable_token.mojom";
+import "services/viz/public/interfaces/compositing/surface_range.mojom";
 import "services/viz/public/interfaces/compositing/shared_quad_state.mojom";
 import "ui/gfx/geometry/mojo/geometry.mojom";
 import "ui/gfx/mojo/color_space.mojom";
 import "ui/gfx/mojo/transform.mojom";
+
+enum ProtectedVideoState {
+  kClear,
+  kSoftwareProtected,
+  kHardwareProtected,
+};
 
 struct DebugBorderQuadState {
   // Debug border color.
@@ -27,6 +35,10 @@ struct RenderPassQuadState {
   gfx.mojom.RectF mask_uv_rect;
   gfx.mojom.Size mask_texture_size;
 
+  // If true, the mask described by mask_resource_id should be applied to only
+  // the backdrop-filtered image.
+  bool mask_applies_to_backdrop;
+
   // The scale from layer space of the root layer of the render pass to
   // the render pass physical pixels. This scale is applied to the filter
   // parameters for pixel-moving filters. This scale should include
@@ -41,6 +53,7 @@ struct RenderPassQuadState {
   gfx.mojom.RectF tex_coord_rect;
 
   bool force_anti_aliasing_off;
+  float backdrop_filter_quality;
 };
 
 struct SolidColorQuadState {
@@ -51,14 +64,16 @@ struct SolidColorQuadState {
 struct StreamVideoQuadState {
   uint32 resource_id;
   gfx.mojom.Size resource_size_in_pixels;
-  gfx.mojom.Transform matrix;
+  gfx.mojom.PointF uv_top_left;
+  gfx.mojom.PointF uv_bottom_right;
+  gpu.mojom.VulkanYCbCrInfo? ycbcr_info;
 };
 
 struct SurfaceQuadState {
-  SurfaceId primary_surface_id;
-  SurfaceId? fallback_surface_id;
+  SurfaceRange surface_range;
   uint32 default_background_color;
   bool stretch_content_to_fill_bounds;
+  bool is_reflection;
 };
 
 struct TextureQuadState {
@@ -72,12 +87,13 @@ struct TextureQuadState {
   bool y_flipped;
   bool nearest_neighbor;
   bool secure_output_only;
+  ProtectedVideoState protected_video_type;
 };
 
 struct TileQuadState {
   gfx.mojom.RectF tex_coord_rect;
   gfx.mojom.Size texture_size;
-  bool swizzle_contents;
+  bool is_premultiplied;
   uint32 resource_id;
   bool nearest_neighbor;
   bool force_anti_aliasing_off;
@@ -96,7 +112,11 @@ struct YUVVideoQuadState {
   float resource_multiplier;
   uint32 bits_per_channel;
   gfx.mojom.ColorSpace video_color_space;
-  bool require_overlay;
+  ProtectedVideoState protected_video_type;
+};
+
+struct VideoHoleQuadState {
+  mojo_base.mojom.UnguessableToken overlay_plane_id;
 };
 
 union DrawQuadState {
@@ -108,6 +128,7 @@ union DrawQuadState {
   TextureQuadState texture_quad_state;
   TileQuadState tile_quad_state;
   YUVVideoQuadState yuv_video_quad_state;
+  VideoHoleQuadState video_hole_quad_state;
 };
 
 struct DrawQuad {

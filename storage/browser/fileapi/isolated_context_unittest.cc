@@ -8,6 +8,7 @@
 
 #include "base/logging.h"
 #include "base/macros.h"
+#include "base/stl_util.h"
 #include "storage/browser/fileapi/file_system_url.h"
 #include "storage/browser/fileapi/isolated_context.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -29,7 +30,7 @@ using storage::kFileSystemTypeNativeLocal;
 
 namespace content {
 
-typedef IsolatedContext::MountPointInfo FileInfo;
+using FileInfo = IsolatedContext::MountPointInfo;
 
 namespace {
 
@@ -53,16 +54,15 @@ const base::FilePath kTestPaths[] = {
 class IsolatedContextTest : public testing::Test {
  public:
   IsolatedContextTest() {
-    for (size_t i = 0; i < arraysize(kTestPaths); ++i)
-      fileset_.insert(kTestPaths[i].NormalizePathSeparators());
+    for (const auto& path : kTestPaths)
+      fileset_.insert(path.NormalizePathSeparators());
   }
 
   void SetUp() override {
     IsolatedContext::FileInfoSet files;
-    for (size_t i = 0; i < arraysize(kTestPaths); ++i) {
+    for (const auto& path : kTestPaths) {
       std::string name;
-      ASSERT_TRUE(
-          files.AddPath(kTestPaths[i].NormalizePathSeparators(), &name));
+      ASSERT_TRUE(files.AddPath(path.NormalizePathSeparators(), &name));
       names_.push_back(name);
     }
     id_ = IsolatedContext::GetInstance()->RegisterDraggedFileSystem(files);
@@ -99,7 +99,7 @@ TEST_F(IsolatedContextTest, RegisterAndRevokeTest) {
   // See if the name of each registered kTestPaths (that is what we
   // register in SetUp() by RegisterDraggedFileSystem) is properly cracked as
   // a valid virtual path in the isolated filesystem.
-  for (size_t i = 0; i < arraysize(kTestPaths); ++i) {
+  for (size_t i = 0; i < base::size(kTestPaths); ++i) {
     base::FilePath virtual_path = isolated_context()->CreateVirtualRootPath(id_)
         .AppendASCII(names_[i]);
     std::string cracked_id;
@@ -125,56 +125,59 @@ TEST_F(IsolatedContextTest, RegisterAndRevokeTest) {
   // Deref the current one and registering a new one.
   isolated_context()->RemoveReference(id_);
 
-  std::string id2 = isolated_context()->RegisterFileSystemForPath(
-      kFileSystemTypeNativeLocal, std::string(),
-      base::FilePath(DRIVE FPL("/foo")), NULL);
+  IsolatedContext::ScopedFSHandle fs2 =
+      isolated_context()->RegisterFileSystemForPath(
+          kFileSystemTypeNativeLocal, std::string(),
+          base::FilePath(DRIVE FPL("/foo")), nullptr);
 
   // Make sure the GetDraggedFileInfo returns false for both ones.
-  ASSERT_FALSE(isolated_context()->GetDraggedFileInfo(id2, &toplevels));
+  ASSERT_FALSE(isolated_context()->GetDraggedFileInfo(fs2.id(), &toplevels));
   ASSERT_FALSE(isolated_context()->GetDraggedFileInfo(id_, &toplevels));
 
   // Make sure the GetRegisteredPath returns true only for the new one.
   ASSERT_FALSE(isolated_context()->GetRegisteredPath(id_, &path));
-  ASSERT_TRUE(isolated_context()->GetRegisteredPath(id2, &path));
+  ASSERT_TRUE(isolated_context()->GetRegisteredPath(fs2.id(), &path));
 
   // Try registering three more file systems for the same path as id2.
-  std::string id3 = isolated_context()->RegisterFileSystemForPath(
-      kFileSystemTypeNativeLocal, std::string(), path, NULL);
-  std::string id4 = isolated_context()->RegisterFileSystemForPath(
-      kFileSystemTypeNativeLocal, std::string(), path, NULL);
-  std::string id5 = isolated_context()->RegisterFileSystemForPath(
-      kFileSystemTypeNativeLocal, std::string(), path, NULL);
+  IsolatedContext::ScopedFSHandle fs3 =
+      isolated_context()->RegisterFileSystemForPath(
+          kFileSystemTypeNativeLocal, std::string(), path, nullptr);
+  IsolatedContext::ScopedFSHandle fs4 =
+      isolated_context()->RegisterFileSystemForPath(
+          kFileSystemTypeNativeLocal, std::string(), path, nullptr);
+  IsolatedContext::ScopedFSHandle fs5 =
+      isolated_context()->RegisterFileSystemForPath(
+          kFileSystemTypeNativeLocal, std::string(), path, nullptr);
 
   // Remove file system for id4.
-  isolated_context()->AddReference(id4);
-  isolated_context()->RemoveReference(id4);
+  fs4 = IsolatedContext::ScopedFSHandle();
 
   // Only id4 should become invalid now.
-  ASSERT_TRUE(isolated_context()->GetRegisteredPath(id2, &path));
-  ASSERT_TRUE(isolated_context()->GetRegisteredPath(id3, &path));
-  ASSERT_FALSE(isolated_context()->GetRegisteredPath(id4, &path));
-  ASSERT_TRUE(isolated_context()->GetRegisteredPath(id5, &path));
+  ASSERT_TRUE(isolated_context()->GetRegisteredPath(fs2.id(), &path));
+  ASSERT_TRUE(isolated_context()->GetRegisteredPath(fs3.id(), &path));
+  ASSERT_FALSE(isolated_context()->GetRegisteredPath(fs4.id(), &path));
+  ASSERT_TRUE(isolated_context()->GetRegisteredPath(fs5.id(), &path));
 
   // Revoke file system id5, after adding multiple references.
-  isolated_context()->AddReference(id5);
-  isolated_context()->AddReference(id5);
-  isolated_context()->AddReference(id5);
-  isolated_context()->RevokeFileSystem(id5);
+  isolated_context()->AddReference(fs5.id());
+  isolated_context()->AddReference(fs5.id());
+  isolated_context()->AddReference(fs5.id());
+  isolated_context()->RevokeFileSystem(fs5.id());
 
   // No matter how many references we add id5 must be invalid now.
-  ASSERT_TRUE(isolated_context()->GetRegisteredPath(id2, &path));
-  ASSERT_TRUE(isolated_context()->GetRegisteredPath(id3, &path));
-  ASSERT_FALSE(isolated_context()->GetRegisteredPath(id4, &path));
-  ASSERT_FALSE(isolated_context()->GetRegisteredPath(id5, &path));
+  ASSERT_TRUE(isolated_context()->GetRegisteredPath(fs2.id(), &path));
+  ASSERT_TRUE(isolated_context()->GetRegisteredPath(fs3.id(), &path));
+  ASSERT_FALSE(isolated_context()->GetRegisteredPath(fs4.id(), &path));
+  ASSERT_FALSE(isolated_context()->GetRegisteredPath(fs5.id(), &path));
 
   // Revoke the file systems by path.
   isolated_context()->RevokeFileSystemByPath(path);
 
   // Now all the file systems associated to the path must be invalid.
-  ASSERT_FALSE(isolated_context()->GetRegisteredPath(id2, &path));
-  ASSERT_FALSE(isolated_context()->GetRegisteredPath(id3, &path));
-  ASSERT_FALSE(isolated_context()->GetRegisteredPath(id4, &path));
-  ASSERT_FALSE(isolated_context()->GetRegisteredPath(id5, &path));
+  ASSERT_FALSE(isolated_context()->GetRegisteredPath(fs2.id(), &path));
+  ASSERT_FALSE(isolated_context()->GetRegisteredPath(fs3.id(), &path));
+  ASSERT_FALSE(isolated_context()->GetRegisteredPath(fs4.id(), &path));
+  ASSERT_FALSE(isolated_context()->GetRegisteredPath(fs5.id(), &path));
 }
 
 TEST_F(IsolatedContextTest, CrackWithRelativePaths) {
@@ -196,8 +199,8 @@ TEST_F(IsolatedContextTest, CrackWithRelativePaths) {
     { FPL("foo/..\\baz"), SHOULD_FAIL_WITH_WIN_SEPARATORS },
   };
 
-  for (size_t i = 0; i < arraysize(kTestPaths); ++i) {
-    for (size_t j = 0; j < arraysize(relatives); ++j) {
+  for (size_t i = 0; i < base::size(kTestPaths); ++i) {
+    for (size_t j = 0; j < base::size(relatives); ++j) {
       SCOPED_TRACE(testing::Message() << "Testing "
                    << kTestPaths[i].value() << " " << relatives[j].path);
       base::FilePath virtual_path =
@@ -246,8 +249,8 @@ TEST_F(IsolatedContextTest, CrackURLWithRelativePaths) {
     { FPL("foo/..\\baz"), SHOULD_FAIL_WITH_WIN_SEPARATORS },
   };
 
-  for (size_t i = 0; i < arraysize(kTestPaths); ++i) {
-    for (size_t j = 0; j < arraysize(relatives); ++j) {
+  for (size_t i = 0; i < base::size(kTestPaths); ++i) {
+    for (size_t j = 0; j < base::size(relatives); ++j) {
       SCOPED_TRACE(testing::Message() << "Testing "
                    << kTestPaths[i].value() << " " << relatives[j].path);
       base::FilePath virtual_path =
@@ -255,13 +258,14 @@ TEST_F(IsolatedContextTest, CrackURLWithRelativePaths) {
               names_[i]).Append(relatives[j].path);
 
       FileSystemURL cracked = isolated_context()->CreateCrackedFileSystemURL(
-          GURL("http://chromium.org"), kFileSystemTypeIsolated, virtual_path);
+          url::Origin::Create(GURL("http://chromium.org")),
+          kFileSystemTypeIsolated, virtual_path);
 
       ASSERT_EQ(relatives[j].valid, cracked.is_valid());
 
       if (!relatives[j].valid)
         continue;
-      ASSERT_EQ(GURL("http://chromium.org"), cracked.origin());
+      ASSERT_EQ("http://chromium.org", cracked.origin().Serialize());
       ASSERT_EQ(kTestPaths[i].Append(relatives[j].path)
                     .NormalizePathSeparators().value(),
                 cracked.path().value());
@@ -283,7 +287,8 @@ TEST_F(IsolatedContextTest, TestWithVirtualRoot) {
   // that has no corresponding platform directory.
   base::FilePath virtual_path = isolated_context()->CreateVirtualRootPath(id_);
   ASSERT_TRUE(isolated_context()->CrackVirtualPath(
-      virtual_path, &cracked_id, NULL, NULL, &cracked_path, &cracked_option));
+      virtual_path, &cracked_id, nullptr, nullptr, &cracked_path,
+      &cracked_option));
   ASSERT_EQ(FPL(""), cracked_path.value());
   ASSERT_EQ(id_, cracked_id);
 
@@ -292,7 +297,8 @@ TEST_F(IsolatedContextTest, TestWithVirtualRoot) {
   virtual_path = isolated_context()->CreateVirtualRootPath(
       id_).AppendASCII("foo");
   ASSERT_FALSE(isolated_context()->CrackVirtualPath(
-      virtual_path, &cracked_id, NULL, NULL, &cracked_path, &cracked_option));
+      virtual_path, &cracked_id, nullptr, nullptr, &cracked_path,
+      &cracked_option));
 }
 
 TEST_F(IsolatedContextTest, CanHandleURL) {
@@ -353,7 +359,7 @@ TEST_F(IsolatedContextTest, VirtualFileSystemTests) {
   std::string cracked_inner_id;
   FileSystemMountOption cracked_option;
   ASSERT_TRUE(isolated_context()->CrackVirtualPath(
-      whole_virtual_path, &cracked_id, NULL, &cracked_inner_id,
+      whole_virtual_path, &cracked_id, nullptr, &cracked_inner_id,
       &cracked_path, &cracked_option));
   ASSERT_EQ(database_fsid, cracked_id);
   ASSERT_EQ(test_virtual_path, cracked_path);

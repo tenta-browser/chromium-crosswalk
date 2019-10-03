@@ -9,7 +9,6 @@
 #include <utility>
 #include <vector>
 
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_split.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browser_process.h"
@@ -17,12 +16,12 @@
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/extensions/api/autofill_private.h"
 #include "chrome/common/pref_names.h"
-#include "components/autofill/core/browser/autofill_country.h"
-#include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/autofill_type.h"
-#include "components/autofill/core/browser/country_combobox_model.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/field_types.h"
+#include "components/autofill/core/browser/geo/autofill_country.h"
+#include "components/autofill/core/browser/ui/country_combobox_model.h"
 #include "components/prefs/pref_service.h"
 #include "components/strings/grit/components_strings.h"
 #include "ui/base/l10n/l10n_util.h"
@@ -63,7 +62,7 @@ std::unique_ptr<std::vector<std::string>> GetValueList(
 std::unique_ptr<std::string> GetStringFromProfile(
     const autofill::AutofillProfile& profile,
     const autofill::ServerFieldType& type) {
-  return base::MakeUnique<std::string>(
+  return std::make_unique<std::string>(
       base::UTF16ToUTF8(profile.GetRawInfo(type)));
 }
 
@@ -133,7 +132,8 @@ autofill_private::CountryEntry CountryToCountryEntry(
 }
 
 autofill_private::CreditCardEntry CreditCardToCreditCardEntry(
-    const autofill::CreditCard& credit_card) {
+    const autofill::CreditCard& credit_card,
+    const autofill::PersonalDataManager& personal_data) {
   autofill_private::CreditCardEntry card;
 
   // Add all credit card fields to the entry.
@@ -146,8 +146,6 @@ autofill_private::CreditCardEntry CreditCardToCreditCardEntry(
       credit_card.GetRawInfo(autofill::CREDIT_CARD_EXP_MONTH))));
   card.expiration_year.reset(new std::string(base::UTF16ToUTF8(
       credit_card.GetRawInfo(autofill::CREDIT_CARD_EXP_4_DIGIT_YEAR))));
-  card.billing_address_id.reset(
-      new std::string(credit_card.billing_address_id()));
 
   // Create address metadata and add it to |address|.
   std::unique_ptr<autofill_private::AutofillMetadata> metadata(
@@ -161,6 +159,11 @@ autofill_private::CreditCardEntry CreditCardToCreditCardEntry(
       credit_card.record_type() == autofill::CreditCard::LOCAL_CARD));
   metadata->is_cached.reset(new bool(
       credit_card.record_type() == autofill::CreditCard::FULL_SERVER_CARD));
+  // IsValid() checks if both card number and expiration date are valid.
+  // IsServerCard() checks whether there is a duplicated server card in
+  // |personal_data|.
+  metadata->is_migratable.reset(new bool(
+      credit_card.IsValid() && !personal_data.IsServerCard(&credit_card)));
   card.metadata = std::move(metadata);
 
   return card;
@@ -213,7 +216,7 @@ CreditCardEntryList GenerateCreditCardList(
 
   CreditCardEntryList list;
   for (const autofill::CreditCard* card : cards)
-    list.push_back(CreditCardToCreditCardEntry(*card));
+    list.push_back(CreditCardToCreditCardEntry(*card, personal_data));
 
   return list;
 }

@@ -8,8 +8,6 @@
 
 #include <utility>
 
-#include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "components/policy/core/browser/policy_error_map.h"
 #include "components/policy/core/common/policy_map.h"
@@ -37,8 +35,8 @@ void SetListInPref(const PolicyMap& policies,
     DCHECK(is_list);
   }
   dict->Set(key, policy_list
-                     ? base::MakeUnique<base::Value>(policy_list->Clone())
-                     : base::MakeUnique<base::Value>(base::Value::Type::LIST));
+                     ? std::make_unique<base::Value>(policy_list->Clone())
+                     : std::make_unique<base::Value>(base::Value::Type::LIST));
 }
 
 // Extracts a string from a policy value and adds it to a pref dictionary.
@@ -148,7 +146,7 @@ void DefaultSearchPolicyHandler::ApplyPolicySettings(const PolicyMap& policies,
     return;
 
   std::unique_ptr<base::DictionaryValue> dict(new base::DictionaryValue);
-  for (size_t i = 0; i < arraysize(kDefaultSearchPolicyDataMap); ++i) {
+  for (size_t i = 0; i < base::size(kDefaultSearchPolicyDataMap); ++i) {
     const char* policy_name = kDefaultSearchPolicyDataMap[i].policy_name;
     // kDefaultSearchProviderEnabled has already been handled.
     if (policy_name == key::kDefaultSearchProviderEnabled)
@@ -175,7 +173,7 @@ void DefaultSearchPolicyHandler::ApplyPolicySettings(const PolicyMap& policies,
 
   // Set the fields which are not specified by the policy to default values.
   dict->SetString(DefaultSearchManager::kID,
-                  base::Int64ToString(kInvalidTemplateURLID));
+                  base::NumberToString(kInvalidTemplateURLID));
   dict->SetInteger(DefaultSearchManager::kPrepopulateID, 0);
   dict->SetString(DefaultSearchManager::kSyncGUID, std::string());
   dict->SetString(DefaultSearchManager::kOriginatingURL, std::string());
@@ -280,7 +278,7 @@ void DefaultSearchPolicyHandler::EnsureListPrefExists(
   base::Value* value;
   base::ListValue* list_value;
   if (!prefs->GetValue(path, &value) || !value->GetAsList(&list_value))
-    prefs->SetValue(path, base::MakeUnique<base::ListValue>());
+    prefs->SetValue(path, base::Value(base::Value::Type::LIST));
 }
 
 }  // namespace policy

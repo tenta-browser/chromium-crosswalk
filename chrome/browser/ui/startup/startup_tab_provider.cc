@@ -5,11 +5,10 @@
 #include "chrome/browser/ui/startup/startup_tab_provider.h"
 
 #include "base/metrics/histogram_macros.h"
-#include "build/build_config.h"
 #include "chrome/browser/first_run/first_run.h"
 #include "chrome/browser/profile_resetter/triggered_profile_resetter.h"
 #include "chrome/browser/profile_resetter/triggered_profile_resetter_factory.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/browser/signin/signin_util.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_list.h"
@@ -19,29 +18,21 @@
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "components/prefs/pref_service.h"
-#include "components/signin/core/browser/signin_manager.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
+#include "components/signin/public/identity_manager/primary_account_mutator.h"
 #include "net/base/url_util.h"
 
 #if defined(OS_WIN)
 #include "base/win/windows_version.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/shell_integration.h"
-#endif
+#endif  // defined(OS_WIN)
+
+#if defined(OS_WIN) && defined(GOOGLE_CHROME_BUILD)
+#include "chrome/browser/ui/webui/welcome/nux_helper.h"
+#endif  // defined(OS_WIN) && defined(GOOGLE_CHROME_BUILD)
 
 namespace {
-
-#if defined(OS_WIN)
-// Returns false if the in-product default browser UX is suppressed by install
-// mode (e.g., Chrome Canary) or by policy.
-bool SetDefaultBrowserAllowed(PrefService* local_state) {
-  if (!shell_integration::CanSetAsDefaultBrowser())
-    return false;
-  return !local_state ||
-         !local_state->IsManagedPreference(
-             prefs::kDefaultBrowserSettingEnabled) ||
-         local_state->GetBoolean(prefs::kDefaultBrowserSettingEnabled);
-}
-#endif  // defined(OS_WIN)
 
 // Attempts to find an existing, non-empty tabbed browser for this profile.
 bool ProfileHasOtherTabbedBrowser(Profile* profile) {
@@ -70,33 +61,11 @@ StartupTabs StartupTabProviderImpl::GetOnboardingTabs(Profile* profile) const {
   standard_params.has_seen_welcome_page =
       prefs && prefs->GetBoolean(prefs::kHasSeenWelcomePage);
   standard_params.is_signin_allowed = profile->IsSyncAllowed();
-  SigninManager* signin_manager = SigninManagerFactory::GetForProfile(profile);
-  standard_params.is_signed_in =
-      signin_manager && signin_manager->IsAuthenticated();
-  standard_params.is_signin_in_progress =
-      signin_manager && signin_manager->AuthInProgress();
+  if (auto* identity_manager = IdentityManagerFactory::GetForProfile(profile)) {
+    standard_params.is_signed_in = identity_manager->HasPrimaryAccount();
+  }
   standard_params.is_supervised_user = profile->IsSupervised();
   standard_params.is_force_signin_enabled = signin_util::IsForceSigninEnabled();
-
-#if defined(OS_WIN)
-  // Windows 10 has unique onboarding policies and content.
-  if (base::win::GetVersion() >= base::win::VERSION_WIN10) {
-    Win10OnboardingTabsParams win10_params;
-    PrefService* local_state = g_browser_process->local_state();
-    const shell_integration::DefaultWebClientState web_client_state =
-        g_browser_process->CachedDefaultWebClientState();
-    win10_params.has_seen_win10_promo =
-        local_state && local_state->GetBoolean(prefs::kHasSeenWin10PromoPage);
-    win10_params.set_default_browser_allowed =
-        SetDefaultBrowserAllowed(local_state);
-    // Do not welcome if this Chrome or another side-by-side install was the
-    // default browser at startup.
-    win10_params.is_default_browser =
-        web_client_state == shell_integration::IS_DEFAULT ||
-        web_client_state == shell_integration::OTHER_MODE_IS_DEFAULT;
-    return GetWin10OnboardingTabsForState(standard_params, win10_params);
-  }
-#endif  // defined(OS_WIN)
 
   return GetStandardOnboardingTabsForState(standard_params);
 #endif  // defined(OS_CHROMEOS)
@@ -109,24 +78,10 @@ StartupTabs StartupTabProviderImpl::GetWelcomeBackTabs(
   StartupTabs tabs;
   if (!process_startup || !browser_creator)
     return tabs;
-  switch (browser_creator->welcome_back_page()) {
-    case StartupBrowserCreator::WelcomeBackPage::kNone:
-      break;
-#if defined(OS_WIN)
-    case StartupBrowserCreator::WelcomeBackPage::kWelcomeWin10:
-      if (CanShowWin10Welcome(
-              SetDefaultBrowserAllowed(g_browser_process->local_state()),
-              profile->IsSupervised())) {
-        tabs.emplace_back(GetWin10WelcomePageUrl(false), false);
-        break;
-      }  // else fall through below.
-#endif   // defined(OS_WIN)
-    case StartupBrowserCreator::WelcomeBackPage::kWelcomeStandard:
-      if (CanShowWelcome(profile->IsSyncAllowed(), profile->IsSupervised(),
-                         signin_util::IsForceSigninEnabled())) {
-        tabs.emplace_back(GetWelcomePageUrl(false), false);
-      }
-      break;
+  if (browser_creator->welcome_back_page() &&
+      CanShowWelcome(profile->IsSyncAllowed(), profile->IsSupervised(),
+                     signin_util::IsForceSigninEnabled())) {
+    tabs.emplace_back(GetWelcomePageUrl(false), false);
   }
   return tabs;
 }
@@ -174,6 +129,11 @@ StartupTabs StartupTabProviderImpl::GetNewTabPageTabs(
       StartupBrowserCreator::GetSessionStartupPref(command_line, profile));
 }
 
+StartupTabs StartupTabProviderImpl::GetPostCrashTabs(
+    bool has_incompatible_applications) const {
+  return GetPostCrashTabsForState(has_incompatible_applications);
+}
+
 // static
 bool StartupTabProviderImpl::CanShowWelcome(bool is_signin_allowed,
                                             bool is_supervised_user,
@@ -184,9 +144,8 @@ bool StartupTabProviderImpl::CanShowWelcome(bool is_signin_allowed,
 // static
 bool StartupTabProviderImpl::ShouldShowWelcomeForOnboarding(
     bool has_seen_welcome_page,
-    bool is_signed_in,
-    bool is_signin_in_progress) {
-  return !has_seen_welcome_page && !is_signed_in && !is_signin_in_progress;
+    bool is_signed_in) {
+  return !has_seen_welcome_page && !is_signed_in;
 }
 
 // static
@@ -196,43 +155,11 @@ StartupTabs StartupTabProviderImpl::GetStandardOnboardingTabsForState(
   if (CanShowWelcome(params.is_signin_allowed, params.is_supervised_user,
                      params.is_force_signin_enabled) &&
       ShouldShowWelcomeForOnboarding(params.has_seen_welcome_page,
-                                     params.is_signed_in,
-                                     params.is_signin_in_progress)) {
+                                     params.is_signed_in)) {
     tabs.emplace_back(GetWelcomePageUrl(!params.is_first_run), false);
   }
   return tabs;
 }
-
-#if defined(OS_WIN)
-// static
-bool StartupTabProviderImpl::CanShowWin10Welcome(
-    bool set_default_browser_allowed,
-    bool is_supervised_user) {
-  return set_default_browser_allowed && !is_supervised_user;
-}
-
-// static
-bool StartupTabProviderImpl::ShouldShowWin10WelcomeForOnboarding(
-    bool has_seen_win10_promo,
-    bool is_default_browser) {
-  return !has_seen_win10_promo && !is_default_browser;
-}
-
-// static
-StartupTabs StartupTabProviderImpl::GetWin10OnboardingTabsForState(
-    const StandardOnboardingTabsParams& standard_params,
-    const Win10OnboardingTabsParams& win10_params) {
-  if (CanShowWin10Welcome(win10_params.set_default_browser_allowed,
-                          standard_params.is_supervised_user) &&
-      ShouldShowWin10WelcomeForOnboarding(win10_params.has_seen_win10_promo,
-                                          win10_params.is_default_browser)) {
-    return {StartupTab(GetWin10WelcomePageUrl(!standard_params.is_first_run),
-                       false)};
-  }
-
-  return GetStandardOnboardingTabsForState(standard_params);
-}
-#endif
 
 // static
 StartupTabs StartupTabProviderImpl::GetMasterPrefsTabsForState(
@@ -300,6 +227,17 @@ StartupTabs StartupTabProviderImpl::GetNewTabPageTabsForState(
 }
 
 // static
+StartupTabs StartupTabProviderImpl::GetPostCrashTabsForState(
+    bool has_incompatible_applications) {
+  StartupTabs tabs;
+#if defined(OS_WIN) && defined(GOOGLE_CHROME_BUILD)
+  if (has_incompatible_applications)
+    tabs.emplace_back(GetIncompatibleApplicationsUrl(), false);
+#endif  // defined(OS_WIN) && defined(GOOGLE_CHROME_BUILD)
+  return tabs;
+}
+
+// static
 GURL StartupTabProviderImpl::GetWelcomePageUrl(bool use_later_run_variant) {
   GURL url(chrome::kChromeUIWelcomeURL);
   return use_later_run_variant
@@ -307,18 +245,14 @@ GURL StartupTabProviderImpl::GetWelcomePageUrl(bool use_later_run_variant) {
              : url;
 }
 
-#if defined(OS_WIN)
+#if defined(OS_WIN) && defined(GOOGLE_CHROME_BUILD)
 // static
-GURL StartupTabProviderImpl::GetWin10WelcomePageUrl(
-    bool use_later_run_variant) {
-  // Record that the Welcome page was added to the startup url list.
-  UMA_HISTOGRAM_BOOLEAN("Welcome.Win10.NewPromoPageAdded", true);
-  GURL url(chrome::kChromeUIWelcomeWin10URL);
-  return use_later_run_variant
-             ? net::AppendQueryParameter(url, "text", "faster")
-             : url;
+GURL StartupTabProviderImpl::GetIncompatibleApplicationsUrl() {
+  UMA_HISTOGRAM_BOOLEAN("IncompatibleApplicationsPage.AddedPostCrash", true);
+  GURL url(chrome::kChromeUISettingsURL);
+  return url.Resolve("incompatibleApplications");
 }
-#endif
+#endif  // defined(OS_WIN) && defined(GOOGLE_CHROME_BUILD)
 
 // static
 GURL StartupTabProviderImpl::GetTriggeredResetSettingsUrl() {

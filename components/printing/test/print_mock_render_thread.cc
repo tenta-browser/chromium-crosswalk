@@ -12,7 +12,7 @@
 #include "build/build_config.h"
 #include "components/printing/test/mock_printer.h"
 #include "ipc/ipc_sync_message.h"
-#include "printing/features/features.h"
+#include "printing/buildflags/buildflags.h"
 #include "printing/page_range.h"
 #include "printing/print_job_constants.h"
 #include "printing/units.h"
@@ -41,7 +41,7 @@ PrintMockRenderThread::GetIOTaskRunner() {
 }
 
 void PrintMockRenderThread::set_io_task_runner(
-    const scoped_refptr<base::SingleThreadTaskRunner>& task_runner) {
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner) {
   io_task_runner_ = task_runner;
 }
 
@@ -59,10 +59,9 @@ bool PrintMockRenderThread::OnMessageReceived(const IPC::Message& msg) {
     IPC_MESSAGE_HANDLER(PrintHostMsg_UpdatePrintSettings, OnUpdatePrintSettings)
     IPC_MESSAGE_HANDLER(PrintHostMsg_DidGetPrintedPagesCount,
                         OnDidGetPrintedPagesCount)
-    IPC_MESSAGE_HANDLER(PrintHostMsg_DidPrintPage, OnDidPrintPage)
+    IPC_MESSAGE_HANDLER(PrintHostMsg_DidPrintDocument, OnDidPrintDocument)
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
-    IPC_MESSAGE_HANDLER(PrintHostMsg_DidGetPreviewPageCount,
-                        OnDidGetPreviewPageCount)
+    IPC_MESSAGE_HANDLER(PrintHostMsg_DidStartPreview, OnDidStartPreview)
     IPC_MESSAGE_HANDLER(PrintHostMsg_DidPreviewPage, OnDidPreviewPage)
     IPC_MESSAGE_HANDLER(PrintHostMsg_CheckForCancel, OnCheckForCancel)
 #endif
@@ -93,25 +92,28 @@ void PrintMockRenderThread::OnDidGetPrintedPagesCount(int cookie,
   printer_->SetPrintedPagesCount(cookie, number_pages);
 }
 
-void PrintMockRenderThread::OnDidPrintPage(
-    const PrintHostMsg_DidPrintPage_Params& params) {
+void PrintMockRenderThread::OnDidPrintDocument(
+    const PrintHostMsg_DidPrintDocument_Params& params) {
   printer_->PrintPage(params);
 }
 
 #if BUILDFLAG(ENABLE_PRINT_PREVIEW)
-void PrintMockRenderThread::OnDidGetPreviewPageCount(
-    const PrintHostMsg_DidGetPreviewPageCount_Params& params) {
+void PrintMockRenderThread::OnDidStartPreview(
+    const PrintHostMsg_DidStartPreview_Params& params,
+    const PrintHostMsg_PreviewIds& ids) {
   print_preview_pages_remaining_ = params.page_count;
 }
 
 void PrintMockRenderThread::OnDidPreviewPage(
-    const PrintHostMsg_DidPreviewPage_Params& params) {
+    const PrintHostMsg_DidPreviewPage_Params& params,
+    const PrintHostMsg_PreviewIds& ids) {
   DCHECK_GE(params.page_number, printing::FIRST_PAGE_INDEX);
   print_preview_pages_remaining_--;
+  print_preview_pages_.emplace_back(
+      params.page_number, params.content.metafile_data_region.GetSize());
 }
 
-void PrintMockRenderThread::OnCheckForCancel(int32_t preview_ui_id,
-                                             int preview_request_id,
+void PrintMockRenderThread::OnCheckForCancel(const PrintHostMsg_PreviewIds& ids,
                                              bool* cancel) {
   *cancel =
       (print_preview_pages_remaining_ == print_preview_cancel_page_number_);
@@ -176,7 +178,8 @@ void PrintMockRenderThread::OnUpdatePrintSettings(
         media_size_value->GetInteger(printing::kSettingMediaSizeHeightMicrons,
                                      &height_microns)) {
       float device_microns_per_unit =
-          (printing::kHundrethsMMPerInch * 10.0f) / printing::kDefaultPdfDpi;
+          static_cast<float>(printing::kMicronsPerInch) /
+          printing::kDefaultPdfDpi;
       page_size = gfx::Size(width_microns / device_microns_per_unit,
                             height_microns / device_microns_per_unit);
     }
@@ -209,5 +212,10 @@ void PrintMockRenderThread::set_print_preview_cancel_page_number(int page) {
 
 int PrintMockRenderThread::print_preview_pages_remaining() const {
   return print_preview_pages_remaining_;
+}
+
+const std::vector<std::pair<int, uint32_t>>&
+PrintMockRenderThread::print_preview_pages() const {
+  return print_preview_pages_;
 }
 #endif  // BUILDFLAG(ENABLE_PRINTING)

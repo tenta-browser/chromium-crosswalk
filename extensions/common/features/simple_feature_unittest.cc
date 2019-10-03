@@ -15,10 +15,13 @@
 #include "base/strings/stringprintf.h"
 #include "base/test/scoped_command_line.h"
 #include "base/values.h"
+#include "content/public/test/test_utils.h"
+#include "extensions/common/extension_builder.h"
 #include "extensions/common/features/complex_feature.h"
 #include "extensions/common/features/feature_channel.h"
 #include "extensions/common/features/feature_session_type.h"
 #include "extensions/common/manifest.h"
+#include "extensions/common/manifest_handlers/background_info.h"
 #include "extensions/common/switches.h"
 #include "extensions/common/value_builder.h"
 #include "testing/gtest/include/gtest/gtest.h"
@@ -99,7 +102,7 @@ TEST_F(SimpleFeatureTest, IsAvailableNullCase) {
        Feature::UNSPECIFIED_PLATFORM, 25, Feature::IS_AVAILABLE}};
 
   SimpleFeature feature;
-  for (size_t i = 0; i < arraysize(tests); ++i) {
+  for (size_t i = 0; i < base::size(tests); ++i) {
     const IsAvailableTestData& test = tests[i];
     EXPECT_EQ(test.expected_result,
               feature
@@ -110,12 +113,12 @@ TEST_F(SimpleFeatureTest, IsAvailableNullCase) {
   }
 }
 
-TEST_F(SimpleFeatureTest, Whitelist) {
+TEST_F(SimpleFeatureTest, Allowlist) {
   const HashedExtensionId kIdFoo("fooabbbbccccddddeeeeffffgggghhhh");
   const HashedExtensionId kIdBar("barabbbbccccddddeeeeffffgggghhhh");
   const HashedExtensionId kIdBaz("bazabbbbccccddddeeeeffffgggghhhh");
   SimpleFeature feature;
-  feature.set_whitelist({kIdFoo.value().c_str(), kIdBar.value().c_str()});
+  feature.set_allowlist({kIdFoo.value().c_str(), kIdBar.value().c_str()});
 
   EXPECT_EQ(
       Feature::IS_AVAILABLE,
@@ -157,14 +160,14 @@ TEST_F(SimpleFeatureTest, Whitelist) {
                                     Feature::UNSPECIFIED_PLATFORM).result());
 }
 
-TEST_F(SimpleFeatureTest, HashedIdWhitelist) {
+TEST_F(SimpleFeatureTest, HashedIdAllowlist) {
   // echo -n "fooabbbbccccddddeeeeffffgggghhhh" |
   //   sha1sum | tr '[:lower:]' '[:upper:]'
   const std::string kIdFoo("fooabbbbccccddddeeeeffffgggghhhh");
   const std::string kIdFooHashed("55BC7228A0D502A2A48C9BB16B07062A01E62897");
   SimpleFeature feature;
 
-  feature.set_whitelist({kIdFooHashed.c_str()});
+  feature.set_allowlist({kIdFooHashed.c_str()});
 
   EXPECT_EQ(Feature::IS_AVAILABLE,
             feature
@@ -196,12 +199,12 @@ TEST_F(SimpleFeatureTest, HashedIdWhitelist) {
                 .result());
 }
 
-TEST_F(SimpleFeatureTest, Blacklist) {
+TEST_F(SimpleFeatureTest, Blocklist) {
   const HashedExtensionId kIdFoo("fooabbbbccccddddeeeeffffgggghhhh");
   const HashedExtensionId kIdBar("barabbbbccccddddeeeeffffgggghhhh");
   const HashedExtensionId kIdBaz("bazabbbbccccddddeeeeffffgggghhhh");
   SimpleFeature feature;
-  feature.set_blacklist({kIdFoo.value().c_str(), kIdBar.value().c_str()});
+  feature.set_blocklist({kIdFoo.value().c_str(), kIdBar.value().c_str()});
 
   EXPECT_EQ(
       Feature::FOUND_IN_BLACKLIST,
@@ -234,14 +237,14 @@ TEST_F(SimpleFeatureTest, Blacklist) {
           .result());
 }
 
-TEST_F(SimpleFeatureTest, HashedIdBlacklist) {
+TEST_F(SimpleFeatureTest, HashedIdBlocklist) {
   // echo -n "fooabbbbccccddddeeeeffffgggghhhh" |
   //   sha1sum | tr '[:lower:]' '[:upper:]'
   const std::string kIdFoo("fooabbbbccccddddeeeeffffgggghhhh");
   const std::string kIdFooHashed("55BC7228A0D502A2A48C9BB16B07062A01E62897");
   SimpleFeature feature;
 
-  feature.set_blacklist({kIdFooHashed.c_str()});
+  feature.set_blocklist({kIdFooHashed.c_str()});
 
   EXPECT_EQ(Feature::FOUND_IN_BLACKLIST,
             feature
@@ -331,11 +334,11 @@ TEST_F(SimpleFeatureTest, Context) {
   EXPECT_EQ("", error);
   ASSERT_TRUE(extension.get());
 
-  feature.set_whitelist({"monkey"});
+  feature.set_allowlist({"monkey"});
   EXPECT_EQ(Feature::NOT_FOUND_IN_WHITELIST, feature.IsAvailableToContext(
       extension.get(), Feature::BLESSED_EXTENSION_CONTEXT,
       Feature::CHROMEOS_PLATFORM).result());
-  feature.set_whitelist({});
+  feature.set_allowlist({});
 
   feature.set_extension_types({Manifest::TYPE_THEME});
   {
@@ -511,7 +514,7 @@ TEST_F(SimpleFeatureTest, SessionType) {
        FeatureSessionType::AUTOLAUNCHED_KIOSK,
        {FeatureSessionType::KIOSK}}};
 
-  for (size_t i = 0; i < arraysize(kTestData); ++i) {
+  for (size_t i = 0; i < base::size(kTestData); ++i) {
     std::unique_ptr<base::AutoReset<FeatureSessionType>> current_session(
         ScopedCurrentFeatureSessionType(kTestData[i].current_session_type));
 
@@ -710,13 +713,13 @@ TEST_F(SimpleFeatureTest, IsIdInArray) {
     // aaaabbbbccccddddeeeeffffgggghhhh
     "9A0417016F345C934A1A88F55CA17C05014EEEBA"
   };
-  EXPECT_FALSE(SimpleFeature::IsIdInArray("", kIdArray, arraysize(kIdArray)));
-  EXPECT_FALSE(SimpleFeature::IsIdInArray(
-      "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa", kIdArray, arraysize(kIdArray)));
-  EXPECT_TRUE(SimpleFeature::IsIdInArray(
-      "bbbbccccdddddddddeeeeeeffffgghhh", kIdArray, arraysize(kIdArray)));
-  EXPECT_TRUE(SimpleFeature::IsIdInArray(
-      "aaaabbbbccccddddeeeeffffgggghhhh", kIdArray, arraysize(kIdArray)));
+  EXPECT_FALSE(SimpleFeature::IsIdInArray("", kIdArray, base::size(kIdArray)));
+  EXPECT_FALSE(SimpleFeature::IsIdInArray("aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+                                          kIdArray, base::size(kIdArray)));
+  EXPECT_TRUE(SimpleFeature::IsIdInArray("bbbbccccdddddddddeeeeeeffffgghhh",
+                                         kIdArray, base::size(kIdArray)));
+  EXPECT_TRUE(SimpleFeature::IsIdInArray("aaaabbbbccccddddeeeeffffgggghhhh",
+                                         kIdArray, base::size(kIdArray)));
 }
 
 // Tests that all combinations of feature channel and Chrome channel correctly
@@ -890,10 +893,10 @@ TEST(SimpleFeatureUnitTest, TestChannelsWithoutExtension) {
   // Create a webui feature available on trunk.
   SimpleFeature feature;
   feature.set_contexts({Feature::WEBUI_CONTEXT});
-  feature.set_matches({"chrome://settings/*"});
+  feature.set_matches({content::GetWebUIURLString("settings/*").c_str()});
   feature.set_channel(version_info::Channel::UNKNOWN);
 
-  const GURL kWhitelistedUrl("chrome://settings/foo");
+  const GURL kAllowlistedUrl(content::GetWebUIURL("settings/foo"));
   const GURL kOtherUrl("https://example.com");
 
   {
@@ -902,7 +905,7 @@ TEST(SimpleFeatureUnitTest, TestChannelsWithoutExtension) {
     EXPECT_EQ(Feature::IS_AVAILABLE,
               feature
                   .IsAvailableToContext(nullptr, Feature::WEBUI_CONTEXT,
-                                        kWhitelistedUrl)
+                                        kAllowlistedUrl)
                   .result());
   }
   {
@@ -911,7 +914,7 @@ TEST(SimpleFeatureUnitTest, TestChannelsWithoutExtension) {
     EXPECT_EQ(Feature::UNSUPPORTED_CHANNEL,
               feature
                   .IsAvailableToContext(nullptr, Feature::WEBUI_CONTEXT,
-                                        kWhitelistedUrl)
+                                        kAllowlistedUrl)
                   .result());
   }
 }
@@ -985,6 +988,57 @@ TEST(SimpleFeatureUnitTest, TestExperimentalExtensionApisSwitch) {
         switches::kEnableExperimentalExtensionApis);
     EXPECT_EQ(Feature::IS_AVAILABLE, test_feature());
   }
+}
+
+TEST(SimpleFeatureUnitTest, DisallowForServiceWorkers) {
+  // Service Worker features are only available on the trunk.
+  ScopedCurrentChannel current_channel_override(version_info::Channel::UNKNOWN);
+
+  SimpleFeature feature;
+  feature.set_name("somefeature");
+  feature.set_contexts({Feature::BLESSED_EXTENSION_CONTEXT});
+  feature.set_extension_types({Manifest::TYPE_EXTENSION});
+
+  constexpr char script_file[] = "script.js";
+
+  auto extension =
+      ExtensionBuilder("test")
+          .SetManifestPath({"background", "service_worker"}, script_file)
+          .Build();
+  ASSERT_TRUE(extension.get());
+  EXPECT_TRUE(BackgroundInfo::IsServiceWorkerBased(extension.get()));
+
+  // Expect the feature is not allowed, since the initial state is disallowed.
+  // TODO(crbug.com/979790): This will default to allowed once the transition
+  // to blocklisting unsupported APIs is complete. This will require swapping
+  // these two EXPECTs.
+  EXPECT_EQ(Feature::INVALID_CONTEXT,
+            feature
+                .IsAvailableToContext(extension.get(),
+                                      Feature::BLESSED_EXTENSION_CONTEXT,
+                                      extension->GetResourceURL(script_file),
+                                      Feature::CHROMEOS_PLATFORM)
+                .result());
+
+  // Check with a different script file, which should return available,
+  // since it's not a service worker context.
+  EXPECT_EQ(Feature::IS_AVAILABLE,
+            feature
+                .IsAvailableToContext(extension.get(),
+                                      Feature::BLESSED_EXTENSION_CONTEXT,
+                                      extension->GetResourceURL("other.js"),
+                                      Feature::CHROMEOS_PLATFORM)
+                .result());
+
+  // Enable the feature for service workers.
+  feature.set_disallow_for_service_workers(false);
+  EXPECT_EQ(Feature::IS_AVAILABLE,
+            feature
+                .IsAvailableToContext(extension.get(),
+                                      Feature::BLESSED_EXTENSION_CONTEXT,
+                                      extension->GetResourceURL(script_file),
+                                      Feature::CHROMEOS_PLATFORM)
+                .result());
 }
 
 }  // namespace extensions

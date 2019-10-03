@@ -48,12 +48,13 @@ void MockFrameProvider::Read(const ReadCB& read_cb) {
   if (delayed) {
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
         FROM_HERE,
-        base::Bind(&MockFrameProvider::DoRead, base::Unretained(this), read_cb),
+        base::BindOnce(&MockFrameProvider::DoRead, base::Unretained(this),
+                       read_cb),
         base::TimeDelta::FromMilliseconds(1));
   } else {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&MockFrameProvider::DoRead,
-                              base::Unretained(this), read_cb));
+        FROM_HERE, base::BindOnce(&MockFrameProvider::DoRead,
+                                  base::Unretained(this), read_cb));
   }
 }
 
@@ -80,9 +81,10 @@ void MockFrameProvider::DoRead(const ReadCB& read_cb) {
     gfx::Size natural_size(640, 480);
     video_config = ::media::VideoDecoderConfig(
         ::media::kCodecH264, ::media::VIDEO_CODEC_PROFILE_UNKNOWN,
-        ::media::PIXEL_FORMAT_YV12, ::media::COLOR_SPACE_UNSPECIFIED,
-        ::media::VIDEO_ROTATION_0, coded_size, visible_rect, natural_size,
-        ::media::EmptyExtraData(), ::media::Unencrypted());
+        ::media::VideoDecoderConfig::AlphaMode::kIsOpaque,
+        ::media::VideoColorSpace(), ::media::kNoTransformation, coded_size,
+        visible_rect, natural_size, ::media::EmptyExtraData(),
+        ::media::Unencrypted());
 
     audio_config = ::media::AudioDecoderConfig(
       ::media::kCodecAAC,

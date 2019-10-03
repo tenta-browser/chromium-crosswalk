@@ -10,7 +10,6 @@
 #include <memory>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/task/cancelable_task_tracker.h"
 #include "base/time/time.h"
 #include "components/bookmarks/browser/titled_url_node.h"
@@ -54,6 +53,10 @@ class BookmarkNode : public ui::TreeNode<BookmarkNode>, public TitledUrlNode {
 
   ~BookmarkNode() override;
 
+  // Returns true if the node is a BookmarkPermanentNode (which does not include
+  // the root).
+  bool is_permanent_node() const { return is_permanent_node_; }
+
   // Set the node's internal title. Note that this neither invokes observers
   // nor updates any bookmark model this node may be in. For that functionality,
   // BookmarkModel::SetTitle(..) should be used instead.
@@ -73,7 +76,6 @@ class BookmarkNode : public ui::TreeNode<BookmarkNode>, public TitledUrlNode {
   const GURL* icon_url() const { return icon_url_ ? icon_url_.get() : nullptr; }
 
   Type type() const { return type_; }
-  void set_type(Type type) { type_ = type; }
 
   // Returns the time the node was added.
   const base::Time& date_added() const { return date_added_; }
@@ -124,18 +126,18 @@ class BookmarkNode : public ui::TreeNode<BookmarkNode>, public TitledUrlNode {
   // TODO(sky): Consider adding last visit time here, it'll greatly simplify
   // HistoryContentsProvider.
 
+ protected:
+  BookmarkNode(int64_t id, const GURL& url, Type type, bool is_permanent_node);
+
  private:
   friend class BookmarkModel;
-
-  // A helper function to initialize various fields during construction.
-  void Initialize(int64_t id);
 
   // Called when the favicon becomes invalid.
   void InvalidateFavicon();
 
   // Sets the favicon's URL.
   void set_icon_url(const GURL& icon_url) {
-    icon_url_ = base::MakeUnique<GURL>(icon_url);
+    icon_url_ = std::make_unique<GURL>(icon_url);
   }
 
   // Returns the favicon. In nearly all cases you should use the method
@@ -165,7 +167,7 @@ class BookmarkNode : public ui::TreeNode<BookmarkNode>, public TitledUrlNode {
   GURL url_;
 
   // The type of this node. See enum above.
-  Type type_;
+  const Type type_;
 
   // Date of when this node was created.
   base::Time date_added_;
@@ -183,18 +185,21 @@ class BookmarkNode : public ui::TreeNode<BookmarkNode>, public TitledUrlNode {
   std::unique_ptr<GURL> icon_url_;
 
   // The loading state of the favicon.
-  FaviconState favicon_state_;
+  FaviconState favicon_state_ = INVALID_FAVICON;
 
   // If not base::CancelableTaskTracker::kBadTaskId, it indicates
   // we're loading the
   // favicon and the task is tracked by CancelabelTaskTracker.
-  base::CancelableTaskTracker::TaskId favicon_load_task_id_;
+  base::CancelableTaskTracker::TaskId favicon_load_task_id_ =
+      base::CancelableTaskTracker::kBadTaskId;
 
   // A map that stores arbitrary meta information about the node.
   std::unique_ptr<MetaInfoMap> meta_info_map_;
 
-  // The sync transaction version. Defaults to kInvalidSyncTransactionVersion.
-  int64_t sync_transaction_version_;
+  // The sync transaction version.
+  int64_t sync_transaction_version_ = kInvalidSyncTransactionVersion;
+
+  const bool is_permanent_node_;
 
   DISALLOW_COPY_AND_ASSIGN(BookmarkNode);
 };
@@ -204,7 +209,7 @@ class BookmarkNode : public ui::TreeNode<BookmarkNode>, public TitledUrlNode {
 // Node used for the permanent folders (excluding the root).
 class BookmarkPermanentNode : public BookmarkNode {
  public:
-  explicit BookmarkPermanentNode(int64_t id);
+  BookmarkPermanentNode(int64_t id, Type type);
   ~BookmarkPermanentNode() override;
 
   // WARNING: this code is used for other projects. Contact noyau@ for details.
@@ -214,7 +219,7 @@ class BookmarkPermanentNode : public BookmarkNode {
   bool IsVisible() const override;
 
  private:
-  bool visible_;
+  bool visible_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(BookmarkPermanentNode);
 };

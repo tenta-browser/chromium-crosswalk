@@ -10,11 +10,10 @@ import android.os.Handler;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.browser.compositor.layouts.OverviewModeBehavior;
 import org.chromium.chrome.browser.compositor.layouts.content.TabContentManager;
+import org.chromium.chrome.browser.tab.SadTab;
 import org.chromium.chrome.browser.tab.Tab;
-import org.chromium.chrome.browser.tabmodel.TabModel.TabLaunchType;
-import org.chromium.chrome.browser.tabmodel.TabModel.TabSelectionType;
+import org.chromium.chrome.browser.tab.Tab.TabHidingType;
 import org.chromium.chrome.browser.tabmodel.TabPersistentStore.TabPersistentStoreObserver;
-import org.chromium.content_public.browser.ChildProcessImportance;
 import org.chromium.content_public.browser.LoadUrlParams;
 
 import java.util.concurrent.atomic.AtomicBoolean;
@@ -80,7 +79,7 @@ public class TabModelSelectorImpl extends TabModelSelectorBase implements TabMod
         mIsTabbedActivityForSync = isTabbedActivity;
         mTabSaver = new TabPersistentStore(
                 persistencePolicy, this, mTabCreatorManager, persistentStoreObserver);
-        mOrderController = new TabModelOrderController(this);
+        mOrderController = new TabModelOrderControllerImpl(this);
     }
 
     @Override
@@ -103,11 +102,7 @@ public class TabModelSelectorImpl extends TabModelSelectorBase implements TabMod
         if (tab != null) mTabSaver.addTabToSaveQueue(tab);
     }
 
-    /**
-     *
-     * @param overviewModeBehavior The {@link OverviewModeBehavior} that should be used to determine
-     *                             when the app is in overview mode or not.
-     */
+    @Override
     public void setOverviewModeBehavior(OverviewModeBehavior overviewModeBehavior) {
         assert overviewModeBehavior != null;
         mOverviewModeBehavior = overviewModeBehavior;
@@ -140,8 +135,8 @@ public class TabModelSelectorImpl extends TabModelSelectorBase implements TabMod
                 regularTabCreator, incognitoTabCreator, mUma, mOrderController,
                 mTabContentManager, mTabSaver, this));
         initialize(isIncognitoSelected(), normalModel, incognitoModel);
-        regularTabCreator.setTabModel(normalModel, mOrderController, mTabContentManager);
-        incognitoTabCreator.setTabModel(incognitoModel, mOrderController, mTabContentManager);
+        regularTabCreator.setTabModel(normalModel, mOrderController);
+        incognitoTabCreator.setTabModel(incognitoModel, mOrderController);
         mTabSaver.setTabContentManager(mTabContentManager);
 
         addObserver(new EmptyTabModelSelectorObserver() {
@@ -179,7 +174,7 @@ public class TabModelSelectorImpl extends TabModelSelectorBase implements TabMod
             }
 
             @Override
-            public void onPageLoadFinished(Tab tab) {
+            public void onPageLoadFinished(Tab tab, String url) {
                 mUma.onPageLoadFinished(tab.getId());
             }
 
@@ -189,11 +184,29 @@ public class TabModelSelectorImpl extends TabModelSelectorBase implements TabMod
             }
 
             @Override
-            public void onCrash(Tab tab, boolean sadTabShown) {
-                if (sadTabShown) {
-                    mTabContentManager.removeTabThumbnail(tab.getId());
-                }
+            public void onCrash(Tab tab) {
+                if (SadTab.isShowing(tab)) mTabContentManager.removeTabThumbnail(tab.getId());
                 mUma.onTabCrashed(tab.getId());
+            }
+
+            @Override
+            public void onNavigationEntriesDeleted(Tab tab) {
+                mTabSaver.addTabToSaveQueue(tab);
+            }
+
+            @Override
+            public void onActivityAttachmentChanged(Tab tab, boolean attached) {
+                if (!attached) getModel(tab.isIncognito()).removeTab(tab);
+            }
+
+            @Override
+            public void onCloseContents(Tab tab) {
+                closeTab(tab);
+            }
+
+            @Override
+            public void onRootIdChanged(Tab tab, int newRootId) {
+                mTabSaver.addTabToSaveQueue(tab);
             }
         };
     }
@@ -254,6 +267,11 @@ public class TabModelSelectorImpl extends TabModelSelectorBase implements TabMod
         return mCloseAllTabsDelegate.closeAllTabsRequest(incognito);
     }
 
+    @Override
+    public boolean isCurrentModel(TabModel model) {
+        return isIncognitoSelected() == model.isIncognito();
+    }
+
     public void saveState() {
         commitAllTabClosures();
         mTabSaver.saveState();
@@ -268,9 +286,7 @@ public class TabModelSelectorImpl extends TabModelSelectorBase implements TabMod
         mTabSaver.loadState(ignoreIncognitoFiles);
     }
 
-    /**
-     * Merges the tab states from two tab models.
-     */
+    @Override
     public void mergeState() {
         mTabSaver.mergeState();
     }
@@ -316,8 +332,8 @@ public class TabModelSelectorImpl extends TabModelSelectorBase implements TabMod
     }
 
     @Override
-    public Tab openNewTab(LoadUrlParams loadUrlParams, TabLaunchType type, Tab parent,
-            boolean incognito) {
+    public Tab openNewTab(
+            LoadUrlParams loadUrlParams, @TabLaunchType int type, Tab parent, boolean incognito) {
         return mTabCreatorManager.getTabCreator(incognito).createNewTab(
                 loadUrlParams, type, parent);
     }
@@ -330,10 +346,9 @@ public class TabModelSelectorImpl extends TabModelSelectorBase implements TabMod
     }
 
     @Override
-    public void requestToShowTab(Tab tab, TabSelectionType type) {
+    public void requestToShowTab(Tab tab, @TabSelectionType int type) {
         boolean isFromExternalApp =
                 tab != null && tab.getLaunchType() == TabLaunchType.FROM_EXTERNAL_APP;
-        Tab tabToDropImportance = null;
         if (mVisibleTab != tab && tab != null && !tab.isNativePage()) {
             TabModelImpl.startTabSwitchLatencyTiming(type);
         }
@@ -346,17 +361,13 @@ public class TabModelSelectorImpl extends TabModelSelectorBase implements TabMod
                         && (!isFromExternalApp || type != TabSelectionType.FROM_NEW)) {
                     cacheTabBitmap(mVisibleTab);
                 }
-                mVisibleTab.hide();
+                mVisibleTab.hide(TabHidingType.CHANGED_TABS);
                 mTabSaver.addTabToSaveQueue(mVisibleTab);
             }
-            tabToDropImportance = mVisibleTab;
             mVisibleTab = null;
         }
 
         if (tab == null) {
-            if (tabToDropImportance != null) {
-                tabToDropImportance.setImportance(ChildProcessImportance.NORMAL);
-            }
             notifyChanged();
             return;
         }
@@ -369,9 +380,6 @@ public class TabModelSelectorImpl extends TabModelSelectorBase implements TabMod
             // |tabToDropImportance| must be null, so no need to drop importance.
             return;
         }
-        if (tabToDropImportance == null) {
-            tabToDropImportance = mVisibleTab;
-        }
         mVisibleTab = tab;
 
         // Don't execute the tab display part if Chrome has just been sent to background. This
@@ -380,13 +388,6 @@ public class TabModelSelectorImpl extends TabModelSelectorBase implements TabMod
         if (type != TabSelectionType.FROM_EXIT) {
             tab.show(type);
             mUma.onShowTab(tab.getId(), tab.isBeingRestored());
-        }
-
-        // Always raise importance before lowering it on old Tab because in case these two Tabs
-        // are hosted by the same process, the process importance is not dropped momentarily.
-        mVisibleTab.setImportance(ChildProcessImportance.MODERATE);
-        if (tabToDropImportance != null) {
-            tabToDropImportance.setImportance(ChildProcessImportance.NORMAL);
         }
     }
 

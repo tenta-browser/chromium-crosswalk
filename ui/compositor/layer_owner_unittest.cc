@@ -7,9 +7,8 @@
 #include <utility>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/test/null_task_runner.h"
-#include "cc/animation/animation_player.h"
+#include "cc/animation/single_keyframe_effect_animation.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "ui/compositor/compositor.h"
 #include "ui/compositor/layer.h"
@@ -17,7 +16,7 @@
 #include "ui/compositor/layer_animator.h"
 #include "ui/compositor/scoped_animation_duration_scale_mode.h"
 #include "ui/compositor/scoped_layer_animation_settings.h"
-#include "ui/compositor/test/context_factories_for_test.h"
+#include "ui/compositor/test/test_context_factories.h"
 #include "ui/gfx/native_widget_types.h"
 
 namespace ui {
@@ -62,6 +61,7 @@ class LayerOwnerTestWithCompositor : public testing::Test {
   ui::Compositor* compositor() { return compositor_.get(); }
 
  private:
+  std::unique_ptr<ui::TestContextFactories> context_factories_;
   std::unique_ptr<ui::Compositor> compositor_;
 
   DISALLOW_COPY_AND_ASSIGN(LayerOwnerTestWithCompositor);
@@ -77,23 +77,21 @@ void LayerOwnerTestWithCompositor::SetUp() {
   scoped_refptr<base::SingleThreadTaskRunner> task_runner =
       new base::NullTaskRunner();
 
-  ui::ContextFactory* context_factory = nullptr;
-  ui::ContextFactoryPrivate* context_factory_private = nullptr;
+  const bool enable_pixel_output = false;
+  context_factories_ =
+      std::make_unique<ui::TestContextFactories>(enable_pixel_output);
 
-  ui::InitializeContextFactoryForTests(false, &context_factory,
-                                       &context_factory_private);
-
-  compositor_.reset(
-      new ui::Compositor(context_factory_private->AllocateFrameSinkId(),
-                         context_factory, context_factory_private, task_runner,
-                         false /* enable_surface_synchronization */,
-                         false /* enable_pixel_canvas */));
+  compositor_ = std::make_unique<ui::Compositor>(
+      context_factories_->GetContextFactoryPrivate()->AllocateFrameSinkId(),
+      context_factories_->GetContextFactory(),
+      context_factories_->GetContextFactoryPrivate(), task_runner,
+      false /* enable_pixel_canvas */);
   compositor_->SetAcceleratedWidget(gfx::kNullAcceleratedWidget);
 }
 
 void LayerOwnerTestWithCompositor::TearDown() {
   compositor_.reset();
-  ui::TerminateContextFactoryForTests();
+  context_factories_.reset();
 }
 
 }  // namespace
@@ -176,7 +174,7 @@ TEST_F(LayerOwnerTestWithCompositor, RecreateNonRootLayerDuringAnimation) {
 }
 
 // Tests that if LayerOwner-derived class destroys layer, then
-// LayerAnimator's player becomes detached from compositor timeline.
+// LayerAnimator's animation becomes detached from compositor timeline.
 TEST_F(LayerOwnerTestWithCompositor, DetachTimelineOnAnimatorDeletion) {
   std::unique_ptr<Layer> root_layer(new Layer);
   compositor()->SetRootLayer(root_layer.get());
@@ -186,18 +184,18 @@ TEST_F(LayerOwnerTestWithCompositor, DetachTimelineOnAnimatorDeletion) {
   layer->SetOpacity(0.5f);
   root_layer->Add(layer);
 
-  scoped_refptr<cc::AnimationPlayer> player =
-      layer->GetAnimator()->GetAnimationPlayerForTesting();
-  EXPECT_TRUE(player);
-  EXPECT_TRUE(player->animation_timeline());
+  scoped_refptr<cc::SingleKeyframeEffectAnimation> animation =
+      layer->GetAnimator()->GetAnimationForTesting();
+  EXPECT_TRUE(animation);
+  EXPECT_TRUE(animation->animation_timeline());
 
-  // Destroying layer/animator must detach animator's player from timeline.
+  // Destroying layer/animator must detach animator's animation from timeline.
   owner.DestroyLayerForTesting();
-  EXPECT_FALSE(player->animation_timeline());
+  EXPECT_FALSE(animation->animation_timeline());
 }
 
 // Tests that if we run threaded opacity animation on already added layer
-// then LayerAnimator's player becomes attached to timeline.
+// then LayerAnimator's animation becomes attached to timeline.
 TEST_F(LayerOwnerTestWithCompositor,
        AttachTimelineIfAnimatorCreatedAfterSetCompositor) {
   std::unique_ptr<Layer> root_layer(new Layer);
@@ -209,10 +207,10 @@ TEST_F(LayerOwnerTestWithCompositor,
 
   layer->SetOpacity(0.5f);
 
-  scoped_refptr<cc::AnimationPlayer> player =
-      layer->GetAnimator()->GetAnimationPlayerForTesting();
-  EXPECT_TRUE(player);
-  EXPECT_TRUE(player->animation_timeline());
+  scoped_refptr<cc::SingleKeyframeEffectAnimation> animation =
+      layer->GetAnimator()->GetAnimationForTesting();
+  EXPECT_TRUE(animation);
+  EXPECT_TRUE(animation->animation_timeline());
 }
 
 }  // namespace ui

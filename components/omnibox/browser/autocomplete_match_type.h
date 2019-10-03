@@ -9,6 +9,8 @@
 
 #include "base/strings/string16.h"
 
+struct AutocompleteMatch;
+
 struct AutocompleteMatchType {
   // Type of AutocompleteMatch. Typedef'ed in autocomplete_match.h. Defined here
   // to pass the type details back and forth between the browser and renderer.
@@ -20,6 +22,11 @@ struct AutocompleteMatchType {
   // GENERATED_JAVA_ENUM_PACKAGE: org.chromium.chrome.browser.omnibox
   // GENERATED_JAVA_CLASS_NAME_OVERRIDE: OmniboxSuggestionType
   // clang-format off
+  //
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused. The values should remain
+  // synchronized with the enum AutocompleteMatchType in
+  // //tools/metrics/histograms/enums.xml.
   enum Type {
     URL_WHAT_YOU_TYPED    = 0,  // The input as a URL.
     HISTORY_URL           = 1,  // A past page whose URL contains the input.
@@ -42,7 +49,7 @@ struct AutocompleteMatchType {
     SEARCH_SUGGEST_PROFILE      = 12,  // A personalized suggested search for a
                                        // Google+ profile.
     SEARCH_OTHER_ENGINE         = 13,  // A search with a non-default engine.
-    EXTENSION_APP               = 14,  // An Extension App with a title/url that
+    EXTENSION_APP_DEPRECATED    = 14,  // An Extension App with a title/url that
                                        // contains the input (deprecated).
     CONTACT_DEPRECATED          = 15,  // One of the user's contacts
                                        // (deprecated).
@@ -50,15 +57,21 @@ struct AutocompleteMatchType {
                                        // input.
     NAVSUGGEST_PERSONALIZED     = 17,  // A personalized suggestion URL.
     CALCULATOR                  = 18,  // A calculator result.
-    CLIPBOARD                   = 19,  // A URL based on the clipboard.
+    CLIPBOARD_URL               = 19,  // A URL based on the clipboard.
     VOICE_SUGGEST               = 20,  // An Android-specific type which
                                        // indicates a search from voice
                                        // recognizer.
-    PHYSICAL_WEB                = 21,  // A Physical Web nearby URL.
-    PHYSICAL_WEB_OVERFLOW       = 22,  // An item representing multiple
-                                       // Physical Web nearby URLs.
-    TAB_SEARCH                  = 23,  // A suggested open tab, based on its
-                                       // URL or title, via HQP.
+    PHYSICAL_WEB_DEPRECATED     = 21,  // A Physical Web nearby URL
+                                       // (deprecated).
+    PHYSICAL_WEB_OVERFLOW_DEPRECATED = 22,  // An item representing multiple
+                                       // Physical Web nearby URLs
+                                       // (deprecated).
+    TAB_SEARCH_DEPRECATED       = 23,  // A suggested open tab, based on its
+                                       // URL or title, via HQP (deprecated).
+    DOCUMENT_SUGGESTION         = 24,  // A suggested document.
+    PEDAL                       = 25,  // An omnibox pedal suggestion.
+    CLIPBOARD_TEXT              = 26,  // Text based on the clipboard.
+    CLIPBOARD_IMAGE             = 27,  // An image based on the clipboard.
     NUM_TYPES,
   };
   // clang-format on
@@ -66,14 +79,29 @@ struct AutocompleteMatchType {
   // Converts |type| to a string representation. Used in logging.
   static std::string ToString(AutocompleteMatchType::Type type);
 
-  // Returns the accessibility label for an AutocompleteMatch of type |type|
-  // whose text is |match_text| and which may have friendly descriptive text in
-  // |additional_descriptive_text_|. The accessibility label describes the
+  // Returns the accessibility label for an AutocompleteMatch |match|
+  // whose text is |match_text| The accessibility label describes the
   // match for use in a screenreader or other assistive technology.
+  // The |label_prefix_length| is an optional out param that provides the number
+  // of characters in the label that were added before the actual match_text.
+  // This version appends ", n of m" positional info the the label:
   static base::string16 ToAccessibilityLabel(
-      AutocompleteMatchType::Type type,
+      const AutocompleteMatch& match,
       const base::string16& match_text,
-      const base::string16& additional_descriptive_text);
+      size_t match_index,
+      size_t total_matches,
+      bool is_tab_switch_button_focused,
+      int* label_prefix_length = nullptr);
+  // This version returns a plain label without ", n of m" positional info:
+  static base::string16 ToAccessibilityLabel(
+      const AutocompleteMatch& match,
+      const base::string16& match_text,
+      bool is_tab_switch_button_focused,
+      int* label_prefix_length = nullptr);
+
+  // Used for tab switch button message when reverse logic feature is selected.
+  static const char kAlternateTabSwitchButtonMessage[];
+  static const char kAlternateTabSwitchMessage[];
 };
 
 #endif  // COMPONENTS_OMNIBOX_BROWSER_AUTOCOMPLETE_MATCH_TYPE_H_

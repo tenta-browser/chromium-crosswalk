@@ -4,30 +4,37 @@
 
 #include "chrome/browser/chromeos/accessibility/speech_monitor.h"
 
+#include "content/public/browser/tts_controller.h"
+
 namespace chromeos {
 
 namespace {
-const char kChromeVoxEnabledMessage[] = "chrome vox spoken feedback is ready";
+const char kChromeVoxEnabledMessage[] = "ChromeVox spoken feedback is ready";
 const char kChromeVoxAlertMessage[] = "Alert";
 const char kChromeVoxUpdate1[] = "chrome vox Updated Press chrome vox o,";
 const char kChromeVoxUpdate2[] = "n to learn more about chrome vox Next.";
 }  // namespace
 
 SpeechMonitor::SpeechMonitor() {
-  TtsController::GetInstance()->SetPlatformImpl(this);
+  content::TtsController::GetInstance()->SetTtsPlatform(this);
 }
 
 SpeechMonitor::~SpeechMonitor() {
-  TtsController::GetInstance()->SetPlatformImpl(TtsPlatformImpl::GetInstance());
+  content::TtsController::GetInstance()->SetTtsPlatform(
+      content::TtsPlatform::GetInstance());
 }
 
 std::string SpeechMonitor::GetNextUtterance() {
+  return GetNextUtteranceWithLanguage().text;
+}
+
+SpeechMonitorUtterance SpeechMonitor::GetNextUtteranceWithLanguage() {
   if (utterance_queue_.empty()) {
     loop_runner_ = new content::MessageLoopRunner();
     loop_runner_->Run();
     loop_runner_ = NULL;
   }
-  std::string result = utterance_queue_.front();
+  SpeechMonitorUtterance result = utterance_queue_.front();
   utterance_queue_.pop_front();
   return result;
 }
@@ -40,6 +47,14 @@ bool SpeechMonitor::DidStop() {
   return did_stop_;
 }
 
+void SpeechMonitor::BlockUntilStop() {
+  if (!did_stop_) {
+    loop_runner_ = new content::MessageLoopRunner();
+    loop_runner_->Run();
+    loop_runner_ = NULL;
+  }
+}
+
 bool SpeechMonitor::SkipChromeVoxMessage(const std::string& message) {
   while (true) {
     if (utterance_queue_.empty()) {
@@ -47,9 +62,9 @@ bool SpeechMonitor::SkipChromeVoxMessage(const std::string& message) {
       loop_runner_->Run();
       loop_runner_ = NULL;
     }
-    std::string result = utterance_queue_.front();
+    SpeechMonitorUtterance result = utterance_queue_.front();
     utterance_queue_.pop_front();
-    if (result == message)
+    if (result.text == message)
       return true;
   }
   return false;
@@ -59,15 +74,16 @@ bool SpeechMonitor::PlatformImplAvailable() {
   return true;
 }
 
-bool SpeechMonitor::Speak(int utterance_id,
+void SpeechMonitor::Speak(int utterance_id,
                           const std::string& utterance,
                           const std::string& lang,
-                          const VoiceData& voice,
-                          const UtteranceContinuousParameters& params) {
-  TtsController::GetInstance()->OnTtsEvent(utterance_id, TTS_EVENT_END,
-                                           static_cast<int>(utterance.size()),
-                                           std::string());
-  return true;
+                          const content::VoiceData& voice,
+                          const content::UtteranceContinuousParameters& params,
+                          base::OnceCallback<void(bool)> on_speak_finished) {
+  content::TtsController::GetInstance()->OnTtsEvent(
+      utterance_id, content::TTS_EVENT_END, static_cast<int>(utterance.size()),
+      0, std::string());
+  std::move(on_speak_finished).Run(true);
 }
 
 bool SpeechMonitor::StopSpeaking() {
@@ -79,32 +95,47 @@ bool SpeechMonitor::IsSpeaking() {
   return false;
 }
 
-void SpeechMonitor::GetVoices(std::vector<VoiceData>* out_voices) {
-  out_voices->push_back(VoiceData());
-  VoiceData& voice = out_voices->back();
+void SpeechMonitor::GetVoices(std::vector<content::VoiceData>* out_voices) {
+  out_voices->push_back(content::VoiceData());
+  content::VoiceData& voice = out_voices->back();
   voice.native = true;
   voice.name = "SpeechMonitor";
-  voice.events.insert(TTS_EVENT_END);
+  voice.events.insert(content::TTS_EVENT_END);
 }
 
-std::string SpeechMonitor::error() {
-  return "";
-}
-
-void SpeechMonitor::WillSpeakUtteranceWithVoice(const Utterance* utterance,
-                                                const VoiceData& voice_data) {
+void SpeechMonitor::WillSpeakUtteranceWithVoice(
+    content::TtsUtterance* utterance,
+    const content::VoiceData& voice_data) {
   // Blacklist some phrases.
   // Filter out empty utterances which can be used to trigger a start event from
   // tts as an earcon sync.
-  if (utterance->text() == "" || utterance->text() == kChromeVoxAlertMessage ||
-      utterance->text() == kChromeVoxUpdate1 ||
-      utterance->text() == kChromeVoxUpdate2)
+  if (utterance->GetText() == "" ||
+      utterance->GetText() == kChromeVoxAlertMessage ||
+      utterance->GetText() == kChromeVoxUpdate1 ||
+      utterance->GetText() == kChromeVoxUpdate2)
     return;
 
-  VLOG(0) << "Speaking " << utterance->text();
-  utterance_queue_.push_back(utterance->text());
+  VLOG(0) << "Speaking " << utterance->GetText();
+  utterance_queue_.emplace_back(utterance->GetText(), utterance->GetLang());
   if (loop_runner_.get())
     loop_runner_->Quit();
+}
+
+bool SpeechMonitor::LoadBuiltInTtsEngine(
+    content::BrowserContext* browser_context) {
+  return false;
+}
+
+std::string SpeechMonitor::GetError() {
+  return error_;
+}
+
+void SpeechMonitor::ClearError() {
+  error_ = std::string();
+}
+
+void SpeechMonitor::SetError(const std::string& error) {
+  error_ = error;
 }
 
 }  // namespace chromeos

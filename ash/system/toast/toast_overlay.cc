@@ -4,17 +4,19 @@
 
 #include "ash/system/toast/toast_overlay.h"
 
+#include "ash/keyboard/ui/keyboard_ui_controller.h"
 #include "ash/public/cpp/ash_typography.h"
 #include "ash/public/cpp/shell_window_ids.h"
 #include "ash/root_window_controller.h"
-#include "ash/shelf/shelf.h"
 #include "ash/shell.h"
 #include "ash/strings/grit/ash_strings.h"
+#include "ash/wm/work_area_insets.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "third_party/skia/include/core/SkColor.h"
 #include "ui/base/l10n/l10n_util.h"
+#include "ui/display/display_observer.h"
 #include "ui/gfx/canvas.h"
 #include "ui/gfx/font_list.h"
 #include "ui/gfx/geometry/insets.h"
@@ -51,8 +53,8 @@ constexpr int kToastButtonMaximumWidth = 160;
 // Returns the work area bounds for the root window where new windows are added
 // (including new toasts).
 gfx::Rect GetUserWorkAreaBounds() {
-  return Shelf::ForWindow(Shell::GetRootWindowForNewWindows())
-      ->GetUserWorkAreaBounds();
+  return WorkAreaInsets::ForWindow(Shell::GetRootWindowForNewWindows())
+      ->user_work_area_bounds();
 }
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -81,6 +83,28 @@ class ToastOverlayLabel : public views::Label {
 };
 
 }  // namespace
+
+///////////////////////////////////////////////////////////////////////////////
+//  ToastDisplayObserver
+class ToastOverlay::ToastDisplayObserver : public display::DisplayObserver {
+ public:
+  ToastDisplayObserver(ToastOverlay* overlay) : overlay_(overlay) {
+    display::Screen::GetScreen()->AddObserver(this);
+  }
+
+  ~ToastDisplayObserver() override {
+    display::Screen::GetScreen()->RemoveObserver(this);
+  }
+
+  void OnDisplayMetricsChanged(const display::Display& display,
+                               uint32_t changed_metrics) override {
+    overlay_->UpdateOverlayBounds();
+  }
+
+ private:
+  ToastOverlay* const overlay_;
+  DISALLOW_COPY_AND_ASSIGN(ToastDisplayObserver);
+};
 
 ///////////////////////////////////////////////////////////////////////////////
 //  ToastOverlayButton
@@ -126,8 +150,8 @@ class ToastOverlayView : public views::View, public views::ButtonListener {
                    const base::string16& text,
                    const base::Optional<base::string16>& dismiss_text)
       : overlay_(overlay) {
-    auto* layout = new views::BoxLayout(views::BoxLayout::kHorizontal);
-    SetLayoutManager(layout);
+    auto* layout = SetLayoutManager(std::make_unique<views::BoxLayout>(
+        views::BoxLayout::Orientation::kHorizontal));
 
     if (dismiss_text.has_value()) {
       button_ = new ToastOverlayButton(
@@ -192,12 +216,14 @@ class ToastOverlayView : public views::View, public views::ButtonListener {
 //  ToastOverlay
 ToastOverlay::ToastOverlay(Delegate* delegate,
                            const base::string16& text,
-                           base::Optional<base::string16> dismiss_text)
+                           base::Optional<base::string16> dismiss_text,
+                           bool show_on_lock_screen)
     : delegate_(delegate),
       text_(text),
       dismiss_text_(dismiss_text),
       overlay_widget_(new views::Widget),
       overlay_view_(new ToastOverlayView(this, text, dismiss_text)),
+      display_observer_(std::make_unique<ToastDisplayObserver>(this)),
       widget_size_(overlay_view_->GetPreferredSize()) {
   views::Widget::InitParams params;
   params.type = views::Widget::InitParams::TYPE_POPUP;
@@ -205,16 +231,16 @@ ToastOverlay::ToastOverlay(Delegate* delegate,
   params.opacity = views::Widget::InitParams::TRANSLUCENT_WINDOW;
   params.ownership = views::Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
   params.accept_events = true;
-  params.keep_on_top = true;
-  params.remove_standard_frame = true;
+  params.z_order = ui::ZOrderLevel::kFloatingUIElement;
   params.bounds = CalculateOverlayBounds();
   // Show toasts above the app list and below the lock screen.
   params.parent = Shell::GetRootWindowForNewWindows()->GetChildById(
-      kShellWindowId_SystemModalContainer);
+      show_on_lock_screen ? kShellWindowId_LockSystemModalContainer
+                          : kShellWindowId_SystemModalContainer);
   overlay_widget_->Init(params);
   overlay_widget_->SetVisibilityChangedAnimationsEnabled(true);
   overlay_widget_->SetContentsView(overlay_view_.get());
-  overlay_widget_->SetBounds(CalculateOverlayBounds());
+  UpdateOverlayBounds();
 
   aura::Window* overlay_window = overlay_widget_->GetNativeWindow();
   ::wm::SetWindowVisibilityAnimationType(
@@ -222,9 +248,12 @@ ToastOverlay::ToastOverlay(Delegate* delegate,
   ::wm::SetWindowVisibilityAnimationDuration(
       overlay_window,
       base::TimeDelta::FromMilliseconds(kSlideAnimationDurationMs));
+
+  keyboard::KeyboardUIController::Get()->AddObserver(this);
 }
 
 ToastOverlay::~ToastOverlay() {
+  keyboard::KeyboardUIController::Get()->RemoveObserver(this);
   overlay_widget_->Close();
 }
 
@@ -234,13 +263,6 @@ void ToastOverlay::Show(bool visible) {
 
   ui::LayerAnimator* animator = overlay_widget_->GetLayer()->GetAnimator();
   DCHECK(animator);
-  if (animator->is_animating()) {
-    // Showing during hiding animation doesn't happen since, ToastOverlay should
-    // be one-time-use and not be reused.
-    DCHECK(!visible);
-
-    return;
-  }
 
   base::TimeDelta original_duration = animator->GetTransitionDuration();
   ui::ScopedLayerAnimationSettings animation_settings(animator);
@@ -254,10 +276,14 @@ void ToastOverlay::Show(bool visible) {
     overlay_widget_->Show();
 
     // Notify accessibility about the overlay.
-    overlay_view_->NotifyAccessibilityEvent(ui::AX_EVENT_ALERT, false);
+    overlay_view_->NotifyAccessibilityEvent(ax::mojom::Event::kAlert, false);
   } else {
     overlay_widget_->Hide();
   }
+}
+
+void ToastOverlay::UpdateOverlayBounds() {
+  overlay_widget_->SetBounds(CalculateOverlayBounds());
 }
 
 gfx::Rect ToastOverlay::CalculateOverlayBounds() {
@@ -274,6 +300,13 @@ void ToastOverlay::OnImplicitAnimationsScheduled() {}
 void ToastOverlay::OnImplicitAnimationsCompleted() {
   if (!overlay_widget_->GetLayer()->GetTargetVisibility())
     delegate_->OnClosed();
+}
+
+void ToastOverlay::OnKeyboardOccludedBoundsChanged(
+    const gfx::Rect& new_bounds_in_screen) {
+  // TODO(https://crbug.com/943446): Observe changes in user work area bounds
+  // directly instead of listening for keyboard bounds changes.
+  UpdateOverlayBounds();
 }
 
 views::Widget* ToastOverlay::widget_for_testing() {

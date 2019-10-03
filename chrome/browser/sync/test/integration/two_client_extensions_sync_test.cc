@@ -9,6 +9,8 @@
 #include "chrome/browser/sync/test/integration/sync_integration_test_util.h"
 #include "chrome/browser/sync/test/integration/sync_test.h"
 
+namespace {
+
 using extensions_helper::AllProfilesHaveSameExtensions;
 using extensions_helper::DisableExtension;
 using extensions_helper::EnableExtension;
@@ -212,3 +214,5 @@ IN_PROC_BROWSER_TEST_F(TwoClientExtensionsSyncTest,
 
 // TODO(akalin): Add tests exercising:
 //   - Offline installation/uninstallation behavior
+
+}  // namespace

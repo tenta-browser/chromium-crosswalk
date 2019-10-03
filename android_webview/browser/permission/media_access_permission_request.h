@@ -10,7 +10,8 @@
 #include "android_webview/browser/permission/aw_permission_request_delegate.h"
 #include "base/callback.h"
 #include "base/macros.h"
-#include "content/public/common/media_stream_request.h"
+#include "content/public/browser/media_stream_request.h"
+#include "third_party/blink/public/common/mediastream/media_stream_request.h"
 
 namespace android_webview {
 
@@ -19,7 +20,7 @@ namespace android_webview {
 class MediaAccessPermissionRequest : public AwPermissionRequestDelegate {
  public:
   MediaAccessPermissionRequest(const content::MediaStreamRequest& request,
-                               const content::MediaResponseCallback& callback);
+                               content::MediaResponseCallback callback);
   ~MediaAccessPermissionRequest() override;
 
   // AwPermissionRequestDelegate implementation.
@@ -31,11 +32,11 @@ class MediaAccessPermissionRequest : public AwPermissionRequestDelegate {
   friend class TestMediaAccessPermissionRequest;
 
   const content::MediaStreamRequest request_;
-  const content::MediaResponseCallback callback_;
+  content::MediaResponseCallback callback_;
 
   // For test only.
-  content::MediaStreamDevices audio_test_devices_;
-  content::MediaStreamDevices video_test_devices_;
+  blink::MediaStreamDevices audio_test_devices_;
+  blink::MediaStreamDevices video_test_devices_;
 
   DISALLOW_COPY_AND_ASSIGN(MediaAccessPermissionRequest);
 };

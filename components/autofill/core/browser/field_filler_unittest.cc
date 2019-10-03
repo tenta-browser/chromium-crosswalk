@@ -10,8 +10,8 @@
 
 #include "base/base_paths.h"
 #include "base/files/file_path.h"
-#include "base/macros.h"
 #include "base/path_service.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
@@ -19,14 +19,14 @@
 #include "base/test/scoped_task_environment.h"
 #include "components/autofill/core/browser/address_normalizer.h"
 #include "components/autofill/core/browser/address_normalizer_impl.h"
-#include "components/autofill/core/browser/autofill_experiments.h"
 #include "components/autofill/core/browser/autofill_field.h"
-#include "components/autofill/core/browser/autofill_profile.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
 #include "components/autofill/core/browser/autofill_type.h"
-#include "components/autofill/core/browser/country_names.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/autofill_profile.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/field_types.h"
+#include "components/autofill/core/browser/geo/country_names.h"
+#include "components/autofill/core/common/autofill_features.h"
 #include "components/autofill/core/common/autofill_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "third_party/libaddressinput/src/cpp/include/libaddressinput/null_storage.h"
@@ -110,6 +110,29 @@ void TestFillingExpirationMonth(const std::vector<const char*>& values,
   EXPECT_EQ(ASCIIToUTF16("Nov"), field.option_contents[content_index]);
 }
 
+void TestFillingInvalidFields(const base::string16& state,
+                              const base::string16& city) {
+  AutofillProfile profile = test::GetFullProfile();
+  profile.SetValidityState(ADDRESS_HOME_STATE, AutofillProfile::INVALID,
+                           AutofillProfile::SERVER);
+  profile.SetValidityState(ADDRESS_HOME_CITY, AutofillProfile::INVALID,
+                           AutofillProfile::CLIENT);
+
+  AutofillField field_state;
+  field_state.set_heuristic_type(ADDRESS_HOME_STATE);
+  AutofillField field_city;
+  field_city.set_heuristic_type(ADDRESS_HOME_CITY);
+
+  FieldFiller filler(/*app_locale=*/"en-US", /*address_normalizer=*/nullptr);
+  filler.FillFormField(field_state, profile, &field_state,
+                       /*cvc=*/base::string16());
+  EXPECT_EQ(state, field_state.value);
+
+  filler.FillFormField(field_city, profile, &field_city,
+                       /*cvc=*/base::string16());
+  EXPECT_EQ(city, field_city.value);
+}
+
 struct CreditCardTestCase {
   std::string card_number_;
   size_t total_splits_;
@@ -144,7 +167,7 @@ class AutofillFieldFillerTest : public testing::Test {
 
 TEST_F(AutofillFieldFillerTest, Type) {
   AutofillField field;
-  ASSERT_EQ(NO_SERVER_DATA, field.overall_server_type());
+  ASSERT_EQ(NO_SERVER_DATA, field.server_type());
   ASSERT_EQ(UNKNOWN_TYPE, field.heuristic_type());
 
   // |server_type_| is NO_SERVER_DATA, so |heuristic_type_| is returned.
@@ -156,12 +179,32 @@ TEST_F(AutofillFieldFillerTest, Type) {
   EXPECT_EQ(NAME, field.Type().group());
 
   // Set the server type and check it.
-  field.set_overall_server_type(ADDRESS_BILLING_LINE1);
+  field.set_server_type(ADDRESS_BILLING_LINE1);
+  EXPECT_EQ(ADDRESS_HOME_LINE1, field.Type().GetStorableType());
+  EXPECT_EQ(ADDRESS_BILLING, field.Type().group());
+
+  // Checks that overall_type trumps everything.
+  field.SetTypeTo(AutofillType(ADDRESS_BILLING_ZIP));
+  EXPECT_EQ(ADDRESS_HOME_ZIP, field.Type().GetStorableType());
+  EXPECT_EQ(ADDRESS_BILLING, field.Type().group());
+
+  // Checks that setting server type resets overall type.
+  field.set_server_type(ADDRESS_BILLING_LINE1);
   EXPECT_EQ(ADDRESS_HOME_LINE1, field.Type().GetStorableType());
   EXPECT_EQ(ADDRESS_BILLING, field.Type().group());
 
   // Remove the server type to make sure the heuristic type is preserved.
-  field.set_overall_server_type(NO_SERVER_DATA);
+  field.set_server_type(NO_SERVER_DATA);
+  EXPECT_EQ(NAME_FIRST, field.Type().GetStorableType());
+  EXPECT_EQ(NAME, field.Type().group());
+
+  // Checks that overall_type trumps everything.
+  field.SetTypeTo(AutofillType(ADDRESS_BILLING_ZIP));
+  EXPECT_EQ(ADDRESS_HOME_ZIP, field.Type().GetStorableType());
+  EXPECT_EQ(ADDRESS_BILLING, field.Type().group());
+
+  // Set the heuristic type and check it and reset overall Type.
+  field.set_heuristic_type(NAME_FIRST);
   EXPECT_EQ(NAME_FIRST, field.Type().GetStorableType());
   EXPECT_EQ(NAME, field.Type().group());
 }
@@ -197,39 +240,51 @@ TEST_F(AutofillFieldFillerTest, Type_CreditCardOverrideHtml_ServerPredicitons) {
   field.SetHtmlType(HTML_TYPE_UNRECOGNIZED, HTML_MODE_NONE);
 
   // A credit card server prediction overrides the unrecognized type.
-  field.set_overall_server_type(CREDIT_CARD_NUMBER);
+  field.set_server_type(CREDIT_CARD_NUMBER);
   EXPECT_EQ(CREDIT_CARD_NUMBER, field.Type().GetStorableType());
 
   // A non credit card server prediction doesn't override the unrecognized
   // type.
-  field.set_overall_server_type(NAME_FIRST);
+  field.set_server_type(NAME_FIRST);
   EXPECT_EQ(UNKNOWN_TYPE, field.Type().GetStorableType());
 
   // A credit card server prediction doesn't override a known specified html
   // type.
   field.SetHtmlType(HTML_TYPE_NAME, HTML_MODE_NONE);
-  field.set_overall_server_type(CREDIT_CARD_NUMBER);
+  field.set_server_type(CREDIT_CARD_NUMBER);
   EXPECT_EQ(NAME_FULL, field.Type().GetStorableType());
 }
 
-// Tests that a server prediction of *_CITY_AND_NUMBER override html
-// "autocomplete=tel" prediction, which is always *_WHOLE_NUMBER
+// Tests that if both autocomplete attibutes and server agree it's a phone
+// field, always use server predicted type. If they disagree with autocomplete
+// says it's a phone field, always use autocomplete attribute.
 TEST_F(AutofillFieldFillerTest,
        Type_ServerPredictionOfCityAndNumber_OverrideHtml) {
   AutofillField field;
 
   field.SetHtmlType(HTML_TYPE_TEL, HTML_MODE_NONE);
 
-  field.set_overall_server_type(PHONE_HOME_CITY_AND_NUMBER);
+  field.set_server_type(PHONE_HOME_CITY_AND_NUMBER);
   EXPECT_EQ(PHONE_HOME_CITY_AND_NUMBER, field.Type().GetStorableType());
 
-  // Other phone number prediction does not override.
-  field.set_overall_server_type(PHONE_HOME_NUMBER);
+  // Overrides to another number format.
+  field.set_server_type(PHONE_HOME_NUMBER);
+  EXPECT_EQ(PHONE_HOME_NUMBER, field.Type().GetStorableType());
+
+  // Overrides autocomplete=tel-national too.
+  field.SetHtmlType(HTML_TYPE_TEL_NATIONAL, HTML_MODE_NONE);
+  field.set_server_type(PHONE_HOME_WHOLE_NUMBER);
   EXPECT_EQ(PHONE_HOME_WHOLE_NUMBER, field.Type().GetStorableType());
 
-  // If html type not specified, we use server prediction.
+  // If autocomplete=tel-national but server says it's not a phone field,
+  // do not override.
+  field.SetHtmlType(HTML_TYPE_TEL_NATIONAL, HTML_MODE_NONE);
+  field.set_server_type(CREDIT_CARD_EXP_DATE_2_DIGIT_YEAR);
+  EXPECT_EQ(PHONE_HOME_CITY_AND_NUMBER, field.Type().GetStorableType());
+
+  // If html type not specified, we still use server prediction.
   field.SetHtmlType(HTML_TYPE_UNSPECIFIED, HTML_MODE_NONE);
-  field.set_overall_server_type(PHONE_HOME_CITY_AND_NUMBER);
+  field.set_server_type(PHONE_HOME_CITY_AND_NUMBER);
   EXPECT_EQ(PHONE_HOME_CITY_AND_NUMBER, field.Type().GetStorableType());
 }
 
@@ -266,7 +321,7 @@ TEST_F(AutofillFieldFillerTest, FieldSignatureAsStr) {
   EXPECT_EQ("502192749", field.FieldSignatureAsStr());
 
   // Server type does not affect FieldSignature.
-  field.set_overall_server_type(NAME_LAST);
+  field.set_server_type(NAME_LAST);
   EXPECT_EQ("502192749", field.FieldSignatureAsStr());
 }
 
@@ -283,12 +338,12 @@ TEST_F(AutofillFieldFillerTest, IsFieldFillable) {
 
   // Only server type is set.
   field.set_heuristic_type(UNKNOWN_TYPE);
-  field.set_overall_server_type(NAME_LAST);
+  field.set_server_type(NAME_LAST);
   EXPECT_TRUE(field.IsFieldFillable());
 
   // Both types set.
   field.set_heuristic_type(NAME_FIRST);
-  field.set_overall_server_type(NAME_LAST);
+  field.set_server_type(NAME_LAST);
   EXPECT_TRUE(field.IsFieldFillable());
 
   // Field has autocomplete="off" set. Since autofill was able to make a
@@ -303,7 +358,7 @@ TEST_F(AutofillFieldFillerTest, IsFieldFillable) {
 TEST_F(AutofillFieldFillerTest,
        FillFormField_AutocompleteOffRespected_AddressField) {
   base::test::ScopedFeatureList feature_list;
-  feature_list.InitAndDisableFeature(kAutofillAlwaysFillAddresses);
+  feature_list.InitAndDisableFeature(features::kAutofillAlwaysFillAddresses);
 
   AutofillField field;
   field.should_autocomplete = false;
@@ -356,6 +411,82 @@ TEST_F(AutofillFieldFillerTest, FillFormField_AutocompleteOff_CreditCardField) {
   EXPECT_EQ(ASCIIToUTF16("4111111111111111"), field.value);
 }
 
+// Verify that when the relevant feature is enabled, the invalid fields don't
+// get filled.
+TEST_F(AutofillFieldFillerTest, FillFormField_Validity_ServerClient) {
+  base::test::ScopedFeatureList scoped_features;
+  scoped_features.InitWithFeatures(
+      /*enabled_features=*/{features::kAutofillProfileServerValidation,
+                            features::kAutofillProfileClientValidation},
+      /*disabled_features=*/{});
+  // State's validity is set by server and city's validity by client.
+  TestFillingInvalidFields(/*state=*/base::string16(),
+                           /*city=*/base::string16());
+}
+
+TEST_F(AutofillFieldFillerTest, FillFormField_Validity_OnlyServer) {
+  base::test::ScopedFeatureList scoped_features;
+  scoped_features.InitWithFeatures(
+      /*enabled_features=*/{features::kAutofillProfileServerValidation},
+      /*disabled_features=*/{features::kAutofillProfileClientValidation});
+  // State's validity is set by server and city's validity by client.
+  TestFillingInvalidFields(/*state=*/base::string16(),
+                           /*city=*/ASCIIToUTF16("Elysium"));
+}
+
+TEST_F(AutofillFieldFillerTest, FillFormField_Validity_OnlyClient) {
+  base::test::ScopedFeatureList scoped_features;
+  scoped_features.InitWithFeatures(
+      /*enabled_features=*/{features::kAutofillProfileClientValidation},
+      /*disabled_features=*/{features::kAutofillProfileServerValidation});
+  // State's validity is set by server and city's validity by client.
+  TestFillingInvalidFields(/*state=*/ASCIIToUTF16("CA"),
+                           /*city=*/base::string16());
+}
+
+TEST_F(AutofillFieldFillerTest, FillFormField_NoValidity) {
+  base::test::ScopedFeatureList scoped_features;
+  scoped_features.InitWithFeatures(
+      /*enabled_features=*/{},
+      /*disabled_features=*/{features::kAutofillProfileServerValidation,
+                             features::kAutofillProfileClientValidation});
+  // State's validity is set by server and city's validity by client.
+  TestFillingInvalidFields(/*state=*/ASCIIToUTF16("CA"),
+                           /*city=*/ASCIIToUTF16("Elysium"));
+}
+
+// Tests that using only client side validation, if the country is empty, the
+// address fields will get filled regardless of their invalidity.
+TEST_F(AutofillFieldFillerTest, FillFormField_Validity_CountryEmpty) {
+  base::test::ScopedFeatureList scoped_features;
+  scoped_features.InitWithFeatures(
+      /*enabled_features=*/{features::kAutofillProfileClientValidation},
+      /*disabled_features=*/{features::kAutofillProfileServerValidation});
+  AutofillProfile profile = test::GetFullProfile();
+  profile.SetRawInfo(ADDRESS_HOME_COUNTRY, ASCIIToUTF16(""));
+  profile.SetValidityState(ADDRESS_HOME_STATE, AutofillProfile::INVALID,
+                           AutofillProfile::CLIENT);
+  profile.SetValidityState(EMAIL_ADDRESS, AutofillProfile::INVALID,
+                           AutofillProfile::CLIENT);
+
+  AutofillField field_state;
+  field_state.set_heuristic_type(ADDRESS_HOME_STATE);
+  AutofillField field_email;
+  field_email.set_heuristic_type(EMAIL_ADDRESS);
+
+  FieldFiller filler(/*app_locale=*/"en-US", /*address_normalizer=*/nullptr);
+  // State is filled, because it's an address field.
+  filler.FillFormField(field_state, profile, &field_state,
+                       /*cvc=*/base::string16());
+  EXPECT_EQ(ASCIIToUTF16("CA"), field_state.value);
+
+  // Email is not filled, because it's not an address field, and it doesn't
+  // depend on the country.
+  filler.FillFormField(field_email, profile, &field_email,
+                       /*cvc=*/base::string16());
+  EXPECT_EQ(ASCIIToUTF16(""), field_email.value);
+}
+
 struct AutofillFieldFillerTestCase {
   HtmlFieldType field_type;
   size_t field_max_length;
@@ -381,7 +512,7 @@ TEST_P(PhoneNumberTest, FillPhoneNumber) {
   EXPECT_EQ(ASCIIToUTF16(test_case.expected_value), field.value);
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     AutofillFieldFillerTest,
     PhoneNumberTest,
     testing::Values(
@@ -431,7 +562,7 @@ TEST_P(ExpirationYearTest, FillExpirationYearInput) {
   EXPECT_EQ(ASCIIToUTF16(test_case.expected_value), field.value);
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     AutofillFieldFillerTest,
     ExpirationYearTest,
     testing::Values(
@@ -495,7 +626,7 @@ TEST_P(ExpirationDateTest, FillExpirationDateInput) {
   EXPECT_EQ(response, test_case.expected_response);
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     AutofillFieldFillerTest,
     ExpirationDateTest,
     testing::Values(
@@ -614,7 +745,7 @@ class AutofillSelectWithStatesTest
     CountryNames::SetLocaleString("en-US");
 
     base::FilePath file_path;
-    CHECK(PathService::Get(base::DIR_SOURCE_ROOT, &file_path));
+    CHECK(base::PathService::Get(base::DIR_SOURCE_ROOT, &file_path));
     file_path = file_path.Append(FILE_PATH_LITERAL("third_party"))
                     .Append(FILE_PATH_LITERAL("libaddressinput"))
                     .Append(FILE_PATH_LITERAL("src"))
@@ -685,7 +816,7 @@ TEST_P(AutofillSelectWithStatesTest, FillSelectWithStates) {
   }
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     AutofillFieldFillerTest,
     AutofillSelectWithStatesTest,
     testing::Values(
@@ -773,7 +904,7 @@ TEST_P(AutofillSelectWithExpirationMonthTest,
                              test_case.select_values.size());
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     AutofillFieldFillerTest,
     AutofillSelectWithExpirationMonthTest,
     testing::Values(
@@ -806,6 +937,25 @@ INSTANTIATE_TEST_CASE_P(
             {"string:1", "string:2", "string:3", "string:4", "string:5",
              "string:6", "string:7", "string:8", "string:9", "string:10",
              "string:11", "string:12"},
+            NotNumericMonthsContentsNoPlaceholder()},
+        // Unexpected values that can be matched with the content.
+        FillWithExpirationMonthTestCase{
+            {"object:1", "object:2", "object:3", "object:4", "object:5",
+             "object:6", "object:7", "object:8", "object:9", "object:10",
+             "object:11", "object:12"},
+            NotNumericMonthsContentsNoPlaceholder()},
+        // Another example where unexpected values can be matched with the
+        // content.
+        FillWithExpirationMonthTestCase{
+            {"object:a", "object:b", "object:c", "object:d", "object:e",
+             "object:f", "object:g", "object:h", "object:i", "object:j",
+             "object:k", "object:l"},
+            NotNumericMonthsContentsNoPlaceholder()},
+        // Another example where unexpected values can be matched with the
+        // content.
+        FillWithExpirationMonthTestCase{
+            {"Farvardin", "Ordibehesht", "Khordad", "Tir", "Mordad",
+             "Shahrivar", "Mehr", "Aban", "Azar", "Dey", "Bahman", "Esfand"},
             NotNumericMonthsContentsNoPlaceholder()},
         // Values start at 0 and the first content is a placeholder.
         FillWithExpirationMonthTestCase{
@@ -1047,7 +1197,7 @@ TEST_F(AutofillFieldFillerTest, FillStreetAddressTextArea) {
 TEST_F(AutofillFieldFillerTest, FillStreetAddressTextField) {
   AutofillField field;
   field.form_control_type = "text";
-  field.set_overall_server_type(ADDRESS_HOME_STREET_ADDRESS);
+  field.set_server_type(ADDRESS_HOME_STREET_ADDRESS);
   FieldFiller filler(/*app_locale=*/"en-US", /*address_normalizer=*/nullptr);
 
   base::string16 value = ASCIIToUTF16(
@@ -1088,10 +1238,10 @@ TEST_F(AutofillFieldFillerTest, FillCreditCardNumberWithEqualSizeSplits) {
   test.card_number_ = "5187654321098765";
   test.total_splits_ = 4;
   int splits[] = {4, 4, 4, 4};
-  test.splits_ = std::vector<int>(splits, splits + arraysize(splits));
+  test.splits_ = std::vector<int>(splits, splits + base::size(splits));
   std::string results[] = {"5187", "6543", "2109", "8765"};
   test.expected_results_ =
-      std::vector<std::string>(results, results + arraysize(results));
+      std::vector<std::string>(results, results + base::size(results));
 
   FieldFiller filler(/*app_locale=*/"en-US", /*address_normalizer=*/nullptr);
   for (size_t i = 0; i < test.total_splits_; ++i) {
@@ -1130,10 +1280,10 @@ TEST_F(AutofillFieldFillerTest, FillCreditCardNumberWithUnequalSizeSplits) {
   test.card_number_ = "423456789012345";
   test.total_splits_ = 3;
   int splits[] = {4, 6, 5};
-  test.splits_ = std::vector<int>(splits, splits + arraysize(splits));
+  test.splits_ = std::vector<int>(splits, splits + base::size(splits));
   std::string results[] = {"4234", "567890", "12345"};
   test.expected_results_ =
-      std::vector<std::string>(results, results + arraysize(results));
+      std::vector<std::string>(results, results + base::size(results));
 
   FieldFiller filler(/*app_locale=*/"en-US", /*address_normalizer=*/nullptr);
   // Start executing test cases to verify parts and full credit card number.
@@ -1240,7 +1390,7 @@ TEST_P(AutofillStateTextTest, FillStateText) {
   EXPECT_EQ(ASCIIToUTF16(test_case.expected_value), field.value);
 }
 
-INSTANTIATE_TEST_CASE_P(
+INSTANTIATE_TEST_SUITE_P(
     AutofillFieldFillerTest,
     AutofillStateTextTest,
     testing::Values(

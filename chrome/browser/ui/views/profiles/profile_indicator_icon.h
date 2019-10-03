@@ -18,16 +18,15 @@ class Canvas;
 
 // ProfileIndicatorIcon
 //
-// A view used to show either the incognito avatar, or in the case of CrOS multi
-// profile mode with teleported windows, a profile avatar. The icon set via
-// SetIcon() will be resized and drawn inside a circle if it's too big to fit in
-// the frame.
+// A view used to show a profile avatar for teleported windows in CrOS. The icon
+// set via SetIcon() will be resized and drawn inside a circle if it's too big
+// to fit in the frame.
 class ProfileIndicatorIcon : public views::View {
  public:
   ProfileIndicatorIcon();
   ~ProfileIndicatorIcon() override;
 
-  // views::MenuButton:
+  // views::View:
   void OnPaint(gfx::Canvas* canvas) override;
 
   // Sets the image for the avatar button. Rectangular images, as opposed
@@ -37,7 +36,7 @@ class ProfileIndicatorIcon : public views::View {
  private:
   gfx::Image base_icon_;
   gfx::ImageSkia modified_icon_;
-  int old_height_;
+  int old_height_ = 0;
   DISALLOW_COPY_AND_ASSIGN(ProfileIndicatorIcon);
 };
 

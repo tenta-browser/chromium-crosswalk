@@ -23,12 +23,12 @@ class WEBVIEW_EXPORT UnhandledKeyboardEventHandler {
   UnhandledKeyboardEventHandler();
   ~UnhandledKeyboardEventHandler();
 
-  void HandleKeyboardEvent(const content::NativeWebKeyboardEvent& event,
+  bool HandleKeyboardEvent(const content::NativeWebKeyboardEvent& event,
                            FocusManager* focus_manager);
 
  private:
   // Platform specific handling for unhandled keyboard events.
-  static void HandleNativeKeyboardEvent(gfx::NativeEvent event,
+  static bool HandleNativeKeyboardEvent(gfx::NativeEvent event,
                                         FocusManager* focus_manager);
 
   // Whether to ignore the next Char keyboard event.
@@ -37,7 +37,7 @@ class WEBVIEW_EXPORT UnhandledKeyboardEventHandler {
   // have produced from it. (Handling this event may cause undesirable effects,
   // such as a beep if DefWindowProc() has no default handling for the given
   // Char.)
-  bool ignore_next_char_event_;
+  bool ignore_next_char_event_ = false;
 
   DISALLOW_COPY_AND_ASSIGN(UnhandledKeyboardEventHandler);
 };

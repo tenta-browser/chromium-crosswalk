@@ -15,9 +15,9 @@
 #include "media/blink/media_blink_export.h"
 #include "media/blink/multibuffer.h"
 #include "media/blink/url_index.h"
-#include "third_party/WebKit/public/platform/WebURLRequest.h"
-#include "third_party/WebKit/public/web/WebAssociatedURLLoaderClient.h"
-#include "third_party/WebKit/public/web/WebFrame.h"
+#include "third_party/blink/public/platform/web_url_request.h"
+#include "third_party/blink/public/web/web_associated_url_loader_client.h"
+#include "third_party/blink/public/web/web_frame.h"
 #include "url/gurl.h"
 
 namespace blink {
@@ -33,7 +33,9 @@ class MEDIA_BLINK_EXPORT ResourceMultiBufferDataProvider
   // NUmber of times we'll retry if the connection fails.
   enum { kMaxRetries = 30 };
 
-  ResourceMultiBufferDataProvider(UrlData* url_data, MultiBufferBlockId pos);
+  ResourceMultiBufferDataProvider(UrlData* url_data,
+                                  MultiBufferBlockId pos,
+                                  bool is_client_audio_element);
   ~ResourceMultiBufferDataProvider() override;
 
   // Virtual for testing purposes.
@@ -50,13 +52,12 @@ class MEDIA_BLINK_EXPORT ResourceMultiBufferDataProvider
   bool WillFollowRedirect(
       const blink::WebURL& new_url,
       const blink::WebURLResponse& redirect_response) override;
-  void DidSendData(unsigned long long bytesSent,
-                   unsigned long long totalBytesToBeSent) override;
+  void DidSendData(uint64_t bytesSent, uint64_t totalBytesToBeSent) override;
   void DidReceiveResponse(const blink::WebURLResponse& response) override;
-  void DidDownloadData(int data_length) override;
+  void DidDownloadData(uint64_t data_length) override;
   void DidReceiveData(const char* data, int data_length) override;
   void DidReceiveCachedMetadata(const char* data, int dataLength) override;
-  void DidFinishLoading(double finishTime) override;
+  void DidFinishLoading() override;
   void DidFail(const blink::WebURLError&) override;
 
   // Use protected instead of private for testing purposes.
@@ -103,7 +104,7 @@ class MEDIA_BLINK_EXPORT ResourceMultiBufferDataProvider
 
   // Copy of url_data_->cors_mode()
   // const to make it obvious that redirects cannot change it.
-  const UrlData::CORSMode cors_mode_;
+  const UrlData::CorsMode cors_mode_;
 
   // The origin for the initial request.
   // const to make it obvious that redirects cannot change it.
@@ -120,7 +121,10 @@ class MEDIA_BLINK_EXPORT ResourceMultiBufferDataProvider
   // many bytes we need to discard before we get to the right place.
   uint64_t bytes_to_discard_ = 0;
 
-  base::WeakPtrFactory<ResourceMultiBufferDataProvider> weak_factory_;
+  // Is the client an audio element?
+  bool is_client_audio_element_ = false;
+
+  base::WeakPtrFactory<ResourceMultiBufferDataProvider> weak_factory_{this};
 };
 
 }  // namespace media

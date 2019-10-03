@@ -11,7 +11,6 @@
 #include <utility>
 
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "chrome/common/extensions/api/file_system_provider.h"
 #include "chrome/common/extensions/api/file_system_provider_internal.h"
 
@@ -143,7 +142,9 @@ GetMetadata::GetMetadata(
     : Operation(event_router, file_system_info),
       entry_path_(entry_path),
       fields_(fields),
-      callback_(std::move(callback)) {}
+      callback_(std::move(callback)) {
+  DCHECK_NE(0, fields_);
+}
 
 GetMetadata::~GetMetadata() {
 }

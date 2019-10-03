@@ -34,9 +34,6 @@ class SSLErrorUI {
     // Strict-Transport-Security). By default, the error assumes strict
     // enforcement was not requested.
     STRICT_ENFORCEMENT = 1 << 2,
-    // Indicates that a user decision had been previously made but the
-    // decision has expired.
-    EXPIRED_BUT_PREVIOUSLY_ALLOWED = 1 << 3,
   };
 
   SSLErrorUI(const GURL& request_url,
@@ -44,6 +41,7 @@ class SSLErrorUI {
              const net::SSLInfo& ssl_info,
              int display_options,  // Bitmask of SSLErrorOptionsMask values.
              const base::Time& time_triggered,
+             const GURL& support_url,
              ControllerClient* controller);
   virtual ~SSLErrorUI();
 
@@ -64,6 +62,7 @@ class SSLErrorUI {
   const int cert_error_;
   const net::SSLInfo ssl_info_;
   const base::Time time_triggered_;
+  const GURL support_url_;
 
   // Set by the |display_options|.
   const bool requested_strict_enforcement_;

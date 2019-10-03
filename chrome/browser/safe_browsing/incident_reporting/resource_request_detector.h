@@ -7,7 +7,6 @@
 
 #include <memory>
 
-#include "base/containers/hash_tables.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "chrome/browser/safe_browsing/incident_reporting/incident_receiver.h"
@@ -57,7 +56,7 @@ class ResourceRequestDetector {
   scoped_refptr<SafeBrowsingDatabaseManager> database_manager_;
   bool allow_null_profile_for_testing_;
 
-  base::WeakPtrFactory<ResourceRequestDetector> weak_ptr_factory_;
+  base::WeakPtrFactory<ResourceRequestDetector> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(ResourceRequestDetector);
 };

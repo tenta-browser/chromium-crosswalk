@@ -4,7 +4,6 @@
 
 #include "ui/wm/core/compound_event_filter.h"
 
-#include "base/containers/hash_tables.h"
 #include "base/logging.h"
 #include "build/build_config.h"
 #include "ui/aura/client/cursor_client.h"
@@ -81,6 +80,28 @@ void CompoundEventFilter::RemoveHandler(ui::EventHandler* handler) {
   handlers_.RemoveObserver(handler);
 }
 
+void CompoundEventFilter::SetCursorForWindow(aura::Window* window,
+                                             const ui::Cursor& cursor) {
+  if (last_window_that_provided_cursor_.windows().empty())
+    return;
+
+  aura::Window* last_window = last_window_that_provided_cursor_.windows()[0];
+
+  // Determine if the window hierarchies match, i.e. if |window| is an ancestor
+  // or descendent of |last_window_that_provided_cursor_|.
+  if (!window->Contains(last_window) && !last_window->Contains(window))
+    return;
+
+  aura::Window* root_window = window->GetRootWindow();
+  if (!root_window)
+    return;
+
+  aura::client::CursorClient* cursor_client =
+      aura::client::GetCursorClient(root_window);
+  if (cursor_client)
+    cursor_client->SetCursor(cursor);
+}
+
 ////////////////////////////////////////////////////////////////////////////////
 // CompoundEventFilter, private:
 
@@ -93,6 +114,9 @@ void CompoundEventFilter::UpdateCursor(aura::Window* target,
       aura::client::GetDragDropClient(root_window);
   if (drag_drop_client && drag_drop_client->IsDragDropInProgress())
     return;
+
+  last_window_that_provided_cursor_.RemoveAll();
+  last_window_that_provided_cursor_.Add(target);
 
   aura::client::CursorClient* cursor_client =
       aura::client::GetCursorClient(root_window);
@@ -213,10 +237,11 @@ void CompoundEventFilter::OnScrollEvent(ui::ScrollEvent* event) {
 void CompoundEventFilter::OnTouchEvent(ui::TouchEvent* event) {
   FilterTouchEvent(event);
   if (!event->handled() && event->type() == ui::ET_TOUCH_PRESSED &&
-      ShouldHideCursorOnTouch(*event) &&
-      !aura::Env::GetInstance()->IsMouseButtonDown()) {
-    SetMouseEventsEnableStateOnEvent(
-        static_cast<aura::Window*>(event->target()), event, false);
+      ShouldHideCursorOnTouch(*event)) {
+    aura::Window* target = static_cast<aura::Window*>(event->target());
+    DCHECK(target);
+    if (!aura::Env::GetInstance()->IsMouseButtonDown())
+      SetMouseEventsEnableStateOnEvent(target, event, false);
   }
 }
 

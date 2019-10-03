@@ -5,6 +5,9 @@
 #ifndef CHROME_BROWSER_PLUGINS_PLUGIN_UTILS_H_
 #define CHROME_BROWSER_PLUGINS_PLUGIN_UTILS_H_
 
+#include <string>
+
+#include "base/containers/flat_map.h"
 #include "base/macros.h"
 #include "components/content_settings/core/common/content_settings.h"
 
@@ -12,6 +15,8 @@ class GURL;
 class HostContentSettingsMap;
 
 namespace content {
+class BrowserContext;
+class ResourceContext;
 struct WebPluginInfo;
 }
 
@@ -41,11 +46,35 @@ class PluginUtils {
       const GURL& plugin_url,
       bool* is_managed);
 
-  // Returns true if HTML content should be prefered, by hiding Flash from the
-  // plugin list. Use this instead of
-  // base::FeatureList::IsEnabled(features::kPreferHtmlOverPlugins).
-  static bool ShouldPreferHtmlOverPlugins(
-      const HostContentSettingsMap* host_content_settings_map);
+  // Returns the raw default content setting for Flash. This should not be used
+  // to actually run Flash, as it bypasses the origin scheme filter, legacy
+  // guardrails, and plugin-specific content settings. Hence "unsafe".
+  // It's used only for displaying Flash deprecation advisories.
+  static ContentSetting UnsafeGetRawDefaultFlashContentSetting(
+      const HostContentSettingsMap* host_content_settings_map,
+      bool* is_managed);
+
+  // Remember that the user has changed the Flash permission for
+  // |top_level_url|.
+  static void RememberFlashChangedForSite(
+      HostContentSettingsMap* host_content_settings_map,
+      const GURL& top_level_url);
+
+  // If there's an extension that is allowed to handle |mime_type|, returns its
+  // ID. Otherwise returns an empty string.
+  // Must be called on IO thread.
+  static std::string GetExtensionIdForMimeType(
+      content::ResourceContext* resource_context,
+      const std::string& mime_type);
+  // Same as above, but must be called on UI thread.
+  static std::string GetExtensionIdForMimeType(
+      content::BrowserContext* browser_context,
+      const std::string& mime_type);
+
+  // Returns a map populated with MIME types that are handled by an extension as
+  // keys and the corresponding extensions Ids as values.
+  static base::flat_map<std::string, std::string> GetMimeTypeToExtensionIdMap(
+      content::ResourceContext* resource_context);
 
  private:
   DISALLOW_IMPLICIT_CONSTRUCTORS(PluginUtils);

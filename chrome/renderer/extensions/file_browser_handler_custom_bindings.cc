@@ -6,21 +6,24 @@
 
 #include <string>
 
+#include "base/bind.h"
 #include "base/logging.h"
 #include "build/build_config.h"
 #include "extensions/renderer/script_context.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/web/WebDOMFileSystem.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
+#include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/web/web_dom_file_system.h"
+#include "third_party/blink/public/web/web_local_frame.h"
 
 namespace extensions {
 
 FileBrowserHandlerCustomBindings::FileBrowserHandlerCustomBindings(
     ScriptContext* context)
-    : ObjectBackedNativeHandler(context) {
-  RouteFunction(
+    : ObjectBackedNativeHandler(context) {}
+
+void FileBrowserHandlerCustomBindings::AddRoutes() {
+  RouteHandlerFunction(
       "GetExternalFileEntry", "fileBrowserHandler",
-      base::Bind(
+      base::BindRepeating(
           &FileBrowserHandlerCustomBindings::GetExternalFileEntryCallback,
           base::Unretained(this)));
 }
@@ -33,29 +36,50 @@ void FileBrowserHandlerCustomBindings::GetExternalFileEntry(
 #if defined(OS_CHROMEOS)
     CHECK(args.Length() == 1);
     CHECK(args[0]->IsObject());
-    v8::Local<v8::Object> file_def = args[0]->ToObject();
-    std::string file_system_name(
-        *v8::String::Utf8Value(file_def->Get(
-            v8::String::NewFromUtf8(args.GetIsolate(), "fileSystemName"))));
-    GURL file_system_root(
-        *v8::String::Utf8Value(file_def->Get(
-            v8::String::NewFromUtf8(args.GetIsolate(), "fileSystemRoot"))));
-    std::string file_full_path(
-        *v8::String::Utf8Value(file_def->Get(
-            v8::String::NewFromUtf8(args.GetIsolate(), "fileFullPath"))));
-    bool is_directory = file_def->Get(v8::String::NewFromUtf8(
-        args.GetIsolate(), "fileIsDirectory"))->ToBoolean()->Value();
+    v8::Local<v8::Object> file_def = args[0].As<v8::Object>();
+    v8::Isolate* isolate = args.GetIsolate();
+    v8::Local<v8::Context> v8_context = context->v8_context();
+
+    std::string file_system_name(*v8::String::Utf8Value(
+        isolate, file_def
+                     ->Get(v8_context, v8::String::NewFromUtf8(
+                                           isolate, "fileSystemName",
+                                           v8::NewStringType::kInternalized)
+                                           .ToLocalChecked())
+                     .ToLocalChecked()));
+    GURL file_system_root(*v8::String::Utf8Value(
+        isolate, file_def
+                     ->Get(v8_context, v8::String::NewFromUtf8(
+                                           isolate, "fileSystemRoot",
+                                           v8::NewStringType::kInternalized)
+                                           .ToLocalChecked())
+                     .ToLocalChecked()));
+    std::string file_full_path(*v8::String::Utf8Value(
+        isolate, file_def
+                     ->Get(v8_context, v8::String::NewFromUtf8(
+                                           isolate, "fileFullPath",
+                                           v8::NewStringType::kInternalized)
+                                           .ToLocalChecked())
+                     .ToLocalChecked()));
+    bool is_directory =
+        file_def
+            ->Get(v8_context,
+                  v8::String::NewFromUtf8(isolate, "fileIsDirectory",
+                                          v8::NewStringType::kInternalized)
+                      .ToLocalChecked())
+            .ToLocalChecked()
+            ->BooleanValue(isolate);
     blink::WebDOMFileSystem::EntryType entry_type =
         is_directory ? blink::WebDOMFileSystem::kEntryTypeDirectory
                      : blink::WebDOMFileSystem::kEntryTypeFile;
     blink::WebLocalFrame* webframe =
-        blink::WebLocalFrame::FrameForContext(context->v8_context());
+        blink::WebLocalFrame::FrameForContext(v8_context);
     args.GetReturnValue().Set(
         blink::WebDOMFileSystem::Create(
             webframe, blink::kWebFileSystemTypeExternal,
             blink::WebString::FromUTF8(file_system_name), file_system_root)
             .CreateV8Entry(blink::WebString::FromUTF8(file_full_path),
-                           entry_type, args.Holder(), args.GetIsolate()));
+                           entry_type, args.Holder(), isolate));
 #endif
 }
 

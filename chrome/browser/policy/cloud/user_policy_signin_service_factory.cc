@@ -7,16 +7,17 @@
 #include "base/memory/ref_counted.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/policy/cloud/user_cloud_policy_manager_factory.h"
+#include "chrome/browser/net/system_network_context_manager.h"
+#include "chrome/browser/policy/chrome_browser_policy_connector.h"
 #include "chrome/browser/profiles/profile.h"
-#include "chrome/browser/signin/profile_oauth2_token_service_factory.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
 #include "chrome/common/pref_names.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
 #include "components/policy/core/browser/browser_policy_connector.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_service.h"
 #include "net/url_request/url_request_context_getter.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 #if defined(OS_ANDROID)
 #include "chrome/browser/policy/cloud/user_policy_signin_service_mobile.h"
@@ -37,9 +38,7 @@ UserPolicySigninServiceFactory::UserPolicySigninServiceFactory()
     : BrowserContextKeyedServiceFactory(
         "UserPolicySigninService",
         BrowserContextDependencyManager::GetInstance()) {
-  DependsOn(ProfileOAuth2TokenServiceFactory::GetInstance());
-  DependsOn(SigninManagerFactory::GetInstance());
-  DependsOn(UserCloudPolicyManagerFactory::GetInstance());
+  DependsOn(IdentityManagerFactory::GetInstance());
 }
 
 UserPolicySigninServiceFactory::~UserPolicySigninServiceFactory() {}
@@ -70,14 +69,12 @@ KeyedService* UserPolicySigninServiceFactory::BuildServiceInstanceFor(
   DeviceManagementService* device_management_service =
       g_device_management_service ? g_device_management_service
                                   : connector->device_management_service();
+
   UserPolicySigninService* service = new UserPolicySigninService(
-      profile,
-      g_browser_process->local_state(),
-      device_management_service,
-      UserCloudPolicyManagerFactory::GetForBrowserContext(context),
-      SigninManagerFactory::GetForProfile(profile),
-      g_browser_process->system_request_context(),
-      ProfileOAuth2TokenServiceFactory::GetForProfile(profile));
+      profile, g_browser_process->local_state(), device_management_service,
+      profile->GetUserCloudPolicyManager(),
+      IdentityManagerFactory::GetForProfile(profile),
+      g_browser_process->shared_url_loader_factory());
   return service;
 }
 

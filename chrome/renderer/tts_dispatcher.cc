@@ -10,10 +10,10 @@
 #include "chrome/common/tts_messages.h"
 #include "chrome/common/tts_utterance_request.h"
 #include "content/public/renderer/render_thread.h"
-#include "third_party/WebKit/public/platform/WebSpeechSynthesisUtterance.h"
-#include "third_party/WebKit/public/platform/WebSpeechSynthesisVoice.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/platform/WebVector.h"
+#include "third_party/blink/public/platform/web_speech_synthesis_utterance.h"
+#include "third_party/blink/public/platform/web_speech_synthesis_voice.h"
+#include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/platform/web_vector.h"
 
 using content::RenderThread;
 using blink::WebSpeechSynthesizerClient;
@@ -141,26 +141,38 @@ void TtsDispatcher::OnDidResumeSpeaking(int utterance_id) {
   synthesizer_client_->DidResumeSpeaking(utterance);
 }
 
-void TtsDispatcher::OnWordBoundary(int utterance_id, int char_index) {
+void TtsDispatcher::OnWordBoundary(int utterance_id,
+                                   int char_index,
+                                   int char_length) {
   CHECK(char_index >= 0);
 
   WebSpeechSynthesisUtterance utterance = FindUtterance(utterance_id);
   if (utterance.IsNull())
     return;
 
+  // charLength is unsigned in the web speech API, so -1 cannot be used as a
+  // sentinel value. Use 0 instead to match web standards.
+  char_length = (char_length < 0) ? 0 : char_length;
   synthesizer_client_->WordBoundaryEventOccurred(
-      utterance, static_cast<unsigned>(char_index));
+      utterance, static_cast<unsigned>(char_index),
+      static_cast<unsigned>(char_length));
 }
 
-void TtsDispatcher::OnSentenceBoundary(int utterance_id, int char_index) {
+void TtsDispatcher::OnSentenceBoundary(int utterance_id,
+                                       int char_index,
+                                       int char_length) {
   CHECK(char_index >= 0);
 
   WebSpeechSynthesisUtterance utterance = FindUtterance(utterance_id);
   if (utterance.IsNull())
     return;
 
+  // charLength is unsigned in the web speech API, so -1 cannot be used as a
+  // sentinel value. Use 0 instead to match web standards.
+  char_length = (char_length < 0) ? 0 : char_length;
   synthesizer_client_->SentenceBoundaryEventOccurred(
-      utterance, static_cast<unsigned>(char_index));
+      utterance, static_cast<unsigned>(char_index),
+      static_cast<unsigned>(char_length));
 }
 
 void TtsDispatcher::OnMarkerEvent(int utterance_id, int char_index) {

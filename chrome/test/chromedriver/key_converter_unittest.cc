@@ -7,7 +7,7 @@
 #include <list>
 #include <string>
 
-#include "base/macros.h"
+#include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "build/build_config.h"
@@ -28,7 +28,7 @@ void CheckEvents(const base::string16& keys,
   EXPECT_EQ(kOk, ConvertKeysToKeyEvents(keys, release_modifiers,
                                         &modifiers, &events).code());
   EXPECT_EQ(expected_events.size(), events.size());
-  std::list<KeyEvent>::const_iterator expected = expected_events.begin();
+  auto expected = expected_events.begin();
   std::list<KeyEvent>::const_iterator actual = events.begin();
   while (expected != expected_events.end() && actual != events.end()) {
     EXPECT_EQ(expected->type, actual->type);
@@ -261,14 +261,7 @@ TEST(KeyConverter, ToggleModifiers) {
   CheckEventsReleaseModifiers(keys, key_events);
 }
 
-#if defined(OS_WIN)
-// https://code.google.com/p/chromedriver/issues/detail?id=546
-#define MAYBE_AllShorthandKeys DISABLED_AllShorthandKeys
-#else
-#define MAYBE_AllShorthandKeys AllShorthandKeys
-#endif
-
-TEST(KeyConverter, MAYBE_AllShorthandKeys) {
+TEST(KeyConverter, AllShorthandKeys) {
   KeyEventBuilder builder;
   std::list<KeyEvent> key_events;
   builder.SetKeyCode(ui::VKEY_RETURN)
@@ -276,7 +269,7 @@ TEST(KeyConverter, MAYBE_AllShorthandKeys) {
       ->Generate(&key_events);
   builder.Generate(&key_events);
   builder.SetKeyCode(ui::VKEY_TAB);
-#if defined(USE_AURA) || defined(OS_LINUX)
+#if defined(OS_LINUX)
   builder.SetText("\t", "\t")->Generate(&key_events);
 #else
   builder.SetText(std::string(), std::string());
@@ -284,7 +277,7 @@ TEST(KeyConverter, MAYBE_AllShorthandKeys) {
   key_events.push_back(builder.SetType(kKeyUpEventType)->Build());
 #endif
   builder.SetKeyCode(ui::VKEY_BACK);
-#if defined(USE_AURA) || defined(OS_LINUX)
+#if defined(OS_LINUX)
   builder.SetText("\b", "\b")->Generate(&key_events);
 #else
   builder.SetText(std::string(), std::string());
@@ -348,25 +341,15 @@ TEST(KeyConverter, AllEnglishKeyboardTextChars) {
   }
 }
 
-#if defined(OS_LINUX) || defined(OS_WIN)
-// https://code.google.com/p/chromedriver/issues/detail?id=240
-// https://code.google.com/p/chromedriver/issues/detail?id=546
-#define MAYBE_AllSpecialWebDriverKeysOnEnglishKeyboard \
-    DISABLED_AllSpecialWebDriverKeysOnEnglishKeyboard
-#else
-#define MAYBE_AllSpecialWebDriverKeysOnEnglishKeyboard \
-    AllSpecialWebDriverKeysOnEnglishKeyboard
-#endif
-
-TEST(KeyConverter, MAYBE_AllSpecialWebDriverKeysOnEnglishKeyboard) {
+TEST(KeyConverter, AllSpecialWebDriverKeysOnEnglishKeyboard) {
+  ui::ScopedKeyboardLayout keyboard_layout(ui::KEYBOARD_LAYOUT_ENGLISH_US);
   const char kTextForKeys[] = {
-#if defined(USE_AURA) || defined(OS_LINUX)
-      0, 0, 0, '\b', '\t', 0, '\r', '\r', 0, 0, 0, 0, 0x1B,
-      ' ', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0x7F, ';', '=',
+#if defined(OS_LINUX)
+      0, 0, 0, 0, '\t', 0, '\r', '\r', 0, 0, 0, 0, 0,
 #else
       0, 0, 0, 0, 0, 0, '\r', '\r', 0, 0, 0, 0, 0,
-      ' ', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ';', '=',
 #endif
+      ' ', 0, 0, 0, 0, 0, 0, 0, 0, 0, 0, ';', '=',
       '0', '1', '2', '3', '4', '5', '6', '7', '8', '9',
       '*', '+', ',', '-', '.', '/'};
   for (size_t i = 0; i <= 0x3D; ++i) {
@@ -376,29 +359,21 @@ TEST(KeyConverter, MAYBE_AllSpecialWebDriverKeysOnEnglishKeyboard) {
     int modifiers = 0;
     keys.push_back(0xE000U + i);
     std::list<KeyEvent> events;
-    if (i == 1) {
-      EXPECT_NE(kOk, ConvertKeysToKeyEvents(keys,
-                                            true /* release_modifiers*/,
-                                            &modifiers, &events).code())
-          << "Index: " << i;
+    EXPECT_EQ(kOk, ConvertKeysToKeyEvents(keys,
+                                          true /* release_modifiers */,
+                                          &modifiers, &events).code())
+        << "Index: " << i;
+    if (i == 0) {
       EXPECT_EQ(0u, events.size()) << "Index: " << i;
+    } else if (i >= base::size(kTextForKeys) || kTextForKeys[i] == 0) {
+      EXPECT_EQ(2u, events.size()) << "Index: " << i;
     } else {
-      EXPECT_EQ(kOk, ConvertKeysToKeyEvents(keys,
-                                            true /* release_modifiers */,
-                                            &modifiers, &events).code())
+      ASSERT_EQ(3u, events.size()) << "Index: " << i;
+      std::list<KeyEvent>::const_iterator it = events.begin();
+      ++it;  // Move to the second event.
+      ASSERT_EQ(1u, it->unmodified_text.length()) << "Index: " << i;
+      EXPECT_EQ(kTextForKeys[i], it->unmodified_text[0])
           << "Index: " << i;
-      if (i == 0) {
-        EXPECT_EQ(0u, events.size()) << "Index: " << i;
-      } else if (i >= arraysize(kTextForKeys) || kTextForKeys[i] == 0) {
-        EXPECT_EQ(2u, events.size()) << "Index: " << i;
-      } else {
-        ASSERT_EQ(3u, events.size()) << "Index: " << i;
-        std::list<KeyEvent>::const_iterator it = events.begin();
-        ++it;  // Move to the second event.
-        ASSERT_EQ(1u, it->unmodified_text.length()) << "Index: " << i;
-        EXPECT_EQ(kTextForKeys[i], it->unmodified_text[0])
-            << "Index: " << i;
-      }
     }
   }
 }

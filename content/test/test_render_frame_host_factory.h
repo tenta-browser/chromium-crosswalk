@@ -29,9 +29,8 @@ class TestRenderFrameHostFactory : public RenderFrameHostFactory {
   // RenderFrameHostFactory implementation.
   std::unique_ptr<RenderFrameHostImpl> CreateRenderFrameHost(
       SiteInstance* site_instance,
-      RenderViewHostImpl* render_view_host,
+      scoped_refptr<RenderViewHostImpl> render_view_host,
       RenderFrameHostDelegate* delegate,
-      RenderWidgetHostDelegate* rwh_delegate,
       FrameTree* frame_tree,
       FrameTreeNode* frame_tree_node,
       int32_t routing_id,

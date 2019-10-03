@@ -32,8 +32,8 @@ class NativeImageBuffer : public base::RefCountedThreadSafe<NativeImageBuffer> {
 
  protected:
   friend class base::RefCountedThreadSafe<NativeImageBuffer>;
-  NativeImageBuffer() {}
-  virtual ~NativeImageBuffer() {}
+  NativeImageBuffer() = default;
+  virtual ~NativeImageBuffer() = default;
 
   DISALLOW_COPY_AND_ASSIGN(NativeImageBuffer);
 };
@@ -101,6 +101,7 @@ class TextureDefinition {
   GLenum wrap_t_;
   GLenum usage_;
   bool immutable_;
+  bool immutable_storage_;
   bool defined_;
 
   // Only support textures with one face and one level.

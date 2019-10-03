@@ -20,6 +20,9 @@
 // files don't know that "resources.pak" now has a dependency to
 // "whatever.js". You should rerun gyp to let the build files know.
 //
+// error_counter.js must be loaded before all other scripts of the Files app.
+// <include src="../../../base/js/error_counter.js">
+//
 // metrics_base.js and metrics.js initiates load performance tracking
 // so we want to parse it as early as possible.
 // <include src="../../common/js/metrics_base.js">
@@ -27,36 +30,37 @@
 // <include src="metrics_start.js">
 //
 // <include src="../../common/js/lru_cache.js">
+// <include src="../../../image_loader/load_image_request.js">
 // <include src="../../../image_loader/image_loader_client.js">
 //
 // <include src="../../../../webui/resources/js/load_time_data.js">
 // <include src="../../../../webui/resources/js/action_link.js">
 // <include src="../../../../webui/resources/js/cr.js">
 // <include src="../../../../webui/resources/js/util.js">
-// <include src="../../../../webui/resources/js/i18n_template_no_process.js">
 //
 // <include src="../../../../webui/resources/js/event_tracker.js">
 // <include src="../../../../webui/resources/js/cr/ui.js">
 // <include src="../../../../webui/resources/js/cr/event_target.js">
-// <include src="../../../../webui/resources/js/cr/ui/touch_handler.js">
 // <include src="../../../../webui/resources/js/cr/ui/array_data_model.js">
 // <include src="../../../../webui/resources/js/cr/ui/dialogs.js">
 // <include src="../../../../webui/resources/js/cr/ui/list_item.js">
 // <include src="../../../../webui/resources/js/cr/ui/list_selection_model.js">
-// <include src="../../../../webui/resources/js/cr/ui/list_single_selection_model.js">
-// <include src="../../../../webui/resources/js/cr/ui/list_selection_controller.js">
+// <include
+// src="../../../../webui/resources/js/cr/ui/list_single_selection_model.js">
+// <include
+// src="../../../../webui/resources/js/cr/ui/list_selection_controller.js">
 // <include src="../../../../webui/resources/js/cr/ui/list.js">
 // <include src="../../../../webui/resources/js/cr/ui/tree.js">
-// <include src="../../../../webui/resources/js/cr/ui/autocomplete_list.js">
+// <include src="ui/autocomplete_list.js">
 
 // <include src="../../../../webui/resources/js/cr/ui/splitter.js">
-// <include src="../../../../webui/resources/js/cr/ui/table/table_splitter.js">
+// <include src="ui/table/table_splitter.js">
 //
-// <include src="../../../../webui/resources/js/cr/ui/table/table_column.js">
-// <include src="../../../../webui/resources/js/cr/ui/table/table_column_model.js">
-// <include src="../../../../webui/resources/js/cr/ui/table/table_header.js">
-// <include src="../../../../webui/resources/js/cr/ui/table/table_list.js">
-// <include src="../../../../webui/resources/js/cr/ui/table.js">
+// <include src="ui/table/table_column.js">
+// <include src="ui/table/table_column_model.js">
+// <include src="ui/table/table_header.js">
+// <include src="ui/table/table_list.js">
+// <include src="ui/table/table.js">
 //
 // <include src="../../../../webui/resources/js/cr/ui/grid.js">
 //
@@ -66,21 +70,17 @@
 // <include src="../../../../webui/resources/js/cr/ui/menu.js">
 // <include src="../../../../webui/resources/js/cr/ui/menu_button.js">
 // <include src="../../../../webui/resources/js/cr/ui/context_menu_handler.js">
-//
-// <include src="../../../../webui/resources/js/analytics.js">
-// metrics_events.js must be loaded after the analytics package.
-// <include src="../../common/js/metrics_events.js">
 
-(function() {
+(() => {
 // 'strict mode' is invoked for this scope.
 'use strict';
 
-// error_util.js must be loaded before all other scripts of the Files app.
-// <include src="../../common/js/error_util.js">
 //
 // <include src="../../common/js/async_util.js">
 // <include src="../../common/js/file_type.js">
-// <include src="../../common/js/volume_manager_common.js">
+// <include src="../../common/js/files_app_entry_types.js">
+// <include src="../../../base/js/volume_manager_types.js">
+// <include src="../../../base/js/app_util.js">
 // <include src="../../common/js/util.js">
 // <include src="../../common/js/progress_center_common.js">
 // <include src="../../common/js/importer_common.js">
@@ -94,17 +94,14 @@
 // <include src="metadata/metadata_provider.js">
 // <include src="metadata/metadata_request.js">
 //
-// <include
-// src="../../../../../components/chrome_apps/webstore_widget/cws_widget/app_installer.js">
-// <include
-// src="../../../../../components/chrome_apps/webstore_widget/cws_widget/cws_webview_client.js">
-// <include
-// src="../../../../../components/chrome_apps/webstore_widget/cws_widget/cws_widget_container.js">
-// <include
-// src="../../../../../components/chrome_apps/webstore_widget/cws_widget/cws_widget_container_error_dialog.js">
+// <include src="../../cws_widget/app_installer.js">
+// <include src="../../cws_widget/cws_webview_client.js">
+// <include src="../../cws_widget/cws_widget_container.js">
+// <include src="../../cws_widget/cws_widget_container_error_dialog.js">
 //
 // <include src="actions_controller.js">
 // <include src="actions_model.js">
+// <include src="android_app_list_model.js">
 // <include src="app_state_controller.js">
 // <include src="column_visibility_controller.js">
 // <include src="dialog_action_controller.js">
@@ -147,7 +144,6 @@
 // <include src="scan_controller.js">
 // <include src="search_controller.js">
 // <include src="selection_menu_controller.js">
-// <include src="share_client.js">
 // <include src="spinner_controller.js">
 // <include src="task_controller.js">
 // <include src="task_history.js">
@@ -162,7 +158,6 @@
 // <include src="ui/directory_tree.js">
 // <include src="ui/drag_selector.js">
 // <include src="ui/empty_folder.js">
-// <include src="ui/error_dialog.js">
 // <include src="ui/file_grid.js">
 // <include src="ui/file_manager_ui.js">
 // <include src="ui/file_metadata_formatter.js">
@@ -174,16 +169,17 @@
 // <include src="ui/files_confirm_dialog.js">
 // <include src="ui/files_menu.js">
 // <include src="ui/gear_menu.js">
+// <include src="ui/install_linux_package_dialog.js">
 // <include src="ui/list_container.js">
 // <include src="ui/location_line.js">
 // <include src="ui/multi_profile_share_dialog.js">
+// <include src="ui/multi_menu.js">
 // <include src="ui/progress_center_panel.js">
 // <include src="ui/providers_menu.js">
 // <include src="ui/search_box.js">
-// <include src="ui/share_dialog.js">
 // <include src="ui/suggest_apps_dialog.js">
 // <include src="main_window_component.js">
-// <include src="volume_manager_wrapper.js">
+// <include src="../../../base/js/filtered_volume_manager.js">
 // <include src="webui_command_extender.js">
 
 // // For accurate load performance tracking place main.js should be

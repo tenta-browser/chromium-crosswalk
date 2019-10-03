@@ -8,6 +8,7 @@
 #include "base/callback_forward.h"
 
 #include "content/common/content_export.h"
+#include "ui/accessibility/ax_mode.h"
 
 namespace content {
 
@@ -28,6 +29,18 @@ class CONTENT_EXPORT BrowserAccessibilityState {
   // required by a command line flag or by a platform requirement.)
   virtual void DisableAccessibility() = 0;
 
+  virtual bool IsRendererAccessibilityEnabled() = 0;
+
+  virtual ui::AXMode GetAccessibilityMode() = 0;
+
+  // Adds the given accessibility mode flags to the current accessibility
+  // mode bitmap.
+  virtual void AddAccessibilityModeFlags(ui::AXMode mode) = 0;
+
+  // Remove the given accessibility mode flags from the current accessibility
+  // mode bitmap.
+  virtual void RemoveAccessibilityModeFlags(ui::AXMode mode) = 0;
+
   // Resets accessibility to the platform default for all running tabs.
   // This is probably off, but may be on, if --force_renderer_accessibility is
   // passed, or EditableTextOnly if this is Win7.
@@ -43,7 +56,14 @@ class CONTENT_EXPORT BrowserAccessibilityState {
   // browser starts up, when accessibility state histograms are updated.
   // Use this to register a method to update additional accessibility
   // histograms.
-  virtual void AddHistogramCallback(base::Closure callback) = 0;
+  //
+  // Use this variant for a callback that must be run on the UI thread,
+  // for example something that needs to access prefs.
+  virtual void AddUIThreadHistogramCallback(base::OnceClosure callback) = 0;
+
+  // Use this variant for a callback that's better to run on another
+  // thread, for example something that may block or run slowly.
+  virtual void AddOtherThreadHistogramCallback(base::OnceClosure callback) = 0;
 
   virtual void UpdateHistogramsForTesting() = 0;
 };

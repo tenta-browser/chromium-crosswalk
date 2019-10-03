@@ -7,6 +7,7 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "chrome/browser/printing/printer_manager_dialog.h"
+#include "chrome/browser/profiles/profile.h"
 #include "content/public/browser/web_ui.h"
 
 namespace settings {
@@ -18,8 +19,8 @@ PrintingHandler::~PrintingHandler() {}
 void PrintingHandler::RegisterMessages() {
   web_ui()->RegisterMessageCallback(
       "openSystemPrintDialog",
-      base::Bind(&PrintingHandler::HandleOpenSystemPrintDialog,
-                 base::Unretained(this)));
+      base::BindRepeating(&PrintingHandler::HandleOpenSystemPrintDialog,
+                          base::Unretained(this)));
 }
 
 void PrintingHandler::OnJavascriptAllowed() {}
@@ -27,7 +28,8 @@ void PrintingHandler::OnJavascriptAllowed() {}
 void PrintingHandler::OnJavascriptDisallowed() {}
 
 void PrintingHandler::HandleOpenSystemPrintDialog(const base::ListValue* args) {
-  printing::PrinterManagerDialog::ShowPrinterManagerDialog();
+  printing::PrinterManagerDialog::ShowPrinterManagerDialog(
+      Profile::FromWebUI(web_ui()));
 }
 
 }  // namespace settings

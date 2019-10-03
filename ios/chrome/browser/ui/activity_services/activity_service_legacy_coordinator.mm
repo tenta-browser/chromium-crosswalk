@@ -8,10 +8,8 @@
 #include "base/time/time.h"
 #include "ios/chrome/browser/browser_state/chrome_browser_state.h"
 #import "ios/chrome/browser/passwords/password_tab_helper.h"
-#import "ios/chrome/browser/tabs/tab.h"
 #import "ios/chrome/browser/tabs/tab_model.h"
 #import "ios/chrome/browser/ui/activity_services/activity_service_controller.h"
-#import "ios/chrome/browser/ui/activity_services/canonical_url_feature.h"
 #import "ios/chrome/browser/ui/activity_services/canonical_url_retriever.h"
 #import "ios/chrome/browser/ui/activity_services/requirements/activity_service_password.h"
 #import "ios/chrome/browser/ui/activity_services/requirements/activity_service_positioner.h"
@@ -21,6 +19,7 @@
 #import "ios/chrome/browser/ui/activity_services/share_to_data_builder.h"
 #import "ios/chrome/browser/ui/commands/activity_service_commands.h"
 #import "ios/chrome/browser/ui/commands/command_dispatcher.h"
+#import "ios/chrome/browser/web_state_list/web_state_list.h"
 #include "url/gurl.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -85,21 +84,17 @@ const char kSharePageLatencyHistogram[] = "IOS.SharePageLatency";
 
 - (void)sharePage {
   self.sharePageStartTime = base::TimeTicks::Now();
-  if (!base::FeatureList::IsEnabled(activity_services::kShareCanonicalURL)) {
-    [self sharePageWithCanonicalURL:GURL::EmptyGURL()];
-  } else {
-    __weak ActivityServiceLegacyCoordinator* weakSelf = self;
-    activity_services::RetrieveCanonicalUrl(
-        self.tabModel.currentTab.webState, ^(const GURL& url) {
-          [weakSelf sharePageWithCanonicalURL:url];
-        });
-  }
+  __weak ActivityServiceLegacyCoordinator* weakSelf = self;
+  activity_services::RetrieveCanonicalUrl(
+      self.tabModel.webStateList->GetActiveWebState(), ^(const GURL& url) {
+        [weakSelf sharePageWithCanonicalURL:url];
+      });
 }
 
 #pragma mark - Providers
 
 - (id<PasswordFormFiller>)currentPasswordFormFiller {
-  web::WebState* webState = self.tabModel.currentTab.webState;
+  web::WebState* webState = self.tabModel.webStateList->GetActiveWebState();
   return webState ? PasswordTabHelper::FromWebState(webState)
                         ->GetPasswordFormFiller()
                   : nil;
@@ -108,8 +103,8 @@ const char kSharePageLatencyHistogram[] = "IOS.SharePageLatency";
 #pragma mark - Private Methods
 
 - (void)sharePageWithCanonicalURL:(const GURL&)canonicalURL {
-  ShareToData* data = activity_services::ShareToDataForTab(
-      [self.tabModel currentTab], canonicalURL);
+  ShareToData* data = activity_services::ShareToDataForWebState(
+      self.tabModel.webStateList->GetActiveWebState(), canonicalURL);
   if (!data)
     return;
 

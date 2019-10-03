@@ -6,11 +6,13 @@
 #define ASH_WM_WM_EVENT_H_
 
 #include "ash/ash_export.h"
+#include "ash/wm/window_state.h"
 #include "base/macros.h"
+#include "base/time/time.h"
+#include "ui/display/display.h"
 #include "ui/gfx/geometry/rect.h"
 
 namespace ash {
-namespace wm {
 
 // WMEventType defines a set of operations that can change the
 // window's state type and bounds.
@@ -89,9 +91,19 @@ enum WMEventType {
   // A user requested to pin a window.
   WM_EVENT_PIN,
 
+  // A user requested to pip a window.
+  WM_EVENT_PIP,
+
   // A user requested to pin a window for a trusted application. This is similar
   // WM_EVENT_PIN but does not allow user to exit the mode by shortcut key.
   WM_EVENT_TRUSTED_PIN,
+
+  // A system ui area has changed. Currently, this includes the virtual
+  // keyboard and the message center. A change can be a change in visibility
+  // or bounds.
+  // TODO(oshima): Consider consolidating this into
+  // WM_EVENT_WORKAREA_BOUNDS_CHANGED
+  WM_EVENT_SYSTEM_UI_AREA_CHANGED,
 };
 
 class ASH_EXPORT WMEvent {
@@ -129,20 +141,32 @@ class ASH_EXPORT WMEvent {
 };
 
 // An WMEvent to request new bounds for the window.
-class ASH_EXPORT SetBoundsEvent : public WMEvent {
+class ASH_EXPORT SetBoundsWMEvent : public WMEvent {
  public:
-  SetBoundsEvent(WMEventType type, const gfx::Rect& requested_bounds);
-  ~SetBoundsEvent() override;
+  SetBoundsWMEvent(
+      const gfx::Rect& requested_bounds,
+      bool animate = false,
+      base::TimeDelta duration = WindowState::kBoundsChangeSlideDuration);
+  SetBoundsWMEvent(const gfx::Rect& requested_bounds, int64_t display_id);
+  ~SetBoundsWMEvent() override;
 
   const gfx::Rect& requested_bounds() const { return requested_bounds_; }
 
- private:
-  gfx::Rect requested_bounds_;
+  bool animate() const { return animate_; }
 
-  DISALLOW_COPY_AND_ASSIGN(SetBoundsEvent);
+  base::TimeDelta duration() const { return duration_; }
+
+  int64_t display_id() const { return display_id_; }
+
+ private:
+  const gfx::Rect requested_bounds_;
+  const int64_t display_id_ = display::kInvalidDisplayId;
+  const bool animate_;
+  const base::TimeDelta duration_;
+
+  DISALLOW_COPY_AND_ASSIGN(SetBoundsWMEvent);
 };
 
-}  // namespace wm
 }  // namespace ash
 
 #endif  // ASH_WM_WM_EVENT_H_

@@ -12,6 +12,7 @@
 #include "ui/aura/window.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/layer_tree_owner.h"
+#include "ui/wm/core/window_properties.h"
 
 namespace wm {
 

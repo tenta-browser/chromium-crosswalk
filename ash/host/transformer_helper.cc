@@ -12,6 +12,8 @@
 #include "ui/aura/window_tree_host.h"
 #include "ui/compositor/dip_util.h"
 #include "ui/compositor/layer_animation_element.h"
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
 #include "ui/gfx/geometry/insets.h"
 #include "ui/gfx/geometry/rect.h"
 #include "ui/gfx/geometry/rect_f.h"
@@ -89,7 +91,7 @@ void TransformerHelper::SetRootWindowTransformer(
   // update the root window size immediately.
   if (!window->layer()->GetAnimator()->IsAnimatingProperty(
           ui::LayerAnimationElement::TRANSFORM)) {
-    host->UpdateRootWindowSizeInPixels(host->GetBoundsInPixels().size());
+    host->UpdateRootWindowSizeInPixels();
   }
 }
 
@@ -110,9 +112,9 @@ gfx::Transform TransformerHelper::GetInverseTransform() const {
   return transformer_->GetInverseTransform() * transform;
 }
 
-void TransformerHelper::UpdateWindowSize(const gfx::Size& host_size) {
-  ash_host_->AsWindowTreeHost()->window()->SetBounds(
-      transformer_->GetRootWindowBounds(host_size));
+gfx::Rect TransformerHelper::GetTransformedWindowBounds(
+    const gfx::Size& host_size) const {
+  return transformer_->GetRootWindowBounds(host_size);
 }
 
 }  // namespace ash

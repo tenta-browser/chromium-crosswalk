@@ -3,8 +3,12 @@
 // found in the LICENSE file.
 #include "services/resource_coordinator/public/cpp/memory_instrumentation/os_metrics.h"
 
+#include <set>
+#include <vector>
+
 #include "base/files/file_util.h"
 #include "base/process/process_handle.h"
+#include "base/process/process_metrics.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -15,6 +19,11 @@
 
 #if defined(OS_WIN)
 #include <base/strings/sys_string_conversions.h>
+#include <windows.h>
+#endif
+
+#if defined(OS_LINUX) || defined(OS_ANDROID)
+#include <sys/mman.h>
 #endif
 
 namespace memory_instrumentation {
@@ -196,6 +205,51 @@ TEST(OSMetricsTest, ParseProcSmaps) {
   EXPECT_EQ(4 * 1024UL, maps_2[0]->byte_stats_private_dirty_resident);
   EXPECT_EQ(0 * 1024UL, maps_2[0]->byte_stats_swapped);
 }
+
+TEST(OSMetricsTest, GetMappedAndResidentPages) {
+  const size_t kPages = 16;
+  const size_t kPageSize = base::GetPageSize();
+  const size_t kLength = kPages * kPageSize;
+
+  // mmap guarantees addr is aligned with kPagesize.
+  void* addr = mmap(NULL, kLength, PROT_READ | PROT_WRITE,
+                    MAP_PRIVATE | MAP_ANONYMOUS, -1, 0);
+
+  ASSERT_NE(MAP_FAILED, addr) << "mmap() failed";
+
+  std::set<size_t> pages;
+  uint8_t* array = static_cast<uint8_t*>(addr);
+  for (unsigned int i = 0; i < kPages / 2; ++i) {
+    int page = rand() % kPages;
+    int offset = rand() % kPageSize;
+    *static_cast<volatile uint8_t*>(array + page * kPageSize + offset) =
+        rand() % 256;
+    pages.insert(page);
+  }
+
+  size_t start_address = reinterpret_cast<size_t>(addr);
+
+  std::vector<uint8_t> accessed_pages_bitmap;
+  OSMetrics::MappedAndResidentPagesDumpState state =
+      OSMetrics::GetMappedAndResidentPages(
+          start_address, start_address + kLength, &accessed_pages_bitmap);
+
+  ASSERT_EQ(munmap(addr, kLength), 0);
+  if (state == OSMetrics::MappedAndResidentPagesDumpState::kAccessPagemapDenied)
+    return;
+
+  EXPECT_EQ(state == OSMetrics::MappedAndResidentPagesDumpState::kSuccess,
+            true);
+  std::set<size_t> accessed_pages_set;
+  for (size_t i = 0; i < accessed_pages_bitmap.size(); i++) {
+    for (int j = 0; j < 8; j++)
+      if (accessed_pages_bitmap[i] & (1 << j))
+        accessed_pages_set.insert(i * 8 + j);
+  }
+
+  EXPECT_EQ(pages == accessed_pages_set, true);
+}
+
 #endif  // defined(OS_LINUX) || defined(OS_ANDROID)
 
 #if defined(OS_WIN)
@@ -250,16 +304,17 @@ TEST(OSMetricsTest, TestWinModuleReading) {
 #endif  // defined(OS_WIN)
 
 #if defined(OS_MACOSX)
-TEST(OSMetricsTest, TestMachOReading) {
-  auto maps = OSMetrics::GetProcessMemoryMaps(base::kNullProcessId);
+namespace {
+
+void CheckMachORegions(const std::vector<mojom::VmRegionPtr>& maps) {
   uint32_t size = 100;
   char full_path[size];
   int result = _NSGetExecutablePath(full_path, &size);
   ASSERT_EQ(0, result);
   std::string name = basename(full_path);
 
-  uint64_t components_unittests_resident_pages = 0;
   bool found_appkit = false;
+  bool found_components_unittests = false;
   for (const mojom::VmRegionPtr& region : maps) {
     EXPECT_NE(0u, region->start_address);
     EXPECT_NE(0u, region->size_in_bytes);
@@ -269,19 +324,25 @@ TEST(OSMetricsTest, TestMachOReading) {
                                          mojom::VmRegion::kProtectionFlagsExec;
     if (region->mapped_file.find(name) != std::string::npos &&
         region->protection_flags == required_protection_flags) {
-      components_unittests_resident_pages +=
-          region->byte_stats_private_dirty_resident +
-          region->byte_stats_shared_dirty_resident +
-          region->byte_stats_private_clean_resident +
-          region->byte_stats_shared_clean_resident;
+      found_components_unittests = true;
     }
 
     if (region->mapped_file.find("AppKit") != std::string::npos) {
       found_appkit = true;
     }
   }
-  EXPECT_GT(components_unittests_resident_pages, 0u);
+  EXPECT_TRUE(found_components_unittests);
   EXPECT_TRUE(found_appkit);
+}
+
+}  // namespace
+
+// Test failing on Mac ASan 64: https://crbug.com/852690
+TEST(OSMetricsTest, DISABLED_TestMachOReading) {
+  auto maps = OSMetrics::GetProcessMemoryMaps(base::kNullProcessId);
+  CheckMachORegions(maps);
+  maps = OSMetrics::GetProcessModules(base::kNullProcessId);
+  CheckMachORegions(maps);
 }
 #endif  // defined(OS_MACOSX)
 

@@ -17,6 +17,7 @@
 #include "cc/paint/paint_export.h"
 #include "cc/paint/paint_flags.h"
 #include "cc/paint/paint_image.h"
+#include "cc/paint/paint_shader.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
 #include "ui/gfx/geometry/rect.h"
@@ -69,6 +70,11 @@ class CC_PAINT_EXPORT DiscardableImageMap {
   base::flat_map<PaintImage::Id, PaintImage::DecodingMode>
   TakeDecodingModeMap();
 
+  const std::vector<scoped_refptr<PaintWorkletInput>>& paint_worklet_inputs()
+      const {
+    return paint_worklet_inputs_;
+  }
+
  private:
   friend class ScopedMetadataGenerator;
   friend class DiscardableImageMapTest;
@@ -85,6 +91,8 @@ class CC_PAINT_EXPORT DiscardableImageMap {
   bool all_images_are_srgb_ = false;
 
   RTree<DrawImage> images_rtree_;
+
+  std::vector<scoped_refptr<PaintWorkletInput>> paint_worklet_inputs_;
 };
 
 }  // namespace cc

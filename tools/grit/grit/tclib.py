@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 # Copyright (c) 2012 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -6,6 +5,7 @@
 '''Adaptation of the extern.tclib classes for our needs.
 '''
 
+from __future__ import print_function
 
 import re
 import types
@@ -20,6 +20,8 @@ import grit.extern.tclib
 # with spaces.
 _FOLD_WHITESPACE = re.compile(r'\s+')
 
+# Caches compiled regexp used to split tags in BaseMessage.__init__()
+_RE_CACHE = {}
 
 def Identity(i):
   return i
@@ -53,10 +55,19 @@ class BaseMessage(object):
         tags = tag_map.keys()
         tags.sort(cmp=lambda x,y: len(x) - len(y) or cmp(x, y), reverse=True)
         tag_re = '(' + '|'.join(tags) + ')'
-        chunked_text = re.split(tag_re, text)
+
+        # This caching improves the time to build
+        # chrome/app:generated_resources from 21.562s to 17.672s on Linux.
+        compiled_re = _RE_CACHE.get(tag_re, None)
+        if compiled_re is None:
+          compiled_re = re.compile(tag_re)
+          _RE_CACHE[tag_re] = compiled_re
+
+        chunked_text = compiled_re.split(text)
+
         for chunk in chunked_text:
           if chunk: # ignore empty chunk
-            if tag_map.has_key(chunk):
+            if chunk in tag_map:
               self.AppendPlaceholder(tag_map[chunk][0])
               tag_map[chunk][1] += 1 # increase placeholder use count
             else:
@@ -131,10 +142,8 @@ class BaseMessage(object):
     return self.id
 
   def GenerateId(self):
-    # Must use a UTF-8 encoded version of the presentable content, along with
-    # the meaning attribute, to match the TC.
-    return grit.extern.tclib.GenerateMessageId(
-      self.GetPresentableContent().encode('utf-8'), self.meaning)
+    return grit.extern.tclib.GenerateMessageId(self.GetPresentableContent(),
+                                               self.meaning)
 
   def GetPlaceholders(self):
     return self.placeholders
@@ -231,5 +240,3 @@ class Placeholder(grit.extern.tclib.Placeholder):
 
   def GetExample(self):
     return self.example
-
-

@@ -5,61 +5,67 @@
 package org.chromium.chrome.browser.photo_picker;
 
 import android.graphics.Bitmap;
-import android.os.AsyncTask;
 import android.os.SystemClock;
 import android.util.LruCache;
 
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.base.task.AsyncTask;
 
-import java.util.concurrent.TimeUnit;
+import java.util.ArrayList;
+import java.util.List;
 
 /**
  * A worker task to scale bitmaps in the background.
  */
-class BitmapScalerTask extends AsyncTask<Bitmap, Void, Bitmap> {
-    private final LruCache<String, Bitmap> mCache;
+class BitmapScalerTask extends AsyncTask<Bitmap> {
+    private final LruCache<String, PickerCategoryView.Thumbnail> mCache;
     private final String mFilePath;
     private final int mSize;
+    private final Bitmap mBitmap;
+    private final String mVideoDuration;
 
     /**
      * A BitmapScalerTask constructor.
      */
-    public BitmapScalerTask(LruCache<String, Bitmap> cache, String filePath, int size) {
+    public BitmapScalerTask(LruCache<String, PickerCategoryView.Thumbnail> cache, Bitmap bitmap,
+            String filePath, String videoDuration, int size) {
         mCache = cache;
         mFilePath = filePath;
         mSize = size;
+        mBitmap = bitmap;
+        mVideoDuration = videoDuration;
     }
 
     /**
      * Scales the image provided. Called on a non-UI thread.
-     * @param params Ignored, do not use.
      * @return A sorted list of images (by last-modified first).
      */
     @Override
-    protected Bitmap doInBackground(Bitmap... bitmaps) {
+    protected Bitmap doInBackground() {
         assert !ThreadUtils.runningOnUiThread();
 
         if (isCancelled()) return null;
 
         long begin = SystemClock.elapsedRealtime();
-        Bitmap bitmap = BitmapUtils.scale(bitmaps[0], mSize, false);
+        Bitmap bitmap = BitmapUtils.scale(mBitmap, mSize, false);
         long scaleTime = SystemClock.elapsedRealtime() - begin;
-        RecordHistogram.recordTimesHistogram(
-                "Android.PhotoPicker.BitmapScalerTask", scaleTime, TimeUnit.MILLISECONDS);
+        RecordHistogram.recordTimesHistogram("Android.PhotoPicker.BitmapScalerTask", scaleTime);
         return bitmap;
     }
 
     /**
      * Communicates the results back to the client. Called on the UI thread.
-     * @param result The resulting scaled bitmap.
+     * @param bitmap The resulting scaled bitmap.
      */
     @Override
-    protected void onPostExecute(Bitmap result) {
+    protected void onPostExecute(Bitmap bitmap) {
         if (isCancelled()) {
             return;
         }
 
-        mCache.put(mFilePath, result);
+        List<Bitmap> bitmaps = new ArrayList<>(1);
+        bitmaps.add(bitmap);
+        mCache.put(mFilePath, new PickerCategoryView.Thumbnail(bitmaps, mVideoDuration));
     }
 }

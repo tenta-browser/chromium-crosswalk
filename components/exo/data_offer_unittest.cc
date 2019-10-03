@@ -12,8 +12,8 @@
 #include <vector>
 
 #include "base/containers/flat_set.h"
+#include "base/files/file_util.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/exo/data_device.h"
@@ -39,7 +39,7 @@ class TestDataOfferDelegate : public DataOfferDelegate {
 
   // Called when |mime_type| is offered by the client.
   void OnOffer(const std::string& mime_type) override {
-    mime_types_.push_back(mime_type);
+    mime_types_.insert(mime_type);
   }
 
   // Called when possible |source_actions| is offered by the client.
@@ -51,14 +51,14 @@ class TestDataOfferDelegate : public DataOfferDelegate {
   // Called when current |action| is offered by the client.
   void OnAction(DndAction dnd_action) override { dnd_action_ = dnd_action; }
 
-  const std::vector<std::string>& mime_types() const { return mime_types_; }
+  const base::flat_set<std::string>& mime_types() const { return mime_types_; }
   const base::flat_set<DndAction>& source_actions() const {
     return source_actions_;
   }
   DndAction dnd_action() const { return dnd_action_; }
 
  private:
-  std::vector<std::string> mime_types_;
+  base::flat_set<std::string> mime_types_;
   base::flat_set<DndAction> source_actions_;
   DndAction dnd_action_ = DndAction::kNone;
 
@@ -71,21 +71,28 @@ class TestFileHelper : public FileHelper {
 
   // Overridden from FileHelper:
   std::string GetMimeTypeForUriList() const override { return "text/uri-list"; }
-  bool ConvertPathToUrl(const base::FilePath& path, GURL* out) override {
+  bool GetUrlFromPath(const std::string& app_id,
+                      const base::FilePath& path,
+                      GURL* out) override {
     *out = GURL("file://" + path.AsUTF8Unsafe());
     return true;
   }
+  bool HasUrlsInPickle(const base::Pickle& pickle) override { return true; }
+  void GetUrlsFromPickle(const std::string& app_id,
+                         const base::Pickle& pickle,
+                         UrlsFromPickleCallback callback) override {
+    callback_ = std::move(callback);
+  }
+
+  void RunUrlsCallback(std::vector<GURL> urls) {
+    std::move(callback_).Run(urls);
+  }
 
  private:
+  UrlsFromPickleCallback callback_;
+
   DISALLOW_COPY_AND_ASSIGN(TestFileHelper);
 };
-
-void CreatePipe(base::ScopedFD* read_pipe, base::ScopedFD* write_pipe) {
-  int raw_pipe[2];
-  PCHECK(0 == pipe(raw_pipe));
-  read_pipe->reset(raw_pipe[0]);
-  write_pipe->reset(raw_pipe[1]);
-}
 
 bool ReadString(base::ScopedFD fd, std::string* out) {
   std::array<char, 128> buffer;
@@ -126,7 +133,7 @@ TEST_F(DataOfferTest, SetTextDropData) {
   data.SetString(base::string16(base::ASCIIToUTF16("Test data")));
 
   TestDataOfferDelegate delegate;
-  DataOffer data_offer(&delegate);
+  DataOffer data_offer(&delegate, DataOffer::Purpose::DRAG_DROP);
 
   EXPECT_EQ(0u, delegate.mime_types().size());
   EXPECT_EQ(0u, delegate.source_actions().size());
@@ -138,7 +145,7 @@ TEST_F(DataOfferTest, SetTextDropData) {
   data_offer.SetActions(base::flat_set<DndAction>(), DndAction::kMove);
 
   EXPECT_EQ(1u, delegate.mime_types().size());
-  EXPECT_EQ("text/plain", delegate.mime_types()[0]);
+  EXPECT_EQ(1u, delegate.mime_types().count("text/plain"));
   EXPECT_EQ(2u, delegate.source_actions().size());
   EXPECT_EQ(1u, delegate.source_actions().count(DndAction::kCopy));
   EXPECT_EQ(1u, delegate.source_actions().count(DndAction::kMove));
@@ -147,7 +154,7 @@ TEST_F(DataOfferTest, SetTextDropData) {
 
 TEST_F(DataOfferTest, SetFileDropData) {
   TestDataOfferDelegate delegate;
-  DataOffer data_offer(&delegate);
+  DataOffer data_offer(&delegate, DataOffer::Purpose::DRAG_DROP);
 
   TestFileHelper file_helper;
   ui::OSExchangeData data;
@@ -155,12 +162,32 @@ TEST_F(DataOfferTest, SetFileDropData) {
   data_offer.SetDropData(&file_helper, data);
 
   EXPECT_EQ(1u, delegate.mime_types().size());
-  EXPECT_EQ("text/uri-list", delegate.mime_types()[0]);
+  EXPECT_EQ(1u, delegate.mime_types().count("text/uri-list"));
+}
+
+TEST_F(DataOfferTest, SetPickleDropData) {
+  TestDataOfferDelegate delegate;
+  DataOffer data_offer(&delegate, DataOffer::Purpose::DRAG_DROP);
+
+  TestFileHelper file_helper;
+  ui::OSExchangeData data;
+
+  base::Pickle pickle;
+  pickle.WriteUInt32(1);  // num files
+  pickle.WriteString("filesystem:chrome-extension://path/to/file1");
+  pickle.WriteInt64(1000);   // file size
+  pickle.WriteString("id");  // filesystem id
+  data.SetPickledData(
+      ui::ClipboardFormatType::GetType("chromium/x-file-system-files"), pickle);
+  data_offer.SetDropData(&file_helper, data);
+
+  EXPECT_EQ(1u, delegate.mime_types().size());
+  EXPECT_EQ(1u, delegate.mime_types().count("text/uri-list"));
 }
 
 TEST_F(DataOfferTest, ReceiveString) {
   TestDataOfferDelegate delegate;
-  DataOffer data_offer(&delegate);
+  DataOffer data_offer(&delegate, DataOffer::Purpose::DRAG_DROP);
 
   TestFileHelper file_helper;
   ui::OSExchangeData data;
@@ -169,7 +196,7 @@ TEST_F(DataOfferTest, ReceiveString) {
 
   base::ScopedFD read_pipe;
   base::ScopedFD write_pipe;
-  CreatePipe(&read_pipe, &write_pipe);
+  ASSERT_TRUE(base::CreatePipe(&read_pipe, &write_pipe));
 
   data_offer.Receive("text/plain", std::move(write_pipe));
   base::string16 result;
@@ -179,7 +206,7 @@ TEST_F(DataOfferTest, ReceiveString) {
 
 TEST_F(DataOfferTest, ReceiveUriList) {
   TestDataOfferDelegate delegate;
-  DataOffer data_offer(&delegate);
+  DataOffer data_offer(&delegate, DataOffer::Purpose::DRAG_DROP);
 
   TestFileHelper file_helper;
   ui::OSExchangeData data;
@@ -188,7 +215,7 @@ TEST_F(DataOfferTest, ReceiveUriList) {
 
   base::ScopedFD read_pipe;
   base::ScopedFD write_pipe;
-  CreatePipe(&read_pipe, &write_pipe);
+  ASSERT_TRUE(base::CreatePipe(&read_pipe, &write_pipe));
 
   data_offer.Receive("text/uri-list", std::move(write_pipe));
   base::string16 result;
@@ -196,29 +223,217 @@ TEST_F(DataOfferTest, ReceiveUriList) {
   EXPECT_EQ(base::ASCIIToUTF16("file:///test/downloads/file"), result);
 }
 
-TEST_F(DataOfferTest, SetClipboardData) {
+TEST_F(DataOfferTest, ReceiveUriListFromPickle_ReceiveAfterUrlIsResolved) {
   TestDataOfferDelegate delegate;
-  DataOffer data_offer(&delegate);
+  DataOffer data_offer(&delegate, DataOffer::Purpose::DRAG_DROP);
+
+  TestFileHelper file_helper;
+  ui::OSExchangeData data;
+
+  base::Pickle pickle;
+  pickle.WriteUInt32(1);  // num files
+  pickle.WriteString("filesystem:chrome-extension://path/to/file1");
+  pickle.WriteInt64(1000);   // file size
+  pickle.WriteString("id");  // filesystem id
+  data.SetPickledData(
+      ui::ClipboardFormatType::GetType("chromium/x-file-system-files"), pickle);
+  data_offer.SetDropData(&file_helper, data);
+
+  // Run callback with a resolved URL.
+  std::vector<GURL> urls;
+  urls.push_back(
+      GURL("content://org.chromium.arc.chromecontentprovider/path/to/file1"));
+  file_helper.RunUrlsCallback(urls);
+
+  base::ScopedFD read_pipe;
+  base::ScopedFD write_pipe;
+  ASSERT_TRUE(base::CreatePipe(&read_pipe, &write_pipe));
+
+  // Receive is called after UrlsCallback runs.
+  data_offer.Receive("text/uri-list", std::move(write_pipe));
+  base::string16 result;
+  ASSERT_TRUE(ReadString16(std::move(read_pipe), &result));
+  EXPECT_EQ(
+      base::ASCIIToUTF16(
+          "content://org.chromium.arc.chromecontentprovider/path/to/file1"),
+      result);
+}
+
+TEST_F(DataOfferTest, ReceiveUriListFromPickle_ReceiveBeforeUrlIsResolved) {
+  TestDataOfferDelegate delegate;
+  DataOffer data_offer(&delegate, DataOffer::Purpose::DRAG_DROP);
+
+  TestFileHelper file_helper;
+  ui::OSExchangeData data;
+
+  base::Pickle pickle;
+  pickle.WriteUInt32(1);  // num files
+  pickle.WriteString("filesystem:chrome-extension://path/to/file1");
+  pickle.WriteInt64(1000);   // file size
+  pickle.WriteString("id");  // filesystem id
+  data.SetPickledData(
+      ui::ClipboardFormatType::GetType("chromium/x-file-system-files"), pickle);
+  data_offer.SetDropData(&file_helper, data);
+
+  base::ScopedFD read_pipe1;
+  base::ScopedFD write_pipe1;
+  ASSERT_TRUE(base::CreatePipe(&read_pipe1, &write_pipe1));
+  base::ScopedFD read_pipe2;
+  base::ScopedFD write_pipe2;
+  ASSERT_TRUE(base::CreatePipe(&read_pipe2, &write_pipe2));
+
+  // Receive is called (twice) before UrlsFromPickleCallback runs.
+  data_offer.Receive("text/uri-list", std::move(write_pipe1));
+  data_offer.Receive("text/uri-list", std::move(write_pipe2));
+
+  // Run callback with a resolved URL.
+  std::vector<GURL> urls;
+  urls.push_back(
+      GURL("content://org.chromium.arc.chromecontentprovider/path/to/file1"));
+  file_helper.RunUrlsCallback(urls);
+
+  base::string16 result1;
+  ASSERT_TRUE(ReadString16(std::move(read_pipe1), &result1));
+  EXPECT_EQ(
+      base::ASCIIToUTF16(
+          "content://org.chromium.arc.chromecontentprovider/path/to/file1"),
+      result1);
+  base::string16 result2;
+  ASSERT_TRUE(ReadString16(std::move(read_pipe2), &result2));
+  EXPECT_EQ(
+      base::ASCIIToUTF16(
+          "content://org.chromium.arc.chromecontentprovider/path/to/file1"),
+      result2);
+}
+
+TEST_F(DataOfferTest,
+       ReceiveUriListFromPickle_ReceiveBeforeEmptyUrlIsReturned) {
+  TestDataOfferDelegate delegate;
+  DataOffer data_offer(&delegate, DataOffer::Purpose::DRAG_DROP);
+
+  TestFileHelper file_helper;
+  ui::OSExchangeData data;
+
+  base::Pickle pickle;
+  pickle.WriteUInt32(1);  // num files
+  pickle.WriteString("filesystem:chrome-extension://path/to/file1");
+  pickle.WriteInt64(1000);   // file size
+  pickle.WriteString("id");  // filesystem id
+  data.SetPickledData(
+      ui::ClipboardFormatType::GetType("chromium/x-file-system-files"), pickle);
+  data_offer.SetDropData(&file_helper, data);
+
+  base::ScopedFD read_pipe;
+  base::ScopedFD write_pipe;
+  ASSERT_TRUE(base::CreatePipe(&read_pipe, &write_pipe));
+
+  // Receive is called before UrlsCallback runs.
+  data_offer.Receive("text/uri-list", std::move(write_pipe));
+
+  // Run callback with an empty URL.
+  std::vector<GURL> urls;
+  urls.push_back(GURL(""));
+  file_helper.RunUrlsCallback(urls);
+
+  base::string16 result;
+  ASSERT_TRUE(ReadString16(std::move(read_pipe), &result));
+  EXPECT_EQ(base::ASCIIToUTF16(""), result);
+}
+
+TEST_F(DataOfferTest, SetClipboardDataPlainText) {
+  TestDataOfferDelegate delegate;
+  DataOffer data_offer(&delegate, DataOffer::Purpose::COPY_PASTE);
 
   TestFileHelper file_helper;
   {
-    ui::ScopedClipboardWriter writer(ui::CLIPBOARD_TYPE_COPY_PASTE);
+    ui::ScopedClipboardWriter writer(ui::ClipboardType::kCopyPaste);
     writer.WriteText(base::UTF8ToUTF16("Test data"));
   }
   data_offer.SetClipboardData(&file_helper,
                               *ui::Clipboard::GetForCurrentThread());
 
-  EXPECT_EQ(1u, delegate.mime_types().size());
-  EXPECT_EQ("text/plain;charset=utf-8", delegate.mime_types()[0]);
+  EXPECT_EQ(3u, delegate.mime_types().size());
+  EXPECT_EQ(1u, delegate.mime_types().count("text/plain;charset=utf-8"));
+  EXPECT_EQ(1u, delegate.mime_types().count("text/plain;charset=utf-16"));
+  EXPECT_EQ(1u, delegate.mime_types().count("UTF8_STRING"));
 
   base::ScopedFD read_pipe;
   base::ScopedFD write_pipe;
-  CreatePipe(&read_pipe, &write_pipe);
+  ASSERT_TRUE(base::CreatePipe(&read_pipe, &write_pipe));
 
   data_offer.Receive("text/plain;charset=utf-8", std::move(write_pipe));
   std::string result;
   ASSERT_TRUE(ReadString(std::move(read_pipe), &result));
-  EXPECT_EQ(std::string("Test data"), result);
+  EXPECT_EQ("Test data", result);
+
+  ASSERT_TRUE(base::CreatePipe(&read_pipe, &write_pipe));
+  data_offer.Receive("text/plain;charset=utf-16", std::move(write_pipe));
+  base::string16 result16;
+  ASSERT_TRUE(ReadString16(std::move(read_pipe), &result16));
+  EXPECT_EQ("Test data", base::UTF16ToUTF8(result16));
+}
+
+TEST_F(DataOfferTest, SetClipboardDataHTML) {
+  TestDataOfferDelegate delegate;
+  DataOffer data_offer(&delegate, DataOffer::Purpose::COPY_PASTE);
+
+  TestFileHelper file_helper;
+  {
+    ui::ScopedClipboardWriter writer(ui::ClipboardType::kCopyPaste);
+    writer.WriteHTML(base::UTF8ToUTF16("Test data"), "");
+  }
+  data_offer.SetClipboardData(&file_helper,
+                              *ui::Clipboard::GetForCurrentThread());
+
+  EXPECT_EQ(2u, delegate.mime_types().size());
+  EXPECT_EQ(1u, delegate.mime_types().count("text/html;charset=utf-8"));
+  EXPECT_EQ(1u, delegate.mime_types().count("text/html;charset=utf-16"));
+
+  base::ScopedFD read_pipe;
+  base::ScopedFD write_pipe;
+  ASSERT_TRUE(base::CreatePipe(&read_pipe, &write_pipe));
+
+  data_offer.Receive("text/html;charset=utf-8", std::move(write_pipe));
+  std::string result;
+  ASSERT_TRUE(ReadString(std::move(read_pipe), &result));
+  EXPECT_EQ("Test data", result);
+
+  ASSERT_TRUE(base::CreatePipe(&read_pipe, &write_pipe));
+  data_offer.Receive("text/html;charset=utf-16", std::move(write_pipe));
+  base::string16 result16;
+  ASSERT_TRUE(ReadString16(std::move(read_pipe), &result16));
+  EXPECT_EQ("Test data", base::UTF16ToUTF8(result16));
+}
+
+TEST_F(DataOfferTest, SetClipboardDataRTF) {
+  TestDataOfferDelegate delegate;
+  DataOffer data_offer(&delegate, DataOffer::Purpose::COPY_PASTE);
+
+  TestFileHelper file_helper;
+  {
+    ui::ScopedClipboardWriter writer(ui::ClipboardType::kCopyPaste);
+    writer.WriteRTF("Test data");
+  }
+  data_offer.SetClipboardData(&file_helper,
+                              *ui::Clipboard::GetForCurrentThread());
+
+  EXPECT_EQ(1u, delegate.mime_types().size());
+  EXPECT_EQ(1u, delegate.mime_types().count("text/rtf"));
+
+  base::ScopedFD read_pipe;
+  base::ScopedFD write_pipe;
+  ASSERT_TRUE(base::CreatePipe(&read_pipe, &write_pipe));
+
+  data_offer.Receive("text/rtf", std::move(write_pipe));
+  std::string result;
+  ASSERT_TRUE(ReadString(std::move(read_pipe), &result));
+  EXPECT_EQ("Test data", result);
+}
+
+TEST_F(DataOfferTest, AcceptWithNull) {
+  TestDataOfferDelegate delegate;
+  DataOffer data_offer(&delegate, DataOffer::Purpose::COPY_PASTE);
+  data_offer.Accept(nullptr);
 }
 
 }  // namespace

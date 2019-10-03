@@ -17,7 +17,8 @@ class PathBuilderTestDelegate {
  public:
   static void Verify(const VerifyCertChainTest& test,
                      const std::string& test_file_path) {
-    SimplePathBuilderDelegate path_builder_delegate(1024);
+    SimplePathBuilderDelegate path_builder_delegate(
+        1024, SimplePathBuilderDelegate::DigestPolicy::kWeakAllowSha1);
     ASSERT_FALSE(test.chain.empty());
 
     TrustStoreInMemory trust_store;
@@ -57,8 +58,8 @@ class PathBuilderTestDelegate {
 
 }  // namespace
 
-INSTANTIATE_TYPED_TEST_CASE_P(PathBuilder,
-                              VerifyCertificateChainSingleRootTest,
-                              PathBuilderTestDelegate);
+INSTANTIATE_TYPED_TEST_SUITE_P(PathBuilder,
+                               VerifyCertificateChainSingleRootTest,
+                               PathBuilderTestDelegate);
 
 }  // namespace net

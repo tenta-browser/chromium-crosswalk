@@ -8,6 +8,10 @@
 #include "base/time/time.h"
 #include "ui/compositor/compositor_export.h"
 
+namespace gfx {
+class Size;
+}
+
 namespace ui {
 
 class Compositor;
@@ -24,25 +28,28 @@ class COMPOSITOR_EXPORT CompositorObserver {
   // between two composites (just before the composite as part of the
   // composite cycle). If the compositor is locked, it will not send this
   // this signal.
-  virtual void OnCompositingDidCommit(Compositor* compositor) = 0;
+  virtual void OnCompositingDidCommit(Compositor* compositor) {}
 
   // Called when compositing started: it has taken all the layer changes into
   // account and has issued the graphics commands.
   virtual void OnCompositingStarted(Compositor* compositor,
-                                    base::TimeTicks start_time) = 0;
+                                    base::TimeTicks start_time) {}
 
   // Called when compositing completes: the present to screen has completed.
-  virtual void OnCompositingEnded(Compositor* compositor) = 0;
-
-  // Called when the compositor lock state changes.
-  virtual void OnCompositingLockStateChanged(Compositor* compositor) = 0;
+  virtual void OnCompositingEnded(Compositor* compositor) {}
 
   // Called when a child of the compositor is resizing.
-  virtual void OnCompositingChildResizing(Compositor* compositor) = 0;
+  virtual void OnCompositingChildResizing(Compositor* compositor) {}
+
+#if defined(USE_X11)
+  // Called when a swap with new size is completed.
+  virtual void OnCompositingCompleteSwapWithNewSize(ui::Compositor* compositor,
+                                                    const gfx::Size& size) {}
+#endif
 
   // Called at the top of the compositor's destructor, to give observers a
   // chance to remove themselves.
-  virtual void OnCompositingShuttingDown(Compositor* compositor) = 0;
+  virtual void OnCompositingShuttingDown(Compositor* compositor) {}
 };
 
 }  // namespace ui

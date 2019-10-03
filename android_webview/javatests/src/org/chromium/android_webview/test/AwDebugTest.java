@@ -6,6 +6,8 @@ package org.chromium.android_webview.test;
 
 import static org.junit.Assert.assertNotEquals;
 
+import static org.chromium.android_webview.test.OnlyRunIn.ProcessMode.SINGLE_PROCESS;
+
 import android.support.test.filters.SmallTest;
 
 import org.junit.Assert;
@@ -14,8 +16,8 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.android_webview.AwDebug;
+import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
-import org.chromium.base.test.util.parameter.SkipCommandLineParameterization;
 
 import java.io.File;
 import java.io.FileInputStream;
@@ -25,14 +27,15 @@ import java.util.Scanner;
 /**
  * A test suite for AwDebug class.
  */
-// Only works in single-process mode, crbug.com/568825.
 @RunWith(AwJUnit4ClassRunner.class)
-@SkipCommandLineParameterization
+@OnlyRunIn(SINGLE_PROCESS) // Only works in single-process mode, http://crbug.com/568825.
 public class AwDebugTest {
     @Rule
     public AwActivityTestRule mActivityTestRule = new AwActivityTestRule();
 
     private static final String TAG = "cr_AwDebugTest";
+
+    // These constants must match android_webview/browser/aw_debug.cc.
     private static final String WHITELISTED_DEBUG_KEY = "AW_WHITELISTED_DEBUG_KEY";
     private static final String NON_WHITELISTED_DEBUG_KEY = "AW_NONWHITELISTED_DEBUG_KEY";
     private static final String DEBUG_VALUE = "AW_DEBUG_VALUE";
@@ -40,6 +43,7 @@ public class AwDebugTest {
     @Test
     @SmallTest
     @Feature({"AndroidWebView", "Debug"})
+    @DisabledTest(message = "crbug.com/913515")
     public void testDump() throws Throwable {
         File f = File.createTempFile("dump", ".dmp");
         try {
@@ -54,11 +58,12 @@ public class AwDebugTest {
     @Test
     @SmallTest
     @Feature({"AndroidWebView", "Debug"})
+    @DisabledTest(message = "crbug.com/913515")
     public void testDumpContainsWhitelistedKey() throws Throwable {
         File f = File.createTempFile("dump", ".dmp");
         try {
             AwDebug.initCrashKeysForTesting();
-            AwDebug.setCrashKeyValue(WHITELISTED_DEBUG_KEY, DEBUG_VALUE);
+            AwDebug.setWhiteListedKeyForTesting();
             Assert.assertTrue(AwDebug.dumpWithoutCrashing(f));
             assertContainsCrashKeyValue(f, WHITELISTED_DEBUG_KEY, DEBUG_VALUE);
         } finally {
@@ -69,11 +74,12 @@ public class AwDebugTest {
     @Test
     @SmallTest
     @Feature({"AndroidWebView", "Debug"})
+    @DisabledTest(message = "crbug.com/913515")
     public void testDumpDoesNotContainNonWhitelistedKey() throws Throwable {
         File f = File.createTempFile("dump", ".dmp");
         try {
             AwDebug.initCrashKeysForTesting();
-            AwDebug.setCrashKeyValue(NON_WHITELISTED_DEBUG_KEY, DEBUG_VALUE);
+            AwDebug.setNonWhiteListedKeyForTesting();
             Assert.assertTrue(AwDebug.dumpWithoutCrashing(f));
             assertNotContainsCrashKeyValue(f, NON_WHITELISTED_DEBUG_KEY);
         } finally {

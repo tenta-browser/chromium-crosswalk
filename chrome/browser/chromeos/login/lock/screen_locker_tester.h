@@ -7,48 +7,44 @@
 
 #include <string>
 
-namespace views {
-class Widget;
-}  // namespace views
+#include "base/macros.h"
+
+class AccountId;
 
 namespace chromeos {
 
-class UserContext;
-
-namespace test {
-
-// ScreenLockerTester provides access to the private state/function
-// of ScreenLocker class. Used to implement unit tests.
+// ScreenLockerTester provides a high-level API to test the lock screen.
 class ScreenLockerTester {
  public:
   ScreenLockerTester();
-  virtual ~ScreenLockerTester();
+  ~ScreenLockerTester();
+
+  // Synchronously lock the device.
+  void Lock();
+
+  // Injects authenticators that only authenticate with the given password.
+  void SetUnlockPassword(const AccountId& account_id,
+                         const std::string& password);
 
   // Returns true if the screen is locked.
-  virtual bool IsLocked();
+  bool IsLocked();
 
-  // Injects StubAuthenticator that uses the credentials in |user_context|.
-  virtual void InjectStubUserContext(const UserContext& user_context);
+  // Returns true if Restart button is visible.
+  bool IsLockRestartButtonShown();
 
-  // Sets the password text.
-  virtual void SetPassword(const std::string& password) = 0;
+  // Returns true if Shutdown button is visible.
+  bool IsLockShutdownButtonShown();
 
-  // Gets the password text.
-  virtual std::string GetPassword() = 0;
+  // Returns true if there is an auth error button on the lock screen.
+  bool IsAuthErrorBubbleShown();
 
-  // Emulates entring a password.
-  virtual void EnterPassword(const std::string& password) = 0;
+  // Enters and submits the given password for the given account.
+  void UnlockWithPassword(const AccountId& account_id,
+                          const std::string& password);
 
-  // Emulates the ready message from window manager.
-  virtual void EmulateWindowManagerReady() = 0;
-
-  // Returns the widget for screen locker window.
-  virtual views::Widget* GetWidget() const = 0;
-
-  virtual views::Widget* GetChildWidget() const = 0;
+ private:
+  DISALLOW_COPY_AND_ASSIGN(ScreenLockerTester);
 };
-
-}  // namespace test
 
 }  // namespace chromeos
 

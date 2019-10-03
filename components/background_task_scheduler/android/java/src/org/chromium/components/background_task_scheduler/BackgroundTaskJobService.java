@@ -9,8 +9,10 @@ import android.app.job.JobParameters;
 import android.app.job.JobService;
 import android.os.Build;
 
+import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.base.ThreadUtils;
+import org.chromium.base.VisibleForTesting;
 
 import java.util.HashMap;
 import java.util.Map;
@@ -19,6 +21,13 @@ import java.util.Map;
 @TargetApi(Build.VERSION_CODES.LOLLIPOP_MR1)
 public class BackgroundTaskJobService extends JobService {
     private static final String TAG = "BkgrdTaskJS";
+
+    private BackgroundTaskSchedulerJobService.Clock mClock = System::currentTimeMillis;
+
+    @VisibleForTesting
+    void setClockForTesting(BackgroundTaskSchedulerJobService.Clock clock) {
+        mClock = clock;
+    }
 
     private static class TaskFinishedCallbackJobService
             implements BackgroundTask.TaskFinishedCallback {
@@ -72,14 +81,21 @@ public class BackgroundTaskJobService extends JobService {
             return false;
         }
 
+        Long deadlineTime =
+                BackgroundTaskSchedulerJobService.getDeadlineTimeFromJobParameters(params);
+        if (deadlineTime != null && mClock.currentTimeMillis() >= deadlineTime) {
+            return false;
+        }
+
         mCurrentTasks.put(params.getJobId(), backgroundTask);
 
         TaskParameters taskParams =
                 BackgroundTaskSchedulerJobService.getTaskParametersFromJobParameters(params);
 
         BackgroundTaskSchedulerUma.getInstance().reportTaskStarted(taskParams.getTaskId());
-        boolean taskNeedsBackgroundProcessing = backgroundTask.onStartTask(getApplicationContext(),
-                taskParams, new TaskFinishedCallbackJobService(this, backgroundTask, params));
+        boolean taskNeedsBackgroundProcessing =
+                backgroundTask.onStartTask(ContextUtils.getApplicationContext(), taskParams,
+                        new TaskFinishedCallbackJobService(this, backgroundTask, params));
 
         if (!taskNeedsBackgroundProcessing) mCurrentTasks.remove(params.getJobId());
         return taskNeedsBackgroundProcessing;
@@ -100,7 +116,7 @@ public class BackgroundTaskJobService extends JobService {
                 BackgroundTaskSchedulerJobService.getTaskParametersFromJobParameters(params);
         BackgroundTaskSchedulerUma.getInstance().reportTaskStopped(taskParams.getTaskId());
         boolean taskNeedsReschedule =
-                backgroundTask.onStopTask(getApplicationContext(), taskParams);
+                backgroundTask.onStopTask(ContextUtils.getApplicationContext(), taskParams);
         mCurrentTasks.remove(params.getJobId());
         return taskNeedsReschedule;
     }

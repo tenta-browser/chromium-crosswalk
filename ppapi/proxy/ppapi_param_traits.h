@@ -15,14 +15,12 @@
 #include "ppapi/c/pp_rect.h"
 #include "ppapi/c/pp_var.h"
 #include "ppapi/proxy/ppapi_proxy_export.h"
-#include "ppapi/shared_impl/compositor_layer_data.h"
 #include "ppapi/shared_impl/file_path.h"
 #include "ppapi/shared_impl/file_ref_create_info.h"
 #include "ppapi/shared_impl/media_stream_video_track_shared.h"
 #include "ppapi/shared_impl/ppapi_permissions.h"
 #include "ppapi/shared_impl/socket_option_data.h"
 
-struct PP_KeyInformation;
 struct PP_NetAddress_Private;
 
 namespace ppapi {
@@ -59,16 +57,6 @@ struct PPAPI_PROXY_EXPORT ParamTraits<PP_Bool> {
 template <>
 struct PPAPI_PROXY_EXPORT ParamTraits<PP_NetAddress_Private> {
   typedef PP_NetAddress_Private param_type;
-  static void Write(base::Pickle* m, const param_type& p);
-  static bool Read(const base::Pickle* m,
-                   base::PickleIterator* iter,
-                   param_type* p);
-  static void Log(const param_type& p, std::string* l);
-};
-
-template <>
-struct PPAPI_PROXY_EXPORT ParamTraits<PP_KeyInformation> {
-  typedef PP_KeyInformation param_type;
   static void Write(base::Pickle* m, const param_type& p);
   static bool Read(const base::Pickle* m,
                    base::PickleIterator* iter,

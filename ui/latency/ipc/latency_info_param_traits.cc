@@ -40,7 +40,8 @@ void ParamTraits<ui::LatencyInfo>::Write(base::Pickle* m, const param_type& p) {
   WriteParam(m, p.began_);
   WriteParam(m, p.terminated_);
   WriteParam(m, p.source_event_type_);
-  WriteParam(m, p.expected_queueing_time_on_dispatch_);
+  WriteParam(m, p.scroll_update_delta_);
+  WriteParam(m, p.predicted_scroll_update_delta_);
 }
 
 bool ParamTraits<ui::LatencyInfo>::Read(const base::Pickle* m,
@@ -63,7 +64,9 @@ bool ParamTraits<ui::LatencyInfo>::Read(const base::Pickle* m,
     return false;
   if (!ReadParam(m, iter, &p->source_event_type_))
     return false;
-  if (!ReadParam(m, iter, &p->expected_queueing_time_on_dispatch_))
+  if (!ReadParam(m, iter, &p->scroll_update_delta_))
+    return false;
+  if (!ReadParam(m, iter, &p->predicted_scroll_update_delta_))
     return false;
 
   return true;
@@ -86,7 +89,9 @@ void ParamTraits<ui::LatencyInfo>::Log(const param_type& p, std::string* l) {
   l->append(" ");
   LogParam(p.source_event_type_, l);
   l->append(" ");
-  LogParam(p.expected_queueing_time_on_dispatch_, l);
+  LogParam(p.scroll_update_delta_, l);
+  l->append(" ");
+  LogParam(p.predicted_scroll_update_delta_, l);
 }
 
 }  // namespace IPC

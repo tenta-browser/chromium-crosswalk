@@ -6,91 +6,65 @@
 
 #include <stddef.h>
 
-#include "base/memory/singleton.h"
+#include "base/bind.h"
+#include "base/no_destructor.h"
 #include "build/build_config.h"
-#include "chrome/browser/browser_process.h"
-#include "chrome/browser/extensions/api/automation_internal/automation_event_router.h"
-#include "chrome/browser/profiles/profile_manager.h"
-#include "chrome/browser/profiles/profiles_state.h"
-#include "chrome/common/extensions/api/automation_api_constants.h"
-#include "chrome/common/extensions/chrome_extension_messages.h"
-#include "content/public/browser/ax_event_notification_details.h"
-#include "content/public/browser/browser_context.h"
-#include "content/public/browser/render_frame_host.h"
 #include "ui/accessibility/ax_action_data.h"
-#include "ui/accessibility/ax_enums.h"
+#include "ui/accessibility/ax_enum_util.h"
+#include "ui/accessibility/ax_enums.mojom.h"
+#include "ui/accessibility/ax_event.h"
+#include "ui/accessibility/ax_event_bundle_sink.h"
 #include "ui/accessibility/ax_tree_id_registry.h"
 #include "ui/accessibility/platform/aura_window_properties.h"
 #include "ui/aura/env.h"
 #include "ui/aura/window.h"
+#include "ui/aura/window_tree_host.h"
+#include "ui/views/accessibility/accessibility_alert_window.h"
 #include "ui/views/accessibility/ax_aura_obj_wrapper.h"
+#include "ui/views/accessibility/ax_event_manager.h"
+#include "ui/views/accessibility/ax_root_obj_wrapper.h"
 #include "ui/views/view.h"
 #include "ui/views/widget/widget.h"
 
 #if defined(OS_CHROMEOS)
-#include "ash/shell.h"           // nogncheck
-#include "ash/wm/window_util.h"  // nogncheck
-#include "components/session_manager/core/session_manager.h"
+#include "ash/public/cpp/shell_window_ids.h"
+#include "ash/shell.h"
+#include "ash/wm/window_util.h"
 #endif
 
-using content::BrowserContext;
-using extensions::AutomationEventRouter;
-
-namespace {
-
-// Returns default browser context for sending events in case it was not
-// provided.
-BrowserContext* GetDefaultEventContext() {
-  ProfileManager* profile_manager = g_browser_process->profile_manager();
-  if (!profile_manager)
-    return nullptr;
-
-#if defined(OS_CHROMEOS)
-  session_manager::SessionManager* session_manager =
-      session_manager::SessionManager::Get();
-  // It is not guaranteed that user profile creation is completed for
-  // some session states. In this case use default profile.
-  const session_manager::SessionState session_state =
-      session_manager ? session_manager->session_state()
-                      : session_manager::SessionState::UNKNOWN;
-  switch (session_state) {
-    case session_manager::SessionState::LOGGED_IN_NOT_ACTIVE:
-    case session_manager::SessionState::ACTIVE:
-    case session_manager::SessionState::LOCKED:
-      break;
-    case session_manager::SessionState::UNKNOWN:
-    case session_manager::SessionState::OOBE:
-    case session_manager::SessionState::LOGIN_PRIMARY:
-    case session_manager::SessionState::LOGIN_SECONDARY:
-      const base::FilePath defult_profile_dir =
-          profiles::GetDefaultProfileDir(profile_manager->user_data_dir());
-      return profile_manager->GetProfileByPath(defult_profile_dir);
-  }
+#if DCHECK_IS_ON()
+#include "ui/accessibility/ax_tree_source_checker.h"
 #endif
-
-  return ProfileManager::GetLastUsedProfile();
-}
-
-}  // namespace
 
 // static
 AutomationManagerAura* AutomationManagerAura::GetInstance() {
-  return base::Singleton<AutomationManagerAura>::get();
+  static base::NoDestructor<AutomationManagerAura> instance;
+  return instance.get();
 }
 
-void AutomationManagerAura::Enable(BrowserContext* context) {
+void AutomationManagerAura::Enable() {
   enabled_ = true;
   Reset(false);
 
-  SendEvent(context, current_tree_->GetRoot(), ui::AX_EVENT_LOAD_COMPLETE);
-  views::AXAuraObjCache::GetInstance()->SetDelegate(this);
+#if defined(OS_CHROMEOS)
+  // Seed the views::AXAuraObjCache with per-display root windows so
+  // GetTopLevelWindows() returns the correct values when automation is enabled
+  // with multiple displays connected.
+  for (aura::Window* root : ash::Shell::GetAllRootWindows())
+    cache_->OnRootWindowObjCreated(root);
+#endif
+
+  SendEvent(current_tree_->GetRoot(), ax::mojom::Event::kLoadComplete);
+  // Intentionally not reset at shutdown since we cannot rely on the shutdown
+  // ordering of two base::Singletons.
+  cache_->SetDelegate(this);
 
 #if defined(OS_CHROMEOS)
-  aura::Window* active_window = ash::wm::GetActiveWindow();
+  aura::Window* active_window = ash::window_util::GetActiveWindow();
   if (active_window) {
-    views::AXAuraObjWrapper* focus =
-        views::AXAuraObjCache::GetInstance()->GetOrCreate(active_window);
-    SendEvent(context, focus, ui::AX_EVENT_CHILDREN_CHANGED);
+    views::AXAuraObjWrapper* focus = cache_->GetOrCreate(active_window);
+    if (focus)
+      SendEvent(focus, ax::mojom::Event::kChildrenChanged);
   }
 #endif
 }
@@ -100,27 +74,55 @@ void AutomationManagerAura::Disable() {
   Reset(true);
 }
 
-void AutomationManagerAura::HandleEvent(BrowserContext* context,
-                                        views::View* view,
-                                        ui::AXEvent event_type) {
+void AutomationManagerAura::OnViewEvent(views::View* view,
+                                        ax::mojom::Event event_type) {
+  CHECK(view);
+
   if (!enabled_)
     return;
 
-  views::AXAuraObjWrapper* aura_obj = view ?
-      views::AXAuraObjCache::GetInstance()->GetOrCreate(view) :
-      current_tree_->GetRoot();
-  SendEvent(nullptr, aura_obj, event_type);
+  views::AXAuraObjWrapper* obj = cache_->GetOrCreate(view);
+  if (!obj)
+    return;
+
+  // Ignore toplevel window activate and deactivate events. These are causing
+  // issues with ChromeOS accessibility tests and are currently only used on
+  // desktop Linux platforms.
+  // TODO(https://crbug.com/89717): Need to harmonize the firing of
+  // accessibility events between platforms.
+  if (event_type == ax::mojom::Event::kWindowActivated ||
+      event_type == ax::mojom::Event::kWindowDeactivated) {
+    return;
+  }
+
+  // Post a task to handle the event at the end of the current call stack.
+  // This helps us avoid firing accessibility events for transient changes.
+  // because there's a chance that the underlying object being wrapped could
+  // be deleted, pass the ID of the object rather than the object pointer.
+  int32_t id = obj->GetUniqueId();
+  base::ThreadTaskRunnerHandle::Get()->PostTask(
+      FROM_HERE, base::BindOnce(&AutomationManagerAura::SendEventOnObjectById,
+                                base::Unretained(this), id, event_type));
 }
 
-void AutomationManagerAura::HandleAlert(content::BrowserContext* context,
-                                        const std::string& text) {
-  if (!enabled_)
+void AutomationManagerAura::HandleEvent(ax::mojom::Event event_type) {
+  views::AXAuraObjWrapper* obj = current_tree_->GetRoot();
+  if (!obj)
     return;
 
-  views::AXAuraObjWrapper* obj =
-      static_cast<AXRootObjWrapper*>(current_tree_->GetRoot())
-          ->GetAlertForText(text);
-  SendEvent(context, obj, ui::AX_EVENT_ALERT);
+  AutomationManagerAura::SendEvent(obj, event_type);
+}
+
+void AutomationManagerAura::SendEventOnObjectById(int32_t id,
+                                                  ax::mojom::Event event_type) {
+  views::AXAuraObjWrapper* obj = cache_->Get(id);
+  if (obj)
+    SendEvent(obj, event_type);
+}
+
+void AutomationManagerAura::HandleAlert(const std::string& text) {
+  if (alert_window_.get())
+    alert_window_->HandleAlert(text);
 }
 
 void AutomationManagerAura::PerformAction(const ui::AXActionData& data) {
@@ -128,7 +130,7 @@ void AutomationManagerAura::PerformAction(const ui::AXActionData& data) {
 
   // Unlike all of the other actions, a hit test requires determining the
   // node to perform the action on first.
-  if (data.action == ui::AX_ACTION_HIT_TEST) {
+  if (data.action == ax::mojom::Action::kHitTest) {
     PerformHitTest(data);
     return;
   }
@@ -144,43 +146,55 @@ void AutomationManagerAura::OnChildWindowRemoved(
   if (!parent)
     parent = current_tree_->GetRoot();
 
-  SendEvent(nullptr, parent, ui::AX_EVENT_CHILDREN_CHANGED);
+  SendEvent(parent, ax::mojom::Event::kChildrenChanged);
 }
 
 void AutomationManagerAura::OnEvent(views::AXAuraObjWrapper* aura_obj,
-                                    ui::AXEvent event_type) {
-  SendEvent(nullptr, aura_obj, event_type);
+                                    ax::mojom::Event event_type) {
+  SendEvent(aura_obj, event_type);
 }
 
 AutomationManagerAura::AutomationManagerAura()
-    : AXHostDelegate(extensions::api::automation::kDesktopTreeID),
-      enabled_(false),
-      processing_events_(false) {}
-
-AutomationManagerAura::~AutomationManagerAura() {
+    : enabled_(false),
+      processing_events_(false),
+      cache_(std::make_unique<views::AXAuraObjCache>()) {
+  views::AXEventManager::Get()->AddObserver(this);
 }
+
+// Never runs because object is leaked.
+AutomationManagerAura::~AutomationManagerAura() = default;
 
 void AutomationManagerAura::Reset(bool reset_serializer) {
-  if (!current_tree_)
-    current_tree_.reset(new AXTreeSourceAura());
-  reset_serializer ? current_tree_serializer_.reset()
-                   : current_tree_serializer_.reset(
-                         new AuraAXTreeSerializer(current_tree_.get()));
+  if (!current_tree_) {
+    desktop_root_ = std::make_unique<AXRootObjWrapper>(this, cache_.get());
+    current_tree_ = std::make_unique<views::AXTreeSourceViews>(
+        desktop_root_.get(), ax_tree_id(), cache_.get());
+  }
+  if (reset_serializer) {
+    current_tree_serializer_.reset();
+    alert_window_.reset();
+  } else {
+    current_tree_serializer_ =
+        std::make_unique<AuraAXTreeSerializer>(current_tree_.get());
+#if defined(OS_CHROMEOS)
+    ash::Shell* shell = ash::Shell::Get();
+    // Windows within the overlay container get moved to the new monitor when
+    // the primary display gets swapped.
+    alert_window_ = std::make_unique<views::AccessibilityAlertWindow>(
+        shell->GetContainer(shell->GetPrimaryRootWindow(),
+                            ash::kShellWindowId_OverlayContainer),
+        cache_.get());
+#endif  // defined(OS_CHROMEOS)
+  }
 }
 
-void AutomationManagerAura::SendEvent(BrowserContext* context,
-                                      views::AXAuraObjWrapper* aura_obj,
-                                      ui::AXEvent event_type) {
+void AutomationManagerAura::SendEvent(views::AXAuraObjWrapper* aura_obj,
+                                      ax::mojom::Event event_type) {
+  if (!enabled_)
+    return;
+
   if (!current_tree_serializer_)
     return;
-
-  if (!context)
-    context = GetDefaultEventContext();
-
-  if (!context) {
-    LOG(WARNING) << "Accessibility notification but no browser context";
-    return;
-  }
 
   if (processing_events_) {
     pending_events_.push_back(std::make_pair(aura_obj, event_type));
@@ -188,32 +202,46 @@ void AutomationManagerAura::SendEvent(BrowserContext* context,
   }
   processing_events_ = true;
 
-  ExtensionMsg_AccessibilityEventParams params;
-  if (!current_tree_serializer_->SerializeChanges(aura_obj, &params.update)) {
-    LOG(ERROR) << "Unable to serialize one accessibility event.";
+  std::vector<ui::AXTreeUpdate> tree_updates;
+  ui::AXTreeUpdate update;
+  if (!current_tree_serializer_->SerializeChanges(aura_obj, &update)) {
+    OnSerializeFailure(event_type, update);
     return;
   }
+  tree_updates.push_back(update);
 
   // Make sure the focused node is serialized.
-  views::AXAuraObjWrapper* focus =
-      views::AXAuraObjCache::GetInstance()->GetFocus();
-  if (focus)
-    current_tree_serializer_->SerializeChanges(focus, &params.update);
+  views::AXAuraObjWrapper* focus = cache_->GetFocus();
+  if (focus) {
+    ui::AXTreeUpdate focused_node_update;
+    current_tree_serializer_->SerializeChanges(focus, &focused_node_update);
+    tree_updates.push_back(focused_node_update);
+  }
 
-  params.tree_id = 0;
-  params.id = aura_obj->GetID();
-  params.event_type = event_type;
-  params.mouse_location = aura::Env::GetInstance()->last_mouse_location();
-  AutomationEventRouter* router = AutomationEventRouter::GetInstance();
-  router->DispatchAccessibilityEvent(params);
+  std::vector<ui::AXEvent> events;
+  // Fire the event on the node, but only if it's actually in the tree.
+  // Sometimes we get events fired on nodes with an ancestor that's
+  // marked invisible, for example. In those cases we should still
+  // call SerializeChanges (because the change may have affected the
+  // ancestor) but we shouldn't fire the event on the node not in the tree.
+  if (current_tree_serializer_->IsInClientTree(aura_obj)) {
+    ui::AXEvent event;
+    event.id = aura_obj->GetUniqueId();
+    event.event_type = event_type;
+    events.push_back(event);
+  }
+
+  if (event_bundle_sink_) {
+    event_bundle_sink_->DispatchAccessibilityEvents(
+        ax_tree_id(), std::move(tree_updates),
+        aura::Env::GetInstance()->last_mouse_location(), std::move(events));
+  }
 
   processing_events_ = false;
   auto pending_events_copy = pending_events_;
   pending_events_.clear();
   for (size_t i = 0; i < pending_events_copy.size(); ++i) {
-    SendEvent(context,
-              pending_events_copy[i].first,
-              pending_events_copy[i].second);
+    SendEvent(pending_events_copy[i].first, pending_events_copy[i].second);
   }
 }
 
@@ -234,22 +262,25 @@ void AutomationManagerAura::PerformHitTest(
   // Convert point to local coordinates of the hit window.
   aura::Window::ConvertPointToTarget(root_window, window, &action.target_point);
 
-  // If the window has a child AX tree ID, forward the action to the
-  // associated AXHostDelegate or RenderFrameHost.
-  ui::AXTreeIDRegistry::AXTreeID child_ax_tree_id =
-      window->GetProperty(ui::kChildAXTreeID);
-  if (child_ax_tree_id != ui::AXTreeIDRegistry::kNoAXTreeID) {
-    ui::AXTreeIDRegistry* registry = ui::AXTreeIDRegistry::GetInstance();
-    ui::AXHostDelegate* delegate = registry->GetHostDelegate(child_ax_tree_id);
-    if (delegate) {
-      delegate->PerformAction(action);
-      return;
-    }
+  // Check for a AX node tree in a remote process (e.g. renderer, mojo app).
+  ui::AXTreeID child_ax_tree_id;
+  std::string* child_ax_tree_id_ptr = window->GetProperty(ui::kChildAXTreeID);
+  if (child_ax_tree_id_ptr)
+    child_ax_tree_id = ui::AXTreeID::FromString(*child_ax_tree_id_ptr);
 
-    content::RenderFrameHost* rfh =
-        content::RenderFrameHost::FromAXTreeID(child_ax_tree_id);
-    if (rfh)
-      rfh->AccessibilityPerformAction(action);
+  // If the window has a child AX tree ID, forward the action to the
+  // associated AXActionHandler.
+  if (child_ax_tree_id != ui::AXTreeIDUnknown()) {
+    ui::AXTreeIDRegistry* registry = ui::AXTreeIDRegistry::GetInstance();
+    ui::AXActionHandler* action_handler =
+        registry->GetActionHandler(child_ax_tree_id);
+    CHECK(action_handler);
+
+    // Convert to pixels for the RenderFrameHost HitTest, if required.
+    if (action_handler->RequiresPerformActionPointInPixels())
+      window->GetHost()->ConvertDIPToPixels(&action.target_point);
+
+    action_handler->PerformAction(action);
     return;
   }
 
@@ -267,9 +298,20 @@ void AutomationManagerAura::PerformHitTest(
   }
 
   // Otherwise, fire the event directly on the Window.
-  views::AXAuraObjWrapper* window_wrapper =
-      views::AXAuraObjCache::GetInstance()->GetOrCreate(window);
+  views::AXAuraObjWrapper* window_wrapper = cache_->GetOrCreate(window);
   if (window_wrapper)
-    SendEvent(nullptr, window_wrapper, action.hit_test_event_to_fire);
+    SendEvent(window_wrapper, action.hit_test_event_to_fire);
 #endif
+}
+
+void AutomationManagerAura::OnSerializeFailure(ax::mojom::Event event_type,
+                                               const ui::AXTreeUpdate& update) {
+#if DCHECK_IS_ON()
+  ui::AXTreeSourceChecker<views::AXAuraObjWrapper*, ui::AXNodeData,
+                          ui::AXTreeData>
+      checker(current_tree_.get());
+  checker.Check();
+#endif
+  LOG(FATAL) << "Unable to serialize accessibility event, type " << event_type
+             << " update " << update.ToString();
 }

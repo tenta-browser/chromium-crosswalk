@@ -10,6 +10,7 @@
 #include "base/pickle.h"
 #include "storage/browser/fileapi/sandbox_isolated_origin_database.h"
 #include "storage/browser/fileapi/sandbox_origin_database.h"
+#include "third_party/leveldatabase/leveldb_chrome.h"
 
 namespace storage {
 
@@ -62,7 +63,9 @@ SandboxPrioritizedOriginDatabase::~SandboxPrioritizedOriginDatabase() = default;
 
 bool SandboxPrioritizedOriginDatabase::InitializePrimaryOrigin(
     const std::string& origin) {
-  if (!primary_origin_database_) {
+  const bool is_in_memory =
+      env_override_ && leveldb_chrome::IsMemEnv(env_override_);
+  if (!primary_origin_database_ && !is_in_memory) {
     if (!MaybeLoadPrimaryOrigin() && ResetPrimaryOrigin(origin)) {
       MaybeMigrateDatabase(origin);
       primary_origin_database_.reset(
@@ -138,6 +141,13 @@ bool SandboxPrioritizedOriginDatabase::ListAllOrigins(
 void SandboxPrioritizedOriginDatabase::DropDatabase() {
   primary_origin_database_.reset();
   origin_database_.reset();
+}
+
+void SandboxPrioritizedOriginDatabase::RewriteDatabase() {
+  if (primary_origin_database_)
+    primary_origin_database_->RewriteDatabase();
+  if (origin_database_)
+    origin_database_->RewriteDatabase();
 }
 
 bool SandboxPrioritizedOriginDatabase::MaybeLoadPrimaryOrigin() {

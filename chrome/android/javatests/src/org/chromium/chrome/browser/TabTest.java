@@ -14,29 +14,30 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CallbackHelper;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.browser.tab.EmptyTabObserver;
+import org.chromium.chrome.browser.tab.SadTab;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabObserver;
-import org.chromium.chrome.browser.tabmodel.TabModel.TabSelectionType;
+import org.chromium.chrome.browser.tabmodel.TabSelectionType;
 import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.util.ApplicationTestUtils;
+import org.chromium.chrome.test.util.ChromeTabUtils;
 import org.chromium.components.security_state.ConnectionSecurityLevel;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.Criteria;
+import org.chromium.content_public.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 /**
  * Tests for Tab class.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
 @RetryOnFailure
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class TabTest {
     @Rule
     public ChromeActivityTestRule<ChromeActivity> mActivityTestRule =
@@ -52,6 +53,10 @@ public class TabTest {
         }
     };
 
+    private boolean isShowingSadTab() throws Exception {
+        return TestThreadUtils.runOnUiThreadBlocking(() -> SadTab.isShowing(mTab));
+    }
+
     @Before
     public void setUp() throws Exception {
         mActivityTestRule.startMainActivityOnBlankPage();
@@ -65,9 +70,9 @@ public class TabTest {
     @Feature({"Tab"})
     public void testTabContext() throws Throwable {
         Assert.assertFalse("The tab context cannot be an activity",
-                mTab.getContentViewCore().getContext() instanceof Activity);
+                mTab.getContentView().getContext() instanceof Activity);
         Assert.assertNotSame("The tab context's theme should have been updated",
-                mTab.getContentViewCore().getContext().getTheme(),
+                mTab.getContentView().getContext().getTheme(),
                 mActivityTestRule.getActivity().getApplication().getTheme());
     }
 
@@ -98,15 +103,16 @@ public class TabTest {
     @Feature({"Tab"})
     public void testTabRestoredIfKilledWhileActivityStopped() throws Exception {
         // Ensure the tab is showing before stopping the activity.
-        ThreadUtils.runOnUiThreadBlocking(() -> mTab.show(TabSelectionType.FROM_NEW));
+        TestThreadUtils.runOnUiThreadBlocking(() -> mTab.show(TabSelectionType.FROM_NEW));
 
         Assert.assertFalse(mTab.needsReload());
         Assert.assertFalse(mTab.isHidden());
-        Assert.assertFalse(mTab.isShowingSadTab());
+        Assert.assertFalse(isShowingSadTab());
 
         // Stop the activity and simulate a killed renderer.
         ApplicationTestUtils.fireHomeScreenIntent(InstrumentationRegistry.getTargetContext());
-        ThreadUtils.runOnUiThreadBlocking(() -> mTab.simulateRendererKilledForTesting(false));
+        TestThreadUtils.runOnUiThreadBlocking(
+                () -> ChromeTabUtils.simulateRendererKilledForTesting(mTab, false));
 
         CriteriaHelper.pollUiThread(new Criteria() {
             @Override
@@ -115,7 +121,7 @@ public class TabTest {
             }
         });
         Assert.assertTrue(mTab.needsReload());
-        Assert.assertFalse(mTab.isShowingSadTab());
+        Assert.assertFalse(isShowingSadTab());
 
         ApplicationTestUtils.launchChrome(InstrumentationRegistry.getTargetContext());
 
@@ -127,15 +133,16 @@ public class TabTest {
             }
         });
         Assert.assertFalse(mTab.needsReload());
-        Assert.assertFalse(mTab.isShowingSadTab());
+        Assert.assertFalse(isShowingSadTab());
     }
 
     @Test
     @SmallTest
     @Feature({"Tab"})
     public void testTabSecurityLevel() {
-        ThreadUtils.runOnUiThreadBlocking(
-                (Runnable) () -> Assert.assertEquals(ConnectionSecurityLevel.NONE,
-                        mTab.getSecurityLevel()));
+        TestThreadUtils.runOnUiThreadBlocking(
+                (Runnable) ()
+                        -> Assert.assertEquals(
+                                ConnectionSecurityLevel.NONE, mTab.getSecurityLevel()));
     }
 }

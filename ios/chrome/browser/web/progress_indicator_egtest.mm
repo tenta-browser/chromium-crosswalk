@@ -4,18 +4,17 @@
 
 #import <EarlGrey/EarlGrey.h>
 
+#include <memory>
+
 #include "base/mac/foundation_util.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/synchronization/condition_variable.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #import "base/test/ios/wait_util.h"
 #include "base/threading/thread_restrictions.h"
 #include "base/time/time.h"
-#include "ios/chrome/browser/ui/ui_util.h"
-#include "ios/chrome/test/app/navigation_test_util.h"
-#include "ios/chrome/test/app/web_view_interaction_test_util.h"
+#include "ios/chrome/browser/ui/util/ui_util.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey.h"
 #import "ios/chrome/test/earl_grey/chrome_earl_grey_ui.h"
 #import "ios/chrome/test/earl_grey/chrome_test_case.h"
@@ -96,7 +95,7 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
     base::test::ios::WaitUntilCondition(
         ^{
           base::AutoLock auto_lock(lock_);
-          return terminated_.load(std::memory_order_release);
+          return terminated_.load(std::memory_order_acquire);
         },
         false, base::TimeDelta::FromSeconds(10));
   }
@@ -119,7 +118,7 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
       *response_body = base::StringPrintf("<p>%s</p>", kPageText);
       {
         base::AutoLock auto_lock(lock_);
-        while (!aborted_.load(std::memory_order_release))
+        while (!aborted_.load(std::memory_order_acquire))
           condition_variable_.Wait();
         terminated_.store(true, std::memory_order_release);
       }
@@ -172,7 +171,7 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
 // Tests that the progress indicator is shown and has expected progress value
 // for a simple two item page, and the toolbar is visible.
 - (void)testProgressIndicatorShown {
-  if (IsIPadIdiom()) {
+  if ([ChromeEarlGrey isIPadIdiom]) {
     EARL_GREY_TEST_SKIPPED(@"Skipped for iPad (no progress view in tablet)");
   }
 
@@ -180,16 +179,16 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
   const GURL infinitePendingURL =
       web::test::HttpServer::MakeUrl(kInfinitePendingPageURL);
   auto uniqueInfinitePendingProvider =
-      base::MakeUnique<InfinitePendingResponseProvider>(infinitePendingURL);
+      std::make_unique<InfinitePendingResponseProvider>(infinitePendingURL);
   InfinitePendingResponseProvider* infinitePendingProvider =
       uniqueInfinitePendingProvider.get();
   web::test::SetUpHttpServer(std::move(uniqueInfinitePendingProvider));
   // The page being loaded never completes, so call the LoadUrl helper that
   // does not wait for the page to complete loading.
-  chrome_test_util::LoadUrl(infinitePendingURL);
+  [ChromeEarlGrey loadURL:infinitePendingURL waitForCompletion:NO];
 
   // Wait until the page is half loaded.
-  [ChromeEarlGrey waitForWebViewContainingText:kPageText];
+  [ChromeEarlGrey waitForWebStateContainingText:kPageText];
 
   // Verify progress view visible and halfway progress.
   [[EarlGrey selectElementWithMatcher:ProgressViewWithProgress(0.5)]
@@ -202,7 +201,7 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
 // Tests that the progress indicator is shown and has expected progress value
 // after a form is submitted, and the toolbar is visible.
 - (void)testProgressIndicatorShownOnFormSubmit {
-  if (IsIPadIdiom()) {
+  if ([ChromeEarlGrey isIPadIdiom]) {
     EARL_GREY_TEST_SKIPPED(@"Skipped for iPad (no progress view in tablet)");
   }
 
@@ -217,19 +216,19 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
 
   // Add responseProvider for page that never finishes loading.
   auto uniqueInfinitePendingProvider =
-      base::MakeUnique<InfinitePendingResponseProvider>(infinitePendingURL);
+      std::make_unique<InfinitePendingResponseProvider>(infinitePendingURL);
   InfinitePendingResponseProvider* infinitePendingProvider =
       uniqueInfinitePendingProvider.get();
   web::test::AddResponseProvider(std::move(uniqueInfinitePendingProvider));
 
   // Load form first.
   [ChromeEarlGrey loadURL:formURL];
-  [ChromeEarlGrey waitForWebViewContainingText:kFormPageText];
+  [ChromeEarlGrey waitForWebStateContainingText:kFormPageText];
 
-  chrome_test_util::SubmitWebViewFormWithId(kFormID);
+  [ChromeEarlGrey submitWebStateFormWithID:kFormID];
 
   // Wait until the page is half loaded.
-  [ChromeEarlGrey waitForWebViewContainingText:kPageText];
+  [ChromeEarlGrey waitForWebStateContainingText:kPageText];
 
   // Verify progress view visible and halfway progress.
   [[EarlGrey selectElementWithMatcher:ProgressViewWithProgress(0.5)]
@@ -241,7 +240,7 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
 
 // Tests that the progress indicator disappears after form has been submitted.
 - (void)testProgressIndicatorDisappearsAfterFormSubmit {
-  if (IsIPadIdiom()) {
+  if ([ChromeEarlGrey isIPadIdiom]) {
     EARL_GREY_TEST_SKIPPED(@"Skipped for iPad (no progress view in tablet)");
   }
 
@@ -256,12 +255,12 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
 
   [ChromeEarlGrey loadURL:formURL];
 
-  [ChromeEarlGrey waitForWebViewContainingText:kFormPageText];
+  [ChromeEarlGrey waitForWebStateContainingText:kFormPageText];
 
-  chrome_test_util::SubmitWebViewFormWithId(kFormID);
+  [ChromeEarlGrey submitWebStateFormWithID:kFormID];
 
   // Verify the new page has been loaded.
-  [ChromeEarlGrey waitForWebViewContainingText:kPageText];
+  [ChromeEarlGrey waitForWebStateContainingText:kPageText];
 
   // Verify progress view is not visible.
   [[EarlGrey selectElementWithMatcher:ProgressView()]
@@ -271,7 +270,7 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
 // Tests that the progress indicator disappears after form post attempt with a
 // submit event that returns false.
 - (void)testProgressIndicatorDisappearsAfterSuppressedFormPost {
-  if (IsIPadIdiom()) {
+  if ([ChromeEarlGrey isIPadIdiom]) {
     EARL_GREY_TEST_SKIPPED(@"Skipped for iPad (no progress view in tablet)");
   }
 
@@ -284,9 +283,9 @@ class InfinitePendingResponseProvider : public HtmlResponseProvider {
   [ChromeEarlGrey loadURL:formURL];
 
   // Verify the form page has been loaded.
-  [ChromeEarlGrey waitForWebViewContainingText:kFormPageText];
+  [ChromeEarlGrey waitForWebStateContainingText:kFormPageText];
 
-  chrome_test_util::SubmitWebViewFormWithId(kFormID);
+  [ChromeEarlGrey submitWebStateFormWithID:kFormID];
 
   // Verify progress view is not visible.
   [[EarlGrey selectElementWithMatcher:grey_kindOfClass([MDCProgressView class])]

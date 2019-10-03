@@ -6,9 +6,8 @@
 
 #include "ash/public/cpp/shelf_types.h"
 #include "ash/shelf/shelf.h"
-#include "ash/system/tray/system_tray.h"
-#include "ash/system/tray/system_tray_item.h"
 #include "ash/system/tray/tray_constants.h"
+#include "ui/accessibility/ax_node_data.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/scoped_animation_duration_scale_mode.h"
 #include "ui/gfx/animation/slide_animation.h"
@@ -25,17 +24,29 @@ const int kTrayItemAnimationDurationMS = 200;
 
 }  // namespace
 
-TrayItemView::TrayItemView(SystemTrayItem* owner)
-    : owner_(owner), label_(NULL), image_view_(NULL) {
+void IconizedLabel::GetAccessibleNodeData(ui::AXNodeData* node_data) {
+  if (custom_accessible_name_.empty())
+    return Label::GetAccessibleNodeData(node_data);
+
+  node_data->role = ax::mojom::Role::kStaticText;
+  node_data->SetName(custom_accessible_name_);
+}
+
+TrayItemView::TrayItemView(Shelf* shelf)
+    : views::AnimationDelegateViews(this),
+      shelf_(shelf),
+      label_(NULL),
+      image_view_(NULL) {
+  DCHECK(shelf_);
   SetPaintToLayer();
   layer()->SetFillsBoundsOpaquely(false);
-  SetLayoutManager(new views::FillLayout());
+  SetLayoutManager(std::make_unique<views::FillLayout>());
 }
 
 TrayItemView::~TrayItemView() = default;
 
 void TrayItemView::CreateLabel() {
-  label_ = new views::Label;
+  label_ = new IconizedLabel;
   AddChildView(label_);
   PreferredSizeChanged();
 }
@@ -58,7 +69,7 @@ void TrayItemView::SetVisible(bool set_visible) {
     animation_.reset(new gfx::SlideAnimation(this));
     animation_->SetSlideDuration(GetAnimationDurationMS());
     animation_->SetTweenType(gfx::Tween::LINEAR);
-    animation_->Reset(visible() ? 1.0 : 0.0);
+    animation_->Reset(GetVisible() ? 1.0 : 0.0);
   }
 
   if (!set_visible) {
@@ -75,17 +86,20 @@ int TrayItemView::GetAnimationDurationMS() {
   return kTrayItemAnimationDurationMS;
 }
 
+bool TrayItemView::IsHorizontalAlignment() const {
+  return shelf_->IsHorizontalAlignment();
+}
+
 gfx::Size TrayItemView::CalculatePreferredSize() const {
-  DCHECK_EQ(1, child_count());
-  gfx::Size inner_size = views::View::CalculatePreferredSize();
-  if (image_view_)
-    inner_size = gfx::Size(kTrayIconSize, kTrayIconSize);
-  gfx::Rect rect(inner_size);
-  rect.Inset(gfx::Insets(-kTrayImageItemPadding));
-  gfx::Size size = rect.size();
+  DCHECK_EQ(1u, children().size());
+  gfx::Size size = views::View::CalculatePreferredSize();
+  if (image_view_) {
+    size = gfx::Size(kUnifiedTrayIconSize, kUnifiedTrayIconSize);
+  }
+
   if (!animation_.get() || !animation_->is_animating())
     return size;
-  if (owner()->system_tray()->shelf()->IsHorizontalAlignment()) {
+  if (shelf_->IsHorizontalAlignment()) {
     size.set_width(std::max(
         1, static_cast<int>(size.width() * animation_->GetCurrentValue())));
   } else {
@@ -99,13 +113,17 @@ int TrayItemView::GetHeightForWidth(int width) const {
   return GetPreferredSize().height();
 }
 
+const char* TrayItemView::GetClassName() const {
+  return "TrayItemView";
+}
+
 void TrayItemView::ChildPreferredSizeChanged(views::View* child) {
   PreferredSizeChanged();
 }
 
 void TrayItemView::AnimationProgressed(const gfx::Animation* animation) {
   gfx::Transform transform;
-  if (owner()->system_tray()->shelf()->IsHorizontalAlignment()) {
+  if (shelf_->IsHorizontalAlignment()) {
     transform.Translate(0, animation->CurrentValueBetween(
                                static_cast<double>(height()) / 2, 0.));
   } else {

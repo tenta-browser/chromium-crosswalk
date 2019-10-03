@@ -6,7 +6,6 @@
 #define CC_TEST_FAKE_SCROLLBAR_H_
 
 #include "base/compiler_specific.h"
-#include "base/macros.h"
 #include "cc/input/scrollbar.h"
 #include "third_party/skia/include/core/SkColor.h"
 
@@ -21,7 +20,10 @@ class FakeScrollbar : public Scrollbar {
                 ScrollbarOrientation orientation,
                 bool is_left_side_vertical_scrollbar,
                 bool is_overlay);
+  FakeScrollbar(const FakeScrollbar&) = delete;
   ~FakeScrollbar() override;
+
+  FakeScrollbar& operator=(const FakeScrollbar&) = delete;
 
   // Scrollbar implementation.
   ScrollbarOrientation Orientation() const override;
@@ -30,10 +32,13 @@ class FakeScrollbar : public Scrollbar {
   bool IsOverlay() const override;
   bool HasThumb() const override;
   int ThumbThickness() const override;
+  gfx::Rect BackButtonRect() const override;
+  gfx::Rect ForwardButtonRect() const override;
   int ThumbLength() const override;
   gfx::Rect TrackRect() const override;
   float ThumbOpacity() const override;
   bool NeedsPaintPart(ScrollbarPart part) const override;
+  bool HasTickmarks() const override;
   void PaintPart(PaintCanvas* canvas,
                  ScrollbarPart part,
                  const gfx::Rect& content_rect) override;
@@ -57,6 +62,7 @@ class FakeScrollbar : public Scrollbar {
   void set_needs_paint_track(bool needs_paint) {
     needs_paint_track_ = needs_paint;
   }
+  void set_has_tickmarks(bool has_tickmarks) { has_tickmarks_ = has_tickmarks; }
 
  private:
   bool paint_;
@@ -69,11 +75,12 @@ class FakeScrollbar : public Scrollbar {
   float thumb_opacity_;
   bool needs_paint_thumb_;
   bool needs_paint_track_;
+  bool has_tickmarks_;
   gfx::Point location_;
   gfx::Rect track_rect_;
+  gfx::Rect back_button_rect_;
+  gfx::Rect forward_button_rect_;
   SkColor fill_color_;
-
-  DISALLOW_COPY_AND_ASSIGN(FakeScrollbar);
 };
 
 }  // namespace cc

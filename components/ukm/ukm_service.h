@@ -9,6 +9,7 @@
 #include <memory>
 #include <vector>
 
+#include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
 #include "base/sequence_checker.h"
@@ -21,18 +22,27 @@
 
 class PrefRegistrySimple;
 class PrefService;
+FORWARD_DECLARE_TEST(ChromeMetricsServiceClientTest, TestRegisterUKMProviders);
 
 namespace metrics {
 class MetricsServiceClient;
-class UkmBrowserTest;
+class UkmBrowserTestBase;
 class UkmEGTestHelper;
 }
 
 namespace ukm {
 
 namespace debug {
-class DebugPage;
+class UkmDebugDataExtractor;
 }
+
+// These values are persisted to logs. Entries should not be renumbered and
+// numeric values should never be reused. This maps to the enum UkmResetReason.
+enum class ResetReason {
+  kOnSyncPrefsChanged = 0,
+  kUpdatePermissions = 1,
+  kMaxValue = kUpdatePermissions,
+};
 
 // The URL-Keyed Metrics (UKM) service is responsible for gathering and
 // uploading reports that contain fine grained performance metrics including
@@ -42,7 +52,9 @@ class UkmService : public UkmRecorderImpl {
   // Constructs a UkmService.
   // Calling code is responsible for ensuring that the lifetime of
   // |pref_service| is longer than the lifetime of UkmService.
-  UkmService(PrefService* pref_service, metrics::MetricsServiceClient* client);
+  UkmService(PrefService* pref_service,
+             metrics::MetricsServiceClient* client,
+             bool restrict_to_whitelist_entries);
   ~UkmService() override;
 
   // Initializes the UKM service.
@@ -64,31 +76,28 @@ class UkmService : public UkmRecorderImpl {
   // Deletes any unsent local data.
   void Purge();
 
-  // Resets the client id stored in prefs.
-  void ResetClientId();
+  // Resets the client prefs (client_id/session_id). |reason| should be passed
+  // to provide the reason of the reset - this is only used for UMA logging.
+  void ResetClientState(ResetReason reason);
 
   // Registers the specified |provider| to provide additional metrics into the
   // UKM log. Should be called during MetricsService initialization only.
-  void RegisterMetricsProvider(
+  virtual void RegisterMetricsProvider(
       std::unique_ptr<metrics::MetricsProvider> provider);
 
   // Registers the names of all of the preferences used by UkmService in
   // the provided PrefRegistry.
   static void RegisterPrefs(PrefRegistrySimple* registry);
 
+  int32_t report_count() const { return report_count_; }
+
  private:
-  friend ::metrics::UkmBrowserTest;
+  friend ::metrics::UkmBrowserTestBase;
   friend ::metrics::UkmEGTestHelper;
-  friend ::ukm::debug::DebugPage;
-
-  FRIEND_TEST_ALL_PREFIXES(UkmServiceTest, AddEntryWithEmptyMetrics);
-  FRIEND_TEST_ALL_PREFIXES(UkmServiceTest, EntryBuilderAndSerialization);
-  FRIEND_TEST_ALL_PREFIXES(UkmServiceTest,
-                           LogsUploadedOnlyWhenHavingSourcesOrEntries);
-  FRIEND_TEST_ALL_PREFIXES(UkmServiceTest, MetricsProviderTest);
-  FRIEND_TEST_ALL_PREFIXES(UkmServiceTest, PersistAndPurge);
-  FRIEND_TEST_ALL_PREFIXES(UkmServiceTest, WhitelistEntryTest);
-
+  friend ::ukm::debug::UkmDebugDataExtractor;
+  friend ::ukm::UkmUtilsForTest;
+  FRIEND_TEST_ALL_PREFIXES(::ChromeMetricsServiceClientTest,
+                           TestRegisterUKMProviders);
   // Starts metrics client initialization.
   void StartInitTask();
 
@@ -100,17 +109,23 @@ class UkmService : public UkmRecorderImpl {
   void RotateLog();
 
   // Constructs a new Report from available data and stores it in
-  // persisted_logs_.
+  // unsent_log_store_.
   void BuildAndStoreLog();
 
-  // Starts an upload of the next log from persisted_logs_.
+  // Starts an upload of the next log from unsent_log_store_.
   void StartScheduledUpload();
 
   // Called by log_uploader_ when the an upload is completed.
   void OnLogUploadComplete(int response_code);
 
+  // ukm::UkmRecorderImpl:
+  bool ShouldRestrictToWhitelistedEntries() const override;
+
   // A weak pointer to the PrefService used to read and write preferences.
   PrefService* pref_service_;
+
+  // If true, only whitelisted Entries should be recorded.
+  bool restrict_to_whitelist_entries_;
 
   // The UKM client id stored in prefs.
   uint64_t client_id_;
@@ -141,7 +156,7 @@ class UkmService : public UkmRecorderImpl {
 
   // Weak pointers factory used to post task on different threads. All weak
   // pointers managed by this factory have the same lifetime as UkmService.
-  base::WeakPtrFactory<UkmService> self_ptr_factory_;
+  base::WeakPtrFactory<UkmService> self_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(UkmService);
 };

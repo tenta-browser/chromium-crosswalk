@@ -143,7 +143,8 @@ EngineBridge.prototype = {
                             context.type + ':' +
                             context.autoComplete + ':' +
                             context.autoCorrect + ':' +
-                            context.spellCheck);
+                            context.spellCheck + ':' +
+                            context.shouldDoLearning);
   },
 
   /**
@@ -237,7 +238,7 @@ EngineBridge.prototype = {
   /**
    * Returns active engine ID. Returns null if there is no active engine.
    * @this EngineBridge
-   * @return {string} An string which identify the engine.
+   * @return {string} A string that identifies the engine.
    **/
   getActiveEngineID: function() {
     return this.activeEngine_;

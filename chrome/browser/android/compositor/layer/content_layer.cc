@@ -7,7 +7,6 @@
 #include "base/lazy_instance.h"
 #include "cc/layers/layer.h"
 #include "cc/layers/layer_collections.h"
-#include "cc/layers/surface_layer.h"
 #include "cc/paint/filter_operations.h"
 #include "chrome/browser/android/compositor/layer/thumbnail_layer.h"
 #include "chrome/browser/android/compositor/tab_content_manager.h"
@@ -69,9 +68,6 @@ void ContentLayer::SetProperties(int id,
     live_layer->SetHideLayerAndSubtree(!can_use_live_layer);
   bool live_layer_draws = GetDrawsContentLeaf(live_layer);
 
-  scoped_refptr<ThumbnailLayer> static_layer =
-      tab_content_manager_->GetOrCreateStaticLayer(id, !live_layer_draws);
-
   float content_opacity =
       should_override_content_alpha ? content_alpha_override : 1.0f;
   float static_opacity =
@@ -90,22 +86,27 @@ void ContentLayer::SetProperties(int id,
 
     layer_->AddChild(live_layer);
   }
-  if (static_layer.get()) {
-    static_layer->layer()->SetIsDrawable(true);
-    if (should_clip)
-      static_layer->Clip(clip);
-    else
-      static_layer->ClearClip();
-    SetOpacityOnLeaf(static_layer->layer(), static_opacity);
 
-    cc::FilterOperations static_filter_operations;
-    if (saturation < 1.0f) {
-      static_filter_operations.Append(
-          cc::FilterOperation::CreateSaturateFilter(saturation));
+  if (static_opacity > 0) {
+    scoped_refptr<ThumbnailLayer> static_layer =
+        tab_content_manager_->GetOrCreateStaticLayer(id, !live_layer_draws);
+    if (static_layer.get()) {
+      static_layer->layer()->SetIsDrawable(true);
+      if (should_clip)
+        static_layer->Clip(clip);
+      else
+        static_layer->ClearClip();
+      SetOpacityOnLeaf(static_layer->layer(), static_opacity);
+
+      cc::FilterOperations static_filter_operations;
+      if (saturation < 1.0f) {
+        static_filter_operations.Append(
+            cc::FilterOperation::CreateSaturateFilter(saturation));
+      }
+      static_layer->layer()->SetFilters(static_filter_operations);
+
+      layer_->AddChild(static_layer->layer());
     }
-    static_layer->layer()->SetFilters(static_filter_operations);
-
-    layer_->AddChild(static_layer->layer());
   }
 }
 
@@ -113,10 +114,9 @@ gfx::Size ContentLayer::ComputeSize(int id) const {
   gfx::Size size;
 
   scoped_refptr<cc::Layer> live_layer = tab_content_manager_->GetLiveLayer(id);
-  cc::SurfaceLayer* surface_layer =
-      static_cast<cc::SurfaceLayer*>(GetDrawsContentLeaf(live_layer));
-  if (surface_layer)
-    size.SetToMax(surface_layer->bounds());
+  cc::Layer* leaf_that_draws = GetDrawsContentLeaf(live_layer);
+  if (leaf_that_draws)
+    size.SetToMax(leaf_that_draws->bounds());
 
   scoped_refptr<ThumbnailLayer> static_layer =
       tab_content_manager_->GetStaticLayer(id);

@@ -12,7 +12,7 @@
 #include <vector>
 
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "build/build_config.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/browser/render_view_host.h"
@@ -66,6 +66,8 @@ class RenderFrameHostTester {
   static bool TestOnMessageReceived(RenderFrameHost* rfh,
                                     const IPC::Message& msg);
 
+  // Commit the load pending in the given |controller| if any.
+  // TODO(ahemery): This should take a WebContents directly.
   static void CommitPendingLoad(NavigationController* controller);
 
   virtual ~RenderFrameHostTester() {}
@@ -85,26 +87,6 @@ class RenderFrameHostTester {
   // Simulates a navigation stopping in the RenderFrameHost.
   virtual void SimulateNavigationStop() = 0;
 
-  // Calls DidCommitProvisionalLoad on the RenderFrameHost with the given
-  // information with various sets of parameters. These are helper functions for
-  // simulating the most common types of loads.
-  //
-  // Guidance for calling this:
-  // - nav_entry_id should be 0 if simulating a renderer-initiated navigation;
-  //   if simulating a browser-initiated one, pass the GetUniqueID() value of
-  //   the NavigationController's PendingEntry.
-  // - did_create_new_entry should be true if simulating a navigation that
-  //   created a new navigation entry; false for history navigations, reloads,
-  //   and other navigations that don't affect the history list.
-  virtual void SendNavigateWithTransition(int nav_entry_id,
-                                          bool did_create_new_entry,
-                                          const GURL& url,
-                                          ui::PageTransition transition) = 0;
-
-  // If set, future loads will have |mime_type| set as the mime type.
-  // If not set, the mime type will default to "text/html".
-  virtual void SetContentsMimeType(const std::string& mime_type) = 0;
-
   // Calls OnBeforeUnloadACK on this RenderFrameHost with the given parameter.
   virtual void SendBeforeUnloadACK(bool proceed) = 0;
 
@@ -112,17 +94,12 @@ class RenderFrameHostTester {
   // navigation without making any network requests.
   virtual void SimulateSwapOutACK() = 0;
 
-  // Simulate a renderer-initiated navigation up until commit.
-  // DEPRECATED: Use NavigationSimulator::NavigateAndCommitFromDocument().
-  virtual void NavigateAndCommitRendererInitiated(bool did_create_new_entry,
-                                                  const GURL& url) = 0;
-
   // Set the feature policy header for the RenderFrameHost for test. Currently
   // this is limited to setting a whitelist for a single feature. This function
   // can be generalized as needed. Setting a header policy should only be done
   // once per navigation of the RFH.
   virtual void SimulateFeaturePolicyHeader(
-      blink::FeaturePolicyFeature feature,
+      blink::mojom::FeaturePolicyFeature feature,
       const std::vector<url::Origin>& whitelist) = 0;
 
   // Gets all the console messages requested via
@@ -139,10 +116,7 @@ class RenderViewHostTester {
   // RenderViewHostTestEnabler instance (see below) to do this.
   static RenderViewHostTester* For(RenderViewHost* host);
 
-  // Calls the RenderViewHosts' private OnMessageReceived function with the
-  // given message.
-  static bool TestOnMessageReceived(RenderViewHost* rvh,
-                                    const IPC::Message& msg);
+  static void SimulateFirstPaint(RenderViewHost* rvh);
 
   // Returns whether the underlying web-page has any touch-event handlers.
   static bool HasTouchEventHandler(RenderViewHost* rvh);
@@ -160,8 +134,8 @@ class RenderViewHostTester {
   virtual void SimulateWasHidden() = 0;
   virtual void SimulateWasShown() = 0;
 
-  // Promote ComputeWebkitPrefs to public.
-  virtual WebPreferences TestComputeWebkitPrefs() = 0;
+  // Promote ComputeWebPreferences to public.
+  virtual WebPreferences TestComputeWebPreferences() = 0;
 };
 
 // You can instantiate only one class like this at a time.  During its
@@ -179,7 +153,7 @@ class RenderViewHostTestEnabler {
 #if defined(OS_ANDROID)
   std::unique_ptr<display::Screen> screen_;
 #endif
-  std::unique_ptr<base::MessageLoop> message_loop_;
+  std::unique_ptr<base::test::ScopedTaskEnvironment> task_environment_;
   std::unique_ptr<MockRenderProcessHostFactory> rph_factory_;
   std::unique_ptr<TestRenderViewHostFactory> rvh_factory_;
   std::unique_ptr<TestRenderFrameHostFactory> rfh_factory_;
@@ -189,9 +163,13 @@ class RenderViewHostTestEnabler {
 // RenderViewHostTestHarness ---------------------------------------------------
 class RenderViewHostTestHarness : public testing::Test {
  public:
-  // Constructs a RenderViewHostTestHarness which uses |thread_bundle_options|
-  // to initialize its TestBrowserThreadBundle.
-  explicit RenderViewHostTestHarness(int thread_bundle_options = 0);
+  // Constructs a RenderViewHostTestHarness which uses |args| to initialize its
+  // TestBrowserThreadBundle.
+  template <typename... Args>
+  RenderViewHostTestHarness(Args... args)
+      : RenderViewHostTestHarness(
+            std::make_unique<TestBrowserThreadBundle>(args...)) {}
+
   ~RenderViewHostTestHarness() override;
 
   NavigationController& controller();
@@ -228,15 +206,23 @@ class RenderViewHostTestHarness : public testing::Test {
 
   // Sets the current WebContents for tests that want to alter it. Takes
   // ownership of the WebContents passed.
-  void SetContents(WebContents* contents);
+  void SetContents(std::unique_ptr<WebContents> contents);
 
   // Creates a new test-enabled WebContents. Ownership passes to the
   // caller.
-  WebContents* CreateTestWebContents();
+  std::unique_ptr<WebContents> CreateTestWebContents();
 
   // Cover for |contents()->NavigateAndCommit(url)|. See
   // WebContentsTester::NavigateAndCommit for details.
-  void NavigateAndCommit(const GURL& url);
+  // Optional parameter transition allows transition type to be controlled for
+  // greater flexibility for tests.
+  void NavigateAndCommit(
+      const GURL& url,
+      ui::PageTransition transition = ui::PAGE_TRANSITION_LINK);
+
+  // Sets the focused frame to the main frame of the WebContents for tests that
+  // rely on the focused frame not being null.
+  void FocusWebContentsOnMainFrame();
 
  protected:
   // testing::Test
@@ -249,6 +235,14 @@ class RenderViewHostTestHarness : public testing::Test {
   // BrowserContext.
   virtual BrowserContext* CreateBrowserContext();
 
+  // Derived classes can override this method to have the test harness use a
+  // different BrowserContext than the one owned by this class. This is most
+  // useful for off-the-record contexts, which are usually owned by the original
+  // context.
+  virtual BrowserContext* GetBrowserContext();
+
+  TestBrowserThreadBundle* thread_bundle() { return thread_bundle_.get(); }
+
 #if defined(USE_AURA)
   aura::Window* root_window() { return aura_test_helper_->root_window(); }
 #endif
@@ -257,6 +251,11 @@ class RenderViewHostTestHarness : public testing::Test {
   void SetRenderProcessHostFactory(RenderProcessHostFactory* factory);
 
  private:
+  // The template constructor has to be in the header but it delegates to this
+  // constructor to initialize all other members out-of-line.
+  explicit RenderViewHostTestHarness(
+      std::unique_ptr<TestBrowserThreadBundle> thread_bundle);
+
   std::unique_ptr<TestBrowserThreadBundle> thread_bundle_;
 
   std::unique_ptr<ContentBrowserSanityChecker> sanity_checker_;

@@ -2,93 +2,39 @@
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
 
-import json
-import logging
 import os
 import subprocess
-
-import py_utils
-
-from telemetry.core import exceptions
-from telemetry.value import histogram_util
+import time
 
 
-def _RunRemoteCommand(dut_ip, cmd):
-  return os.system('ssh root@%s %s' % (dut_ip, cmd))
-
-
-def _GetTabSwitchHistogram(browser):
-  """Gets MPArch.RWH_TabSwitchPaintDuration histogram.
-
-  Catches exceptions to handle devtools context lost cases.
-
-  Any tab context can be used to get the TabSwitchPaintDuration histogram.
-  browser.tabs[-1] is the last valid context. Ex: If the browser opens
-  A, B, ..., I, J tabs, E, F, G tabs have valid contexts (not discarded),
-  then browser.tab[0] is tab E, browser.tab[-1] is tab G.
-
-  In the tab switching benchmark, the tabs are opened and switched to in
-  1, 2, ..., n order. The tabs are discarded in roughly 1, 2, ..., n order
-  (LRU order). The chance of discarding the last valid context is lower
-  than discarding the first valid context.
+def _RunCommand(dut_ip, cmd):
+  """Runs command on the DUT.
 
   Args:
-    browser: Gets histogram from this browser.
-
-  Returns:
-    A json serialization of a histogram or None if get histogram failed.
+    dut_ip: IP of the DUT. If it's None, runs command locally.
+    cmd: The command to run.
   """
-  histogram_name = 'MPArch.RWH_TabSwitchPaintDuration'
-  histogram_type = histogram_util.BROWSER_HISTOGRAM
-  try:
-    return histogram_util.GetHistogram(
-        histogram_type, histogram_name, browser.tabs[-1])
-  except (exceptions.DevtoolsTargetCrashException, KeyError):
-    logging.warning('GetHistogram: Devtools context lost.')
-  except exceptions.TimeoutException:
-    logging.warning('GetHistogram: Timed out getting histogram.')
-  return None
+  if dut_ip:
+    # Commands via ssh shall be double-quoted to escape special characters.
+    cmd = '"%s"' % cmd
+    return os.system('ssh root@%s %s' % (dut_ip, cmd))
+  else:
+    return os.system(cmd)
 
 
-def GetTabSwitchHistogramRetry(browser):
-  """Retries getting histogram as it may fail when a context was discarded.
-
-  Args:
-    browser: Gets histogram from this browser.
-
-  Returns:
-    A json serialization of a histogram.
-
-  Raises:
-    py_utils.TimeoutException: There is no valid histogram in 10 seconds.
-  """
-  return py_utils.WaitFor(lambda: _GetTabSwitchHistogram(browser), 10)
+def _Popen(dut_ip, cmd_list):
+  """Popen to run a command on DUT."""
+  if dut_ip:
+    cmd_list = ['ssh', 'root@' + dut_ip] + cmd_list
+  return subprocess.Popen(cmd_list, stdout=subprocess.PIPE)
 
 
-def WaitTabSwitching(browser, prev_histogram):
-  """Waits for tab switching completion.
-
-  It's done by checking browser histogram to see if
-  RWH_TabSwitchPaintDuration count increases.
-
-  Args:
-    browser: Gets histogram from this browser.
-    prev_histogram: Checks histogram change against this histogram.
-  """
-  def _IsDone():
-    cur_histogram = _GetTabSwitchHistogram(browser)
-    if not cur_histogram:
-      return False
-
-    diff_histogram = histogram_util.SubtractHistogram(
-        cur_histogram, prev_histogram)
-    diff_histogram_count = json.loads(diff_histogram).get('count', 0)
-    return diff_histogram_count > 0
-
-  try:
-    py_utils.WaitFor(_IsDone, 10)
-  except py_utils.TimeoutException:
-    logging.warning('Timed out waiting for histogram count increasing.')
+def _CopyToDUT(dut_ip, local_path, dut_path):
+  """Copies file to the DUT path."""
+  if dut_ip:
+    os.system('scp -q %s root@%s:%s' % (local_path, dut_ip, dut_path))
+  else:
+    os.system('cp %s %s' % (local_path, dut_path))
 
 
 class KeyboardEmulator(object):
@@ -99,7 +45,9 @@ class KeyboardEmulator(object):
       for i in range(5):
         kbd.SwitchTab()
   """
-  REMOTE_LOG_KEY_FILENAME = '/usr/local/tmp/log_key_tab_switch'
+  REMOTE_TEMP_DIR = '/usr/local/tmp/'
+  REMOTE_LOG_KEY_FILENAME = 'log_key_tab_switch'
+  REMOTE_KEY_PROP_FILENAME = 'keyboard.prop'
 
   def __init__(self, dut_ip):
     """Inits KeyboardEmulator.
@@ -108,7 +56,6 @@ class KeyboardEmulator(object):
       dut_ip: DUT IP or hostname.
     """
     self._dut_ip = dut_ip
-    self._root_dut_ip = 'root@' + dut_ip
     self._key_device_name = None
 
   def _StartRemoteKeyboardEmulator(self):
@@ -120,48 +67,56 @@ class KeyboardEmulator(object):
     Raises:
       RuntimeError: Keyboard emulation failed.
     """
-    kbd_prop_filename = '/usr/local/autotest/cros/input_playback/keyboard.prop'
+    kbd_prop_filename = os.path.join(KeyboardEmulator.REMOTE_TEMP_DIR,
+                                     KeyboardEmulator.REMOTE_KEY_PROP_FILENAME)
 
-    ret = _RunRemoteCommand(self._dut_ip, 'test -e %s' % kbd_prop_filename)
+    ret = _RunCommand(self._dut_ip, 'test -e %s' % kbd_prop_filename)
     if ret != 0:
       raise RuntimeError('Keyboard property file does not exist.')
 
-    cmd = ['ssh', self._root_dut_ip, 'evemu-device', kbd_prop_filename]
-    ssh_process = subprocess.Popen(cmd, stdout=subprocess.PIPE)
+    process = _Popen(self._dut_ip, ['evemu-device', kbd_prop_filename])
 
     # The evemu-device output format:
     # Emulated Keyboard: /dev/input/event10
-    output = ssh_process.stdout.readline()
-    # The remote process would live when the ssh process was terminated.
-    ssh_process.kill()
+    output = process.stdout.readline()
+    if self._dut_ip:
+      # The remote process would live when the ssh process was terminated.
+      process.kill()
+    else:
+      # Needs extra sleep when running locally, otherwise the first key may not
+      # dispatch.
+      # TODO(cywang): crbug.com/852702
+      time.sleep(1)
     if not output.startswith('Emulated Keyboard:'):
       raise RuntimeError('Keyboard emulation failed.')
     key_device_name = output.split()[2]
     return key_device_name
 
   def _SetupKeyDispatch(self):
-    """Uploads the script to send key to switch tabs."""
+    """Uploads required files to emulate keyboard."""
     cur_dir = os.path.dirname(os.path.abspath(__file__))
-    log_key_filename = os.path.join(cur_dir, 'data', 'log_key_tab_switch')
-    os.system('scp -q %s %s:%s' %
-              (log_key_filename, self._root_dut_ip,
-               KeyboardEmulator.REMOTE_LOG_KEY_FILENAME))
+    for filename in (KeyboardEmulator.REMOTE_KEY_PROP_FILENAME,
+                     KeyboardEmulator.REMOTE_LOG_KEY_FILENAME):
+      src = os.path.join(cur_dir, 'data', filename)
+      dest = os.path.join(KeyboardEmulator.REMOTE_TEMP_DIR, filename)
+      _CopyToDUT(self._dut_ip, src, dest)
 
   def __enter__(self):
-    self._key_device_name = self._StartRemoteKeyboardEmulator()
     self._SetupKeyDispatch()
+    self._key_device_name = self._StartRemoteKeyboardEmulator()
     return self
 
   def SwitchTab(self):
     """Sending Ctrl-tab key to trigger tab switching."""
-    cmd = ('"evemu-play --insert-slot0 %s < %s"' %
-           (self._key_device_name,
-            KeyboardEmulator.REMOTE_LOG_KEY_FILENAME))
-    _RunRemoteCommand(self._dut_ip, cmd)
+    log_key_filename = os.path.join(KeyboardEmulator.REMOTE_TEMP_DIR,
+                                    KeyboardEmulator.REMOTE_LOG_KEY_FILENAME)
+    cmd = ('evemu-play --insert-slot0 %s < %s' %
+           (self._key_device_name, log_key_filename))
+    _RunCommand(self._dut_ip, cmd)
 
   def __exit__(self, exc_type, exc_value, traceback):
-    # Kills the remote emulator process explicitly.
-    _RunRemoteCommand(self._dut_ip, 'pkill evemu-device')
+    # Kills the emulator process explicitly.
+    _RunCommand(self._dut_ip, 'pkill evemu-device')
 
 
 def NoScreenOff(dut_ip):
@@ -170,5 +125,5 @@ def NoScreenOff(dut_ip):
   Args:
     dut_ip: DUT IP or hostname.
   """
-  _RunRemoteCommand(dut_ip, 'set_power_policy --ac_screen_off_delay=3600')
-  _RunRemoteCommand(dut_ip, 'set_power_policy --ac_screen_dim_delay=3600')
+  _RunCommand(dut_ip, 'set_power_policy --ac_screen_off_delay=3600')
+  _RunCommand(dut_ip, 'set_power_policy --ac_screen_dim_delay=3600')

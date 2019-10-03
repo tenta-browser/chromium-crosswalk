@@ -23,6 +23,10 @@ namespace {
 namespace flat_rule = url_pattern_index::flat;
 namespace dnr_api = extensions::api::declarative_net_request;
 
+constexpr char kAnchorCharacter = '|';
+constexpr char kSeparatorCharacter = '^';
+constexpr char kWildcardCharacter = '*';
+
 // Returns true if bitmask |sub| is a subset of |super|.
 constexpr bool IsSubset(unsigned sub, unsigned super) {
   return (super | sub) == super;
@@ -108,10 +112,6 @@ class UrlFilterParser {
     return IsAtValidIndex() && url_filter_[index_] == kAnchorCharacter;
   }
 
-  static constexpr char kAnchorCharacter = '|';
-  static constexpr char kSeparatorCharacter = '^';
-  static constexpr char kWildcardCharacter = '*';
-
   const std::string url_filter_;
   const size_t url_filter_len_;
   size_t index_;
@@ -124,11 +124,11 @@ class UrlFilterParser {
 uint8_t GetOptionsMask(const dnr_api::Rule& parsed_rule) {
   uint8_t mask = flat_rule::OptionFlag_NONE;
 
-  if (parsed_rule.action.type == dnr_api::RULE_ACTION_TYPE_WHITELIST)
+  if (parsed_rule.action.type == dnr_api::RULE_ACTION_TYPE_ALLOW)
     mask |= flat_rule::OptionFlag_IS_WHITELIST;
   if (parsed_rule.condition.is_url_filter_case_sensitive &&
-      *parsed_rule.condition.is_url_filter_case_sensitive) {
-    mask |= flat_rule::OptionFlag_IS_MATCH_CASE;
+      !*parsed_rule.condition.is_url_filter_case_sensitive) {
+    mask |= flat_rule::OptionFlag_IS_CASE_INSENSITIVE;
   }
 
   switch (parsed_rule.condition.domain_type) {
@@ -155,6 +155,8 @@ flat_rule::ElementType GetElementType(dnr_api::ResourceType resource_type) {
   switch (resource_type) {
     case dnr_api::RESOURCE_TYPE_NONE:
       return flat_rule::ElementType_NONE;
+    case dnr_api::RESOURCE_TYPE_MAIN_FRAME:
+      return flat_rule::ElementType_MAIN_FRAME;
     case dnr_api::RESOURCE_TYPE_SUB_FRAME:
       return flat_rule::ElementType_SUBDOCUMENT;
     case dnr_api::RESOURCE_TYPE_STYLESHEET:
@@ -171,6 +173,8 @@ flat_rule::ElementType GetElementType(dnr_api::ResourceType resource_type) {
       return flat_rule::ElementType_XMLHTTPREQUEST;
     case dnr_api::RESOURCE_TYPE_PING:
       return flat_rule::ElementType_PING;
+    case dnr_api::RESOURCE_TYPE_CSP_REPORT:
+      return flat_rule::ElementType_CSP_REPORT;
     case dnr_api::RESOURCE_TYPE_MEDIA:
       return flat_rule::ElementType_MEDIA;
     case dnr_api::RESOURCE_TYPE_WEBSOCKET:
@@ -214,32 +218,46 @@ ParseResult ComputeElementTypes(const dnr_api::RuleCondition& condition,
   if (include_element_type_mask & exclude_element_type_mask)
     return ParseResult::ERROR_RESOURCE_TYPE_DUPLICATED;
 
-  *element_types =
-      include_element_type_mask
-          ? include_element_type_mask
-          : (flat_rule::ElementType_ANY & ~exclude_element_type_mask);
+  if (include_element_type_mask != flat_rule::ElementType_NONE)
+    *element_types = include_element_type_mask;
+  else if (exclude_element_type_mask != flat_rule::ElementType_NONE)
+    *element_types = flat_rule::ElementType_ANY & ~exclude_element_type_mask;
+  else
+    *element_types = url_pattern_index::kDefaultFlatElementTypesMask;
 
   return ParseResult::SUCCESS;
 }
 
-// Lower-cases and sorts domains, as required by the url_pattern_index
-// component.
-std::vector<std::string> CanonicalizeDomains(
-    std::unique_ptr<std::vector<std::string>> domains) {
+// Lower-cases and sorts |domains|, as required by the url_pattern_index
+// component and stores the result in |output|. Returns false in case of
+// failure, when one of the input strings contains non-ascii characters.
+bool CanonicalizeDomains(std::unique_ptr<std::vector<std::string>> domains,
+                         std::vector<std::string>* output) {
+  DCHECK(output);
+  DCHECK(output->empty());
+
   if (!domains)
-    return std::vector<std::string>();
+    return true;
 
   // Convert to lower case as required by the url_pattern_index component.
-  for (size_t i = 0; i < domains->size(); i++)
-    (*domains)[i] = base::ToLowerASCII((*domains)[i]);
+  for (const std::string& domain : *domains) {
+    if (!base::IsStringASCII(domain))
+      return false;
 
-  std::sort(domains->begin(), domains->end(),
+    output->push_back(base::ToLowerASCII(domain));
+  }
+
+  std::sort(output->begin(), output->end(),
             [](const std::string& left, const std::string& right) {
               return url_pattern_index::CompareDomains(left, right) < 0;
             });
 
-  // Move the vector, because it isn't eligible for return value optimization.
-  return std::move(*domains);
+  return true;
+}
+
+// Returns if the redirect URL will be used as a relative URL.
+bool IsRedirectUrlRelative(const std::string& redirect_url) {
+  return !redirect_url.empty() && redirect_url[0] == '/';
 }
 
 }  // namespace
@@ -250,68 +268,119 @@ IndexedRule::IndexedRule(IndexedRule&& other) = default;
 IndexedRule& IndexedRule::operator=(IndexedRule&& other) = default;
 
 // static
-ParseResult IndexedRule::CreateIndexedRule(
-    std::unique_ptr<dnr_api::Rule> parsed_rule,
-    IndexedRule* indexed_rule) {
+ParseResult IndexedRule::CreateIndexedRule(dnr_api::Rule parsed_rule,
+                                           const GURL& base_url,
+                                           IndexedRule* indexed_rule) {
   DCHECK(indexed_rule);
-  DCHECK(IsAPIAvailable());
 
-  if (parsed_rule->id < kMinValidID)
+  if (parsed_rule.id < kMinValidID)
     return ParseResult::ERROR_INVALID_RULE_ID;
 
   const bool is_redirect_rule =
-      parsed_rule->action.type == dnr_api::RULE_ACTION_TYPE_REDIRECT;
-  if (is_redirect_rule) {
-    if (!parsed_rule->action.redirect_url ||
-        parsed_rule->action.redirect_url->empty()) {
-      return ParseResult::ERROR_EMPTY_REDIRECT_URL;
-    }
-    if (!GURL(*parsed_rule->action.redirect_url).is_valid())
-      return ParseResult::ERROR_INVALID_REDIRECT_URL;
-    if (!parsed_rule->priority)
-      return ParseResult::ERROR_EMPTY_REDIRECT_RULE_PRIORITY;
-    if (*parsed_rule->priority < kMinValidPriority)
-      return ParseResult::ERROR_INVALID_REDIRECT_RULE_PRIORITY;
+      parsed_rule.action.type == dnr_api::RULE_ACTION_TYPE_REDIRECT;
+  const bool is_upgrade_rule =
+      parsed_rule.action.type == dnr_api::RULE_ACTION_TYPE_UPGRADESCHEME;
+
+  if (is_redirect_rule || is_upgrade_rule) {
+    if (!parsed_rule.priority)
+      return is_redirect_rule ? ParseResult::ERROR_EMPTY_REDIRECT_RULE_PRIORITY
+                              : ParseResult::ERROR_EMPTY_UPGRADE_RULE_PRIORITY;
+    if (*parsed_rule.priority < kMinValidPriority)
+      return is_redirect_rule
+                 ? ParseResult::ERROR_INVALID_REDIRECT_RULE_PRIORITY
+                 : ParseResult::ERROR_INVALID_UPGRADE_RULE_PRIORITY;
   }
 
-  if (parsed_rule->condition.domains && parsed_rule->condition.domains->empty())
+  if (is_redirect_rule) {
+    if (!parsed_rule.action.redirect_url ||
+        parsed_rule.action.redirect_url->empty()) {
+      return ParseResult::ERROR_EMPTY_REDIRECT_URL;
+    }
+
+    if (!IsRedirectUrlRelative(*parsed_rule.action.redirect_url) &&
+        !GURL(*parsed_rule.action.redirect_url).is_valid()) {
+      return ParseResult::ERROR_INVALID_REDIRECT_URL;
+    }
+  }
+
+  if (parsed_rule.condition.domains && parsed_rule.condition.domains->empty())
     return ParseResult::ERROR_EMPTY_DOMAINS_LIST;
 
-  if (parsed_rule->condition.resource_types &&
-      parsed_rule->condition.resource_types->empty()) {
+  if (parsed_rule.condition.resource_types &&
+      parsed_rule.condition.resource_types->empty()) {
     return ParseResult::ERROR_EMPTY_RESOURCE_TYPES_LIST;
   }
 
-  if (parsed_rule->condition.url_filter &&
-      parsed_rule->condition.url_filter->empty()) {
-    return ParseResult::ERROR_EMPTY_URL_FILTER;
+  if (parsed_rule.condition.url_filter) {
+    if (parsed_rule.condition.url_filter->empty())
+      return ParseResult::ERROR_EMPTY_URL_FILTER;
+    if (!base::IsStringASCII(*parsed_rule.condition.url_filter))
+      return ParseResult::ERROR_NON_ASCII_URL_FILTER;
   }
 
-  indexed_rule->id = base::checked_cast<uint32_t>(parsed_rule->id);
+  indexed_rule->action_type = parsed_rule.action.type;
+  indexed_rule->id = base::checked_cast<uint32_t>(parsed_rule.id);
   indexed_rule->priority = base::checked_cast<uint32_t>(
-      is_redirect_rule ? *parsed_rule->priority : kDefaultPriority);
-  indexed_rule->options = GetOptionsMask(*parsed_rule);
-  indexed_rule->activation_types = GetActivationTypes(*parsed_rule);
+      (is_redirect_rule || is_upgrade_rule) ? *parsed_rule.priority
+                                            : kDefaultPriority);
+  indexed_rule->options = GetOptionsMask(parsed_rule);
+  indexed_rule->activation_types = GetActivationTypes(parsed_rule);
 
   {
-    ParseResult result = ComputeElementTypes(parsed_rule->condition,
+    ParseResult result = ComputeElementTypes(parsed_rule.condition,
                                              &indexed_rule->element_types);
     if (result != ParseResult::SUCCESS)
       return result;
   }
 
-  indexed_rule->domains =
-      CanonicalizeDomains(std::move(parsed_rule->condition.domains));
-  indexed_rule->excluded_domains =
-      CanonicalizeDomains(std::move(parsed_rule->condition.excluded_domains));
+  if (!CanonicalizeDomains(std::move(parsed_rule.condition.domains),
+                           &indexed_rule->domains)) {
+    return ParseResult::ERROR_NON_ASCII_DOMAIN;
+  }
 
-  if (is_redirect_rule)
-    indexed_rule->redirect_url = std::move(*parsed_rule->action.redirect_url);
+  if (!CanonicalizeDomains(std::move(parsed_rule.condition.excluded_domains),
+                           &indexed_rule->excluded_domains)) {
+    return ParseResult::ERROR_NON_ASCII_EXCLUDED_DOMAIN;
+  }
+
+  if (is_redirect_rule) {
+    if (IsRedirectUrlRelative(*parsed_rule.action.redirect_url)) {
+      GURL::Replacements relative_path;
+      relative_path.SetPathStr(parsed_rule.action.redirect_url->c_str());
+      indexed_rule->redirect_url =
+          base_url.ReplaceComponents(relative_path).spec();
+    } else {
+      indexed_rule->redirect_url = std::move(*parsed_rule.action.redirect_url);
+    }
+  }
 
   // Parse the |anchor_left|, |anchor_right|, |url_pattern_type| and
   // |url_pattern| fields.
-  UrlFilterParser::Parse(std::move(parsed_rule->condition.url_filter),
+  UrlFilterParser::Parse(std::move(parsed_rule.condition.url_filter),
                          indexed_rule);
+
+  // url_pattern_index doesn't support patterns starting with a domain anchor
+  // followed by a wildcard, e.g. ||*xyz.
+  if (indexed_rule->anchor_left == flat_rule::AnchorType_SUBDOMAIN &&
+      !indexed_rule->url_pattern.empty() &&
+      indexed_rule->url_pattern.front() == kWildcardCharacter) {
+    return ParseResult::ERROR_INVALID_URL_FILTER;
+  }
+
+  // Lower-case case-insensitive patterns as required by url pattern index.
+  if (indexed_rule->options & flat_rule::OptionFlag_IS_CASE_INSENSITIVE)
+    indexed_rule->url_pattern = base::ToLowerASCII(indexed_rule->url_pattern);
+
+  if (parsed_rule.action.type == dnr_api::RULE_ACTION_TYPE_REMOVEHEADERS) {
+    if (!parsed_rule.action.remove_headers_list ||
+        parsed_rule.action.remove_headers_list->empty()) {
+      return ParseResult::ERROR_EMPTY_REMOVE_HEADERS_LIST;
+    }
+
+    indexed_rule->remove_headers_set.insert(
+        parsed_rule.action.remove_headers_list->begin(),
+        parsed_rule.action.remove_headers_list->end());
+  }
 
   // Some sanity checks to ensure we return a valid IndexedRule.
   DCHECK_GE(indexed_rule->id, static_cast<uint32_t>(kMinValidID));

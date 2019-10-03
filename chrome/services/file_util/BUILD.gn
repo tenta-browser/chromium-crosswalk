@@ -3,8 +3,6 @@
 # found in the LICENSE file.
 
 import("//build/config/features.gni")
-import("//services/service_manager/public/cpp/service.gni")
-import("//services/service_manager/public/service_manifest.gni")
 
 source_set("lib") {
   sources = [
@@ -18,7 +16,8 @@ source_set("lib") {
   ]
 
   public_deps = [
-    "//chrome/services/file_util/public/interfaces",
+    "//chrome/services/file_util/public/mojom",
+    "//mojo/public/mojom/base",
     "//services/service_manager/public/cpp",
   ]
 
@@ -28,7 +27,7 @@ source_set("lib") {
       "zip_file_creator.h",
     ]
 
-    deps += [ "//components/filesystem/public/interfaces" ]
+    deps += [ "//components/services/filesystem/public/mojom" ]
   }
 
   if (safe_browsing_mode == 1) {
@@ -37,9 +36,4 @@ source_set("lib") {
       "safe_archive_analyzer.h",
     ]
   }
-}
-
-service_manifest("manifest") {
-  name = "file_util"
-  source = "manifest.json"
 }

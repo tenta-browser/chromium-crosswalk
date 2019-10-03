@@ -16,10 +16,9 @@ class SensorPermissionContext : public PermissionContextBase {
 
  private:
   // PermissionContextBase:
-  ContentSetting GetPermissionStatusInternal(
-      content::RenderFrameHost* render_frame_host,
-      const GURL& requesting_origin,
-      const GURL& embedding_origin) const override;
+  void UpdateTabContext(const PermissionRequestID& id,
+                        const GURL& requesting_frame,
+                        bool allowed) override;
   bool IsRestrictedToSecureOrigins() const override;
 
   DISALLOW_COPY_AND_ASSIGN(SensorPermissionContext);

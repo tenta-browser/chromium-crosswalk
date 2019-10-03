@@ -5,12 +5,16 @@
 #ifndef CHROMECAST_MEDIA_SERVICE_CAST_MOJO_MEDIA_CLIENT_H_
 #define CHROMECAST_MEDIA_SERVICE_CAST_MOJO_MEDIA_CLIENT_H_
 
+#include <memory>
+#include <string>
+
+#include "media/mojo/buildflags.h"
 #include "media/mojo/services/mojo_media_client.h"
 
 namespace chromecast {
 namespace media {
 
-class MediaPipelineBackendFactory;
+class CmaBackendFactory;
 class MediaResourceTracker;
 class VideoModeSwitcher;
 class VideoResolutionPolicy;
@@ -18,29 +22,36 @@ class VideoResolutionPolicy;
 class CastMojoMediaClient : public ::media::MojoMediaClient {
  public:
   using CreateCdmFactoryCB =
-      base::Callback<std::unique_ptr<::media::CdmFactory>()>;
+      base::RepeatingCallback<std::unique_ptr<::media::CdmFactory>(
+          service_manager::mojom::InterfaceProvider*)>;
 
-  CastMojoMediaClient(MediaPipelineBackendFactory* backend_factory,
+  CastMojoMediaClient(CmaBackendFactory* backend_factory,
                       const CreateCdmFactoryCB& create_cdm_factory_cb,
                       VideoModeSwitcher* video_mode_switcher,
                       VideoResolutionPolicy* video_resolution_policy,
                       MediaResourceTracker* media_resource_tracker);
   ~CastMojoMediaClient() override;
 
-  // MojoMediaClient overrides.
-  void Initialize(
-      service_manager::Connector* connector,
-      service_manager::ServiceContextRefFactory* context_ref_factory) override;
-  scoped_refptr<::media::AudioRendererSink> CreateAudioRendererSink(
+  // MojoMediaClient implementation:
+  void Initialize(service_manager::Connector* connector) override;
+#if BUILDFLAG(ENABLE_CAST_RENDERER)
+  std::unique_ptr<::media::Renderer> CreateCastRenderer(
+      service_manager::mojom::InterfaceProvider* host_interfaces,
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+      ::media::MediaLog* media_log,
+      const base::UnguessableToken& overlay_plane_id) override;
+#endif
+  std::unique_ptr<::media::Renderer> CreateRenderer(
+      service_manager::mojom::InterfaceProvider* host_interfaces,
+      scoped_refptr<base::SingleThreadTaskRunner> task_runner,
+      ::media::MediaLog* media_log,
       const std::string& audio_device_id) override;
-  std::unique_ptr<::media::RendererFactory> CreateRendererFactory(
-      ::media::MediaLog* media_log) override;
   std::unique_ptr<::media::CdmFactory> CreateCdmFactory(
       service_manager::mojom::InterfaceProvider* host_interfaces) override;
 
  private:
   service_manager::Connector* connector_;
-  MediaPipelineBackendFactory* const backend_factory_;
+  CmaBackendFactory* const backend_factory_;
   const CreateCdmFactoryCB create_cdm_factory_cb_;
   VideoModeSwitcher* video_mode_switcher_;
   VideoResolutionPolicy* video_resolution_policy_;

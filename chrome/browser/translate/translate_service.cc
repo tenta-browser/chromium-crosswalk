@@ -4,6 +4,7 @@
 
 #include "chrome/browser/translate/translate_service.h"
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/logging.h"
 #include "base/metrics/field_trial.h"
@@ -11,6 +12,7 @@
 #include "base/strings/string_util.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
+#include "chrome/browser/net/system_network_context_manager.h"
 #include "chrome/browser/translate/chrome_translate_client.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/common/pref_names.h"
@@ -18,6 +20,7 @@
 #include "components/prefs/pref_service.h"
 #include "components/translate/core/browser/translate_download_manager.h"
 #include "components/translate/core/browser/translate_manager.h"
+#include "content/public/browser/network_service_instance.h"
 #include "content/public/common/url_constants.h"
 #include "url/gurl.h"
 
@@ -28,14 +31,15 @@
 
 namespace {
 // The singleton instance of TranslateService.
-TranslateService* g_translate_service = NULL;
+TranslateService* g_translate_service = nullptr;
 }
 
 TranslateService::TranslateService()
     : resource_request_allowed_notifier_(
           g_browser_process->local_state(),
-          switches::kDisableBackgroundNetworking) {
-  resource_request_allowed_notifier_.Init(this);
+          switches::kDisableBackgroundNetworking,
+          base::BindOnce(&content::GetNetworkConnectionTracker)) {
+  resource_request_allowed_notifier_.Init(this, true /* leaky */);
 }
 
 TranslateService::~TranslateService() {}
@@ -50,8 +54,13 @@ void TranslateService::Initialize() {
   g_translate_service->OnResourceRequestsAllowed();
   translate::TranslateDownloadManager* download_manager =
       translate::TranslateDownloadManager::GetInstance();
-  download_manager->set_request_context(
-      g_browser_process->system_request_context());
+  SystemNetworkContextManager* system_network_context_manager =
+      g_browser_process->system_network_context_manager();
+  // Manager will be null if called from InitializeForTesting.
+  if (system_network_context_manager) {
+    download_manager->set_url_loader_factory(
+        system_network_context_manager->GetSharedURLLoaderFactory());
+  }
   download_manager->set_application_locale(
       g_browser_process->GetApplicationLocale());
 }
@@ -64,19 +73,23 @@ void TranslateService::Shutdown(bool cleanup_pending_fetcher) {
     download_manager->Shutdown();
   } else {
     // This path is only used by browser tests.
-    download_manager->set_request_context(NULL);
+    download_manager->set_url_loader_factory(nullptr);
   }
 }
 
 // static
-void TranslateService::InitializeForTesting() {
+void TranslateService::InitializeForTesting(
+    network::mojom::ConnectionType type) {
   if (!g_translate_service) {
     TranslateService::Initialize();
     translate::TranslateManager::SetIgnoreMissingKeyForTesting(true);
   } else {
     translate::TranslateDownloadManager::GetInstance()->ResetForTesting();
-    g_translate_service->OnResourceRequestsAllowed();
   }
+
+  g_translate_service->resource_request_allowed_notifier_
+      .SetConnectionTypeForTesting(type);
+  g_translate_service->OnResourceRequestsAllowed();
 }
 
 // static
@@ -98,18 +111,8 @@ void TranslateService::OnResourceRequestsAllowed() {
 
 // static
 bool TranslateService::IsTranslateBubbleEnabled() {
-#if defined(USE_AURA)
+#if defined(USE_AURA) || defined(OS_MACOSX)
   return true;
-#elif defined(OS_MACOSX)
-  const std::string group_name =
-      base::FieldTrialList::FindFullName("TranslateNewUX");
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kDisableTranslateNewUX))
-    return false;
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          switches::kEnableTranslateNewUX))
-    return true;
-  return base::StartsWith(group_name, "Enabled", base::CompareCase::SENSITIVE);
 #else
   // The bubble UX is not implemented on other platforms.
   return false;
@@ -140,4 +143,9 @@ bool TranslateService::IsTranslatableURL(const GURL& url) {
            url.DomainIs(file_manager::kFileManagerAppId)) &&
 #endif
          !url.SchemeIs(url::kFtpScheme);
+}
+
+bool TranslateService::IsAvailable(PrefService* prefs) {
+  return translate::TranslateManager::IsAvailable(
+      ChromeTranslateClient::CreateTranslatePrefs(prefs).get());
 }

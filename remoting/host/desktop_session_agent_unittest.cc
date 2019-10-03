@@ -7,13 +7,14 @@
 #include <memory>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/location.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "ipc/ipc_channel_proxy.h"
 #include "ipc/ipc_listener.h"
@@ -93,7 +94,7 @@ class DesktopSessionAgentTest : public ::testing::Test {
   void Shutdown();
 
  protected:
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment scoped_task_environment_;
   base::RunLoop run_loop_;
   scoped_refptr<AutoThreadTaskRunner> task_runner_;
   scoped_refptr<DesktopSessionAgent> agent_;
@@ -101,9 +102,12 @@ class DesktopSessionAgentTest : public ::testing::Test {
 
 DesktopSessionAgentTest::DesktopSessionAgentTest()
     : task_runner_(new AutoThreadTaskRunner(
-          message_loop_.task_runner(), run_loop_.QuitClosure())),
-      agent_(new DesktopSessionAgent(
-          task_runner_, task_runner_, task_runner_, task_runner_)) {}
+          scoped_task_environment_.GetMainThreadTaskRunner(),
+          run_loop_.QuitClosure())),
+      agent_(new DesktopSessionAgent(task_runner_,
+                                     task_runner_,
+                                     task_runner_,
+                                     task_runner_)) {}
 
 void DesktopSessionAgentTest::Shutdown() {
   task_runner_ = nullptr;
@@ -139,7 +143,7 @@ TEST_F(DesktopSessionAgentTest, StartProcessStatsReport) {
 TEST_F(DesktopSessionAgentTest, StartProcessStatsReportWithInvalidInterval) {
   std::unique_ptr<FakeDelegate> delegate(new FakeDelegate(task_runner_));
   std::unique_ptr<IPC::ChannelProxy> proxy;
-  ProcessStatsListener listener(base::Bind([]() {}));
+  ProcessStatsListener listener{base::DoNothing()};
   proxy = IPC::ChannelProxy::Create(
       agent_->Start(delegate->GetWeakPtr()).release(),
       IPC::Channel::MODE_CLIENT, &listener, task_runner_,
@@ -150,17 +154,18 @@ TEST_F(DesktopSessionAgentTest, StartProcessStatsReportWithInvalidInterval) {
       base::TimeDelta::FromMilliseconds(-1))));
   ASSERT_TRUE(proxy->Send(
       new ChromotingNetworkToAnyMsg_StopProcessStatsReport()));
-  task_runner_->PostDelayedTask(FROM_HERE, base::Bind([](
-          DesktopSessionAgentTest* test,
-          std::unique_ptr<FakeDelegate>* delegate,
-          std::unique_ptr<IPC::ChannelProxy>* proxy) {
-        test->Shutdown();
-        delegate->reset();
-        proxy->reset();
-      },
-      base::Unretained(this),
-      base::Unretained(&delegate),
-      base::Unretained(&proxy)),
+  task_runner_->PostDelayedTask(
+      FROM_HERE,
+      base::BindOnce(
+          [](DesktopSessionAgentTest* test,
+             std::unique_ptr<FakeDelegate>* delegate,
+             std::unique_ptr<IPC::ChannelProxy>* proxy) {
+            test->Shutdown();
+            delegate->reset();
+            proxy->reset();
+          },
+          base::Unretained(this), base::Unretained(&delegate),
+          base::Unretained(&proxy)),
       base::TimeDelta::FromMilliseconds(1));
   run_loop_.Run();
 }
@@ -168,7 +173,7 @@ TEST_F(DesktopSessionAgentTest, StartProcessStatsReportWithInvalidInterval) {
 TEST_F(DesktopSessionAgentTest, StartThenStopProcessStatsReport) {
   std::unique_ptr<FakeDelegate> delegate(new FakeDelegate(task_runner_));
   std::unique_ptr<IPC::ChannelProxy> proxy;
-  ProcessStatsListener listener(base::Bind([]() {}));
+  ProcessStatsListener listener{base::DoNothing()};
   proxy = IPC::ChannelProxy::Create(
       agent_->Start(delegate->GetWeakPtr()).release(),
       IPC::Channel::MODE_CLIENT, &listener, task_runner_,
@@ -179,17 +184,18 @@ TEST_F(DesktopSessionAgentTest, StartThenStopProcessStatsReport) {
       base::TimeDelta::FromMilliseconds(1))));
   ASSERT_TRUE(proxy->Send(
       new ChromotingNetworkToAnyMsg_StopProcessStatsReport()));
-  task_runner_->PostDelayedTask(FROM_HERE, base::Bind([](
-          DesktopSessionAgentTest* test,
-          std::unique_ptr<FakeDelegate>* delegate,
-          std::unique_ptr<IPC::ChannelProxy>* proxy) {
-        test->Shutdown();
-        delegate->reset();
-        proxy->reset();
-      },
-      base::Unretained(this),
-      base::Unretained(&delegate),
-      base::Unretained(&proxy)),
+  task_runner_->PostDelayedTask(
+      FROM_HERE,
+      base::BindOnce(
+          [](DesktopSessionAgentTest* test,
+             std::unique_ptr<FakeDelegate>* delegate,
+             std::unique_ptr<IPC::ChannelProxy>* proxy) {
+            test->Shutdown();
+            delegate->reset();
+            proxy->reset();
+          },
+          base::Unretained(this), base::Unretained(&delegate),
+          base::Unretained(&proxy)),
       base::TimeDelta::FromMilliseconds(1));
   run_loop_.Run();
 }

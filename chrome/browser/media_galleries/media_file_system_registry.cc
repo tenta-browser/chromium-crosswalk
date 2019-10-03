@@ -14,8 +14,8 @@
 #include "base/files/file_path.h"
 #include "base/logging.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/stl_util.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/media_galleries/fileapi/media_file_system_backend.h"
 #include "chrome/browser/media_galleries/gallery_watch_manager.h"
 #include "chrome/browser/media_galleries/media_file_system_context.h"
@@ -29,6 +29,7 @@
 #include "components/prefs/pref_service.h"
 #include "components/storage_monitor/media_storage_util.h"
 #include "components/storage_monitor/storage_monitor.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/navigation_details.h"
 #include "content/public/browser/render_frame_host.h"
@@ -59,24 +60,26 @@ using storage_monitor::StorageMonitor;
 
 namespace {
 
-class ShutdownNotifierFactory
+class MediaFileSystemRegistryShutdownNotifierFactory
     : public BrowserContextKeyedServiceShutdownNotifierFactory {
  public:
-  static ShutdownNotifierFactory* GetInstance() {
-    return base::Singleton<ShutdownNotifierFactory>::get();
+  static MediaFileSystemRegistryShutdownNotifierFactory* GetInstance() {
+    return base::Singleton<
+        MediaFileSystemRegistryShutdownNotifierFactory>::get();
   }
 
  private:
-  friend struct base::DefaultSingletonTraits<ShutdownNotifierFactory>;
+  friend struct base::DefaultSingletonTraits<
+      MediaFileSystemRegistryShutdownNotifierFactory>;
 
-  ShutdownNotifierFactory()
+  MediaFileSystemRegistryShutdownNotifierFactory()
       : BrowserContextKeyedServiceShutdownNotifierFactory(
             "MediaFileSystemRegistry") {
     DependsOn(MediaGalleriesPreferencesFactory::GetInstance());
   }
-  ~ShutdownNotifierFactory() override {}
+  ~MediaFileSystemRegistryShutdownNotifierFactory() override {}
 
-  DISALLOW_COPY_AND_ASSIGN(ShutdownNotifierFactory);
+  DISALLOW_COPY_AND_ASSIGN(MediaFileSystemRegistryShutdownNotifierFactory);
 };
 
 struct InvalidatedGalleriesInfo {
@@ -127,9 +130,7 @@ class RPHReferenceManager {
 
     void AddWebContentsObserver(WebContents* web_contents);
     void RemoveWebContentsObserver(WebContents* web_contents);
-    bool HasWebContentsObservers() {
-      return observed_web_contentses_.size() > 0;
-    }
+    bool HasWebContentsObservers() { return !observed_web_contentses_.empty(); }
 
    private:
     void RenderProcessHostDestroyed(RenderProcessHost* host) override;
@@ -165,8 +166,8 @@ RPHReferenceManager::~RPHReferenceManager() {
 void RPHReferenceManager::ReferenceFromWebContents(
     content::WebContents* contents) {
   RenderProcessHost* rph = contents->GetMainFrame()->GetProcess();
-  if (!base::ContainsKey(observer_map_, rph)) {
-    observer_map_[rph] = base::MakeUnique<RPHObserver>(this, rph);
+  if (!base::Contains(observer_map_, rph)) {
+    observer_map_[rph] = std::make_unique<RPHObserver>(this, rph);
   }
   observer_map_[rph]->AddWebContentsObserver(contents);
 }
@@ -205,11 +206,11 @@ RPHReferenceManager::RPHObserver::~RPHObserver() {
 
 void RPHReferenceManager::RPHObserver::AddWebContentsObserver(
     WebContents* web_contents) {
-  if (base::ContainsKey(observed_web_contentses_, web_contents))
+  if (base::Contains(observed_web_contentses_, web_contents))
     return;
 
   observed_web_contentses_[web_contents] =
-      base::MakeUnique<RPHWebContentsObserver>(manager_, web_contents);
+      std::make_unique<RPHWebContentsObserver>(manager_, web_contents);
 }
 
 void RPHReferenceManager::RPHObserver::RemoveWebContentsObserver(
@@ -307,9 +308,7 @@ class ExtensionGalleriesHost
     // Extract all the device ids so we can make sure they are attached.
     MediaStorageUtil::DeviceIdSet* device_ids =
         new MediaStorageUtil::DeviceIdSet;
-    for (std::set<MediaGalleryPrefId>::const_iterator id = galleries.begin();
-         id != galleries.end();
-         ++id) {
+    for (auto id = galleries.begin(); id != galleries.end(); ++id) {
       device_ids->insert(galleries_info.find(*id)->second.device_id);
     }
     MediaStorageUtil::FilterAttachedDevices(device_ids, base::Bind(
@@ -335,7 +334,7 @@ class ExtensionGalleriesHost
 
   // Revoke the file system for |id| if this extension has created one for |id|.
   void RevokeGalleryByPrefId(MediaGalleryPrefId id) {
-    PrefIdFsInfoMap::iterator gallery = pref_id_map_.find(id);
+    auto gallery = pref_id_map_.find(id);
     if (gallery == pref_id_map_.end())
       return;
 
@@ -381,15 +380,13 @@ class ExtensionGalleriesHost
       return;
     }
 
-    for (std::set<MediaGalleryPrefId>::const_iterator pref_id_it =
-             galleries.begin();
-         pref_id_it != galleries.end();
+    for (auto pref_id_it = galleries.begin(); pref_id_it != galleries.end();
          ++pref_id_it) {
       const MediaGalleryPrefId& pref_id = *pref_id_it;
       const MediaGalleryPrefInfo& gallery_info =
           galleries_info.find(pref_id)->second;
       const std::string& device_id = gallery_info.device_id;
-      if (!base::ContainsKey(*attached_devices, device_id))
+      if (!base::Contains(*attached_devices, device_id))
         continue;
 
       PrefIdFsInfoMap::const_iterator existing_info =
@@ -420,7 +417,7 @@ class ExtensionGalleriesHost
       pref_id_map_[pref_id] = new_entry;
     }
 
-    if (result.size() == 0) {
+    if (result.empty()) {
       rph_refs_.Reset();
       CleanUp();
     }
@@ -444,7 +441,7 @@ class ExtensionGalleriesHost
       base::FilePath path = gallery.AbsolutePath();
       const std::string& device_id = gallery.device_id;
 
-      if (base::ContainsKey(pref_id_map_, gallery.pref_id)) {
+      if (base::Contains(pref_id_map_, gallery.pref_id)) {
         result = base::File::FILE_OK;
       } else if (MediaStorageUtil::CanCreateFileSystem(device_id, path) &&
                  file_system_context_->RegisterFileSystem(device_id, fs_name,
@@ -465,8 +462,8 @@ class ExtensionGalleriesHost
       rph_refs_.Reset();
       CleanUp();
     }
-    BrowserThread::PostTask(BrowserThread::IO, FROM_HERE,
-                            base::BindOnce(std::move(callback), result));
+    base::PostTaskWithTraits(FROM_HERE, {BrowserThread::IO},
+                             base::BindOnce(std::move(callback), result));
   }
 
   std::string GetTransientIdForRemovableDeviceId(const std::string& device_id) {
@@ -553,15 +550,14 @@ void MediaFileSystemRegistry::RegisterMediaFileSystemForExtension(
 
   Profile* profile = Profile::FromBrowserContext(contents->GetBrowserContext());
   MediaGalleriesPreferences* preferences = GetPreferences(profile);
-  MediaGalleriesPrefInfoMap::const_iterator gallery =
-      preferences->known_galleries().find(pref_id);
+  auto gallery = preferences->known_galleries().find(pref_id);
   MediaGalleryPrefIdSet permitted_galleries =
       preferences->GalleriesForExtension(*extension);
 
   if (gallery == preferences->known_galleries().end() ||
-      !base::ContainsKey(permitted_galleries, pref_id)) {
-    BrowserThread::PostTask(
-        BrowserThread::IO, FROM_HERE,
+      !base::Contains(permitted_galleries, pref_id)) {
+    base::PostTaskWithTraits(
+        FROM_HERE, {BrowserThread::IO},
         base::BindOnce(std::move(callback), base::File::FILE_ERROR_NOT_FOUND));
     return;
   }
@@ -579,13 +575,14 @@ void MediaFileSystemRegistry::RegisterMediaFileSystemForExtension(
 MediaGalleriesPreferences* MediaFileSystemRegistry::GetPreferences(
     Profile* profile) {
   // Create an empty ExtensionHostMap for this profile on first initialization.
-  if (!base::ContainsKey(extension_hosts_map_, profile)) {
+  if (!base::Contains(extension_hosts_map_, profile)) {
     extension_hosts_map_[profile] = ExtensionHostMap();
-    DCHECK(!base::ContainsKey(profile_subscription_map_, profile));
+    DCHECK(!base::Contains(profile_subscription_map_, profile));
     profile_subscription_map_[profile] =
-        ShutdownNotifierFactory::GetInstance()->Get(profile)->Subscribe(
-            base::Bind(&MediaFileSystemRegistry::OnProfileShutdown,
-                       base::Unretained(this), profile));
+        MediaFileSystemRegistryShutdownNotifierFactory::GetInstance()
+            ->Get(profile)
+            ->Subscribe(base::Bind(&MediaFileSystemRegistry::OnProfileShutdown,
+                                   base::Unretained(this), profile));
     media_galleries::UsageCount(media_galleries::PROFILES_WITH_USAGE);
   }
 
@@ -609,10 +606,8 @@ void MediaFileSystemRegistry::OnRemovableStorageDetached(
   // a second step.
   std::vector<InvalidatedGalleriesInfo> invalid_galleries_info;
 
-  for (ExtensionGalleriesHostMap::iterator profile_it =
-           extension_hosts_map_.begin();
-       profile_it != extension_hosts_map_.end();
-       ++profile_it) {
+  for (auto profile_it = extension_hosts_map_.begin();
+       profile_it != extension_hosts_map_.end(); ++profile_it) {
     MediaGalleriesPreferences* preferences = GetPreferences(profile_it->first);
     // If |preferences| is not yet initialized, it won't contain any galleries.
     if (!preferences->IsInitialized())
@@ -634,12 +629,11 @@ void MediaFileSystemRegistry::OnRemovableStorageDetached(
   }
 
   for (size_t i = 0; i < invalid_galleries_info.size(); i++) {
-    for (std::set<ExtensionGalleriesHost*>::const_iterator extension_host_it =
+    for (auto extension_host_it =
              invalid_galleries_info[i].extension_hosts.begin();
          extension_host_it != invalid_galleries_info[i].extension_hosts.end();
          ++extension_host_it) {
-      for (std::set<MediaGalleryPrefId>::const_iterator pref_id_it =
-               invalid_galleries_info[i].pref_ids.begin();
+      for (auto pref_id_it = invalid_galleries_info[i].pref_ids.begin();
            pref_id_it != invalid_galleries_info[i].pref_ids.end();
            ++pref_id_it) {
         (*extension_host_it)->RevokeGalleryByPrefId(*pref_id_it);
@@ -670,10 +664,11 @@ class MediaFileSystemRegistry::MediaFileSystemContextImpl
     ExternalMountPoints::GetSystemInstance()->RevokeFileSystem(fs_name);
 
 #if defined(OS_WIN) || defined(OS_MACOSX) || defined(OS_CHROMEOS)
-    BrowserThread::PostTask(BrowserThread::IO, FROM_HERE, base::Bind(
-        &MTPDeviceMapService::RevokeMTPFileSystem,
-        base::Unretained(MTPDeviceMapService::GetInstance()),
-        fs_name));
+    base::PostTaskWithTraits(
+        FROM_HERE, {BrowserThread::IO},
+        base::BindOnce(&MTPDeviceMapService::RevokeMTPFileSystem,
+                       base::Unretained(MTPDeviceMapService::GetInstance()),
+                       fs_name));
 #endif
   }
 
@@ -719,11 +714,11 @@ class MediaFileSystemRegistry::MediaFileSystemContextImpl
         storage::FileSystemMountOption(),
         path);
     CHECK(result);
-    BrowserThread::PostTask(
-        BrowserThread::IO, FROM_HERE,
-        base::Bind(&MTPDeviceMapService::RegisterMTPFileSystem,
-                   base::Unretained(MTPDeviceMapService::GetInstance()),
-                   path.value(), fs_name, true /* read only */));
+    base::PostTaskWithTraits(
+        FROM_HERE, {BrowserThread::IO},
+        base::BindOnce(&MTPDeviceMapService::RegisterMTPFileSystem,
+                       base::Unretained(MTPDeviceMapService::GetInstance()),
+                       path.value(), fs_name, true /* read only */));
     return result;
 #else
     NOTREACHED();
@@ -754,8 +749,7 @@ void MediaFileSystemRegistry::OnPermissionRemoved(
       extension_hosts_map_.find(profile);
   DCHECK(host_map_it != extension_hosts_map_.end());
   const ExtensionHostMap& extension_host_map = host_map_it->second;
-  ExtensionHostMap::const_iterator gallery_host_it =
-      extension_host_map.find(extension_id);
+  auto gallery_host_it = extension_host_map.find(extension_id);
   if (gallery_host_it == extension_host_map.end())
     return;
   gallery_host_it->second->RevokeGalleryByPrefId(pref_id);
@@ -779,17 +773,15 @@ void MediaFileSystemRegistry::OnGalleryRemoved(
   // even delete |extension_host_map| altogether. So do this in two loops to
   // avoid using an invalidated iterator or deleted map.
   std::vector<const extensions::Extension*> extensions;
-  for (ExtensionHostMap::const_iterator it = extension_host_map.begin();
-       it != extension_host_map.end();
+  for (auto it = extension_host_map.begin(); it != extension_host_map.end();
        ++it) {
     extensions.push_back(
         extension_registry->enabled_extensions().GetByID(it->first));
   }
   for (size_t i = 0; i < extensions.size(); ++i) {
-    if (!base::ContainsKey(extension_hosts_map_, profile))
+    if (!base::Contains(extension_hosts_map_, profile))
       break;
-    ExtensionHostMap::const_iterator gallery_host_it =
-        extension_host_map.find(extensions[i]->id());
+    auto gallery_host_it = extension_host_map.find(extensions[i]->id());
     if (gallery_host_it == extension_host_map.end())
       continue;
     gallery_host_it->second->RevokeGalleryByPrefId(pref_id);
@@ -800,8 +792,7 @@ ExtensionGalleriesHost* MediaFileSystemRegistry::GetExtensionGalleryHost(
     Profile* profile,
     MediaGalleriesPreferences* preferences,
     const std::string& extension_id) {
-  ExtensionGalleriesHostMap::iterator extension_hosts =
-      extension_hosts_map_.find(profile);
+  auto extension_hosts = extension_hosts_map_.find(profile);
   // GetPreferences(), which had to be called because preferences is an
   // argument, ensures that profile is in the map.
   DCHECK(extension_hosts != extension_hosts_map_.end());
@@ -827,8 +818,7 @@ void MediaFileSystemRegistry::OnExtensionGalleriesHostEmpty(
     Profile* profile, const std::string& extension_id) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
 
-  ExtensionGalleriesHostMap::iterator extension_hosts =
-      extension_hosts_map_.find(profile);
+  auto extension_hosts = extension_hosts_map_.find(profile);
   DCHECK(extension_hosts != extension_hosts_map_.end());
   ExtensionHostMap::size_type erase_count =
       extension_hosts->second.erase(extension_id);

@@ -16,25 +16,23 @@
 
 #include "base/logging.h"
 #include "base/mac/foundation_util.h"
+#include "base/stl_util.h"
 #include "base/strings/string16.h"
 #include "base/strings/utf_string_conversions.h"
 
 namespace device {
 
-namespace {
+XboxDataFetcher::PendingController::PendingController(
+    XboxDataFetcher* fetcher,
+    std::unique_ptr<XboxControllerMac> controller)
+    : fetcher(fetcher), controller(std::move(controller)) {}
 
-void CopyToUString(UChar* dest, size_t dest_length, base::string16 src) {
-  static_assert(sizeof(base::string16::value_type) == sizeof(UChar),
-                "Mismatched string16/WebUChar size.");
-
-  const size_t str_to_copy = std::min(src.size(), dest_length - 1);
-  src.copy(dest, str_to_copy);
-  std::fill(dest + str_to_copy, dest + dest_length, 0);
+XboxDataFetcher::PendingController::~PendingController() {
+  if (controller)
+    controller->Shutdown();
 }
 
-}  // namespace
-
-XboxDataFetcher::XboxDataFetcher() : listening_(false), source_(NULL) {}
+XboxDataFetcher::XboxDataFetcher() = default;
 
 XboxDataFetcher::~XboxDataFetcher() {
   while (!controllers_.empty()) {
@@ -59,49 +57,51 @@ void XboxDataFetcher::PlayEffect(
     int source_id,
     mojom::GamepadHapticEffectType type,
     mojom::GamepadEffectParametersPtr params,
-    mojom::GamepadHapticsManager::PlayVibrationEffectOnceCallback callback) {
+    mojom::GamepadHapticsManager::PlayVibrationEffectOnceCallback callback,
+    scoped_refptr<base::SequencedTaskRunner> callback_runner) {
   XboxControllerMac* controller = ControllerForLocation(source_id);
   if (!controller) {
-    std::move(callback).Run(
+    RunVibrationCallback(
+        std::move(callback), std::move(callback_runner),
         mojom::GamepadHapticsResult::GamepadHapticsResultError);
     return;
   }
 
-  controller->PlayEffect(type, std::move(params), std::move(callback));
+  controller->PlayEffect(type, std::move(params), std::move(callback),
+                         std::move(callback_runner));
 }
 
 void XboxDataFetcher::ResetVibration(
     int source_id,
-    mojom::GamepadHapticsManager::ResetVibrationActuatorCallback callback) {
+    mojom::GamepadHapticsManager::ResetVibrationActuatorCallback callback,
+    scoped_refptr<base::SequencedTaskRunner> callback_runner) {
   XboxControllerMac* controller = ControllerForLocation(source_id);
   if (!controller) {
-    std::move(callback).Run(
+    RunVibrationCallback(
+        std::move(callback), std::move(callback_runner),
         mojom::GamepadHapticsResult::GamepadHapticsResultError);
     return;
   }
 
-  controller->ResetVibration(std::move(callback));
+  controller->ResetVibration(std::move(callback), std::move(callback_runner));
 }
 
 void XboxDataFetcher::OnAddedToProvider() {
   RegisterForNotifications();
 }
 
+// static
 void XboxDataFetcher::DeviceAdded(void* context, io_iterator_t iterator) {
   DCHECK(context);
   XboxDataFetcher* fetcher = static_cast<XboxDataFetcher*>(context);
   io_service_t ref;
   while ((ref = IOIteratorNext(iterator))) {
     base::mac::ScopedIOObject<io_service_t> scoped_ref(ref);
-    XboxControllerMac* controller = new XboxControllerMac(fetcher);
-    if (controller->OpenDevice(ref)) {
-      fetcher->AddController(controller);
-    } else {
-      delete controller;
-    }
+    fetcher->TryOpenDevice(ref);
   }
 }
 
+// static
 void XboxDataFetcher::DeviceRemoved(void* context, io_iterator_t iterator) {
   DCHECK(context);
   XboxDataFetcher* fetcher = static_cast<XboxDataFetcher*>(context);
@@ -118,10 +118,55 @@ void XboxDataFetcher::DeviceRemoved(void* context, io_iterator_t iterator) {
   }
 }
 
+// static
+void XboxDataFetcher::InterestCallback(void* context,
+                                       io_service_t service,
+                                       IOMessage message_type,
+                                       void* message_argument) {
+  if (message_type == kIOMessageServiceWasClosed) {
+    PendingController* pending = static_cast<PendingController*>(context);
+    pending->fetcher->PendingControllerBecameAvailable(service, pending);
+  }
+}
+
+void XboxDataFetcher::PendingControllerBecameAvailable(
+    io_service_t service,
+    PendingController* pending) {
+  // Destroying the PendingController object unregisters our interest
+  // notification.
+  auto it = pending_controllers_.find(pending);
+  if (it != pending_controllers_.end()) {
+    pending_controllers_.erase(it);
+  }
+  TryOpenDevice(service);
+}
+
+bool XboxDataFetcher::TryOpenDevice(io_service_t service) {
+  auto pending = std::make_unique<PendingController>(
+      this, std::make_unique<XboxControllerMac>(this));
+  bool did_register_interest =
+      RegisterForInterestNotifications(service, pending.get());
+
+  auto* controller = pending->controller.get();
+  XboxControllerMac::OpenDeviceResult result = controller->OpenDevice(service);
+  if (result == XboxControllerMac::OpenDeviceResult::OPEN_SUCCEEDED) {
+    AddController(pending->controller.release());
+    return true;
+  }
+
+  if (did_register_interest &&
+      result ==
+          XboxControllerMac::OpenDeviceResult::OPEN_FAILED_EXCLUSIVE_ACCESS) {
+    pending_controllers_.insert(std::move(pending));
+  }
+  return false;
+}
+
 bool XboxDataFetcher::RegisterForNotifications() {
   if (listening_)
     return true;
-  port_.reset(IONotificationPortCreate(kIOMasterPortDefault));
+  if (port_ == nullptr)
+    port_.reset(IONotificationPortCreate(kIOMasterPortDefault));
   if (!port_.is_valid())
     return false;
   source_ = IONotificationPortGetRunLoopSource(port_.get());
@@ -162,6 +207,13 @@ bool XboxDataFetcher::RegisterForNotifications() {
           XboxControllerMac::kVendorMicrosoft,
           XboxControllerMac::kProductXbox360Controller,
           &xbox_360_device_added_iter_, &xbox_360_device_removed_iter_))
+    return false;
+
+  if (!RegisterForDeviceNotifications(
+          XboxControllerMac::kVendorMicrosoft,
+          XboxControllerMac::kProductXboxAdaptiveController,
+          &xbox_adaptive_device_added_iter_,
+          &xbox_adaptive_device_removed_iter_))
     return false;
 
   return true;
@@ -209,6 +261,20 @@ bool XboxDataFetcher::RegisterForDeviceNotifications(
   return true;
 }
 
+bool XboxDataFetcher::RegisterForInterestNotifications(
+    io_service_t service,
+    PendingController* pending) {
+  if (port_ == nullptr)
+    port_.reset(IONotificationPortCreate(kIOMasterPortDefault));
+  if (!port_.is_valid())
+    return false;
+
+  kern_return_t kr = IOServiceAddInterestNotification(
+      port_.get(), service, kIOGeneralInterest, InterestCallback, pending,
+      pending->notify.InitializeInto());
+  return kr == KERN_SUCCESS;
+}
+
 void XboxDataFetcher::UnregisterFromNotifications() {
   if (!listening_)
     return;
@@ -216,6 +282,7 @@ void XboxDataFetcher::UnregisterFromNotifications() {
   if (source_)
     CFRunLoopSourceInvalidate(source_);
   port_.reset();
+  pending_controllers_.clear();
 }
 
 XboxControllerMac* XboxDataFetcher::ControllerForLocation(UInt32 location_id) {
@@ -228,6 +295,7 @@ XboxControllerMac* XboxDataFetcher::ControllerForLocation(UInt32 location_id) {
 }
 
 void XboxDataFetcher::AddController(XboxControllerMac* controller) {
+  DCHECK(controller);
   DCHECK(!ControllerForLocation(controller->location_id()))
       << "Controller with location ID " << controller->location_id()
       << " already exists in the set of controllers.";
@@ -242,25 +310,23 @@ void XboxDataFetcher::AddController(XboxControllerMac* controller) {
   controller->SetLEDPattern((XboxControllerMac::LEDPattern)(
       XboxControllerMac::LED_FLASH_TOP_LEFT + controller->location_id()));
 
-  CopyToUString(state->data.id, arraysize(state->data.id),
-                base::UTF8ToUTF16(controller->GetIdString()));
-  CopyToUString(state->data.mapping, arraysize(state->data.mapping),
-                base::UTF8ToUTF16("standard"));
-
+  state->data.SetID(base::UTF8ToUTF16(controller->GetIdString()));
+  state->data.mapping = GamepadMapping::kStandard;
   state->data.connected = true;
   state->data.axes_length = 4;
   state->data.buttons_length = 17;
-  state->data.timestamp = 0;
+  state->data.timestamp = CurrentTimeInMicroseconds();
   state->mapper = 0;
   state->axis_mask = 0;
   state->button_mask = 0;
 
-  // Assume all Xbox gamepads support vibration effects.
   state->data.vibration_actuator.type = GamepadHapticActuatorType::kDualRumble;
-  state->data.vibration_actuator.not_null = true;
+  state->data.vibration_actuator.not_null = controller->SupportsVibration();
 }
 
 void XboxDataFetcher::RemoveController(XboxControllerMac* controller) {
+  DCHECK(controller);
+  controller->Shutdown();
   controllers_.erase(controller);
   delete controller;
 }
@@ -291,9 +357,11 @@ void XboxDataFetcher::XboxControllerGotData(
     pad.buttons[i].pressed = data.buttons[i];
     pad.buttons[i].value = data.buttons[i] ? 1.0f : 0.0f;
   }
-  pad.buttons[6].pressed = data.triggers[0] > kDefaultButtonPressedThreshold;
+  pad.buttons[6].pressed =
+      data.triggers[0] > GamepadButton::kDefaultButtonPressedThreshold;
   pad.buttons[6].value = data.triggers[0];
-  pad.buttons[7].pressed = data.triggers[1] > kDefaultButtonPressedThreshold;
+  pad.buttons[7].pressed =
+      data.triggers[1] > GamepadButton::kDefaultButtonPressedThreshold;
   pad.buttons[7].value = data.triggers[1];
   for (size_t i = 8; i < 16; i++) {
     pad.buttons[i].pressed = data.buttons[i - 2];
@@ -304,11 +372,11 @@ void XboxDataFetcher::XboxControllerGotData(
     pad.buttons[16].pressed = data.buttons[14];
     pad.buttons[16].value = data.buttons[14] ? 1.0f : 0.0f;
   }
-  for (size_t i = 0; i < arraysize(data.axes); i++) {
+  for (size_t i = 0; i < base::size(data.axes); i++) {
     pad.axes[i] = data.axes[i];
   }
 
-  pad.timestamp = (base::TimeTicks::Now() - base::TimeTicks()).InMicroseconds();
+  pad.timestamp = CurrentTimeInMicroseconds();
 }
 
 void XboxDataFetcher::XboxControllerGotGuideData(XboxControllerMac* controller,
@@ -322,7 +390,7 @@ void XboxDataFetcher::XboxControllerGotGuideData(XboxControllerMac* controller,
   pad.buttons[16].pressed = guide;
   pad.buttons[16].value = guide ? 1.0f : 0.0f;
 
-  pad.timestamp = (base::TimeTicks::Now() - base::TimeTicks()).InMicroseconds();
+  pad.timestamp = CurrentTimeInMicroseconds();
 }
 
 void XboxDataFetcher::XboxControllerError(XboxControllerMac* controller) {

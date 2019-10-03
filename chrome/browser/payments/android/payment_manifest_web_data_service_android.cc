@@ -9,13 +9,12 @@
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/numerics/safe_conversions.h"
+#include "chrome/android/chrome_jni_headers/PaymentManifestWebDataService_jni.h"
 #include "chrome/browser/profiles/profile_manager.h"
 #include "chrome/browser/web_data_service_factory.h"
 #include "components/keyed_service/core/service_access_type.h"
 #include "components/webdata/common/web_data_results.h"
-#include "jni/PaymentManifestWebDataService_jni.h"
 
 namespace payments {
 
@@ -101,6 +100,17 @@ void PaymentManifestWebDataServiceAndroid::OnPaymentMethodManifestRequestDone(
 void PaymentManifestWebDataServiceAndroid::Destroy(
     JNIEnv* env,
     const base::android::JavaParamRef<jobject>& unused_obj) {
+  scoped_refptr<payments::PaymentManifestWebDataService> web_data_service =
+      WebDataServiceFactory::GetPaymentManifestWebDataForProfile(
+          ProfileManager::GetActiveUserProfile(),
+          ServiceAccessType::EXPLICIT_ACCESS);
+  if (web_data_service) {
+    for (const auto& request : web_data_service_requests_) {
+      web_data_service->CancelRequest(request.first);
+    }
+    web_data_service_requests_.clear();
+  }
+
   delete this;
 }
 
@@ -138,12 +148,9 @@ void PaymentManifestWebDataServiceAndroid::AddPaymentWebAppManifest(
 
   std::vector<WebAppManifestSection> manifest;
 
-  jsize jcount_of_sections = env->GetArrayLength(jmanifest_sections.obj());
-  for (jsize i = 0; i < jcount_of_sections; i++) {
+  for (auto jsection : jmanifest_sections.ReadElements<jobject>()) {
     WebAppManifestSection section;
 
-    base::android::ScopedJavaLocalRef<jobject> jsection(
-        env, env->GetObjectArrayElement(jmanifest_sections.obj(), i));
     section.id = base::android::ConvertJavaStringToUTF8(
         Java_PaymentManifestWebDataService_getIdFromSection(env, jsection));
     section.min_version = static_cast<int64_t>(
@@ -153,15 +160,9 @@ void PaymentManifestWebDataServiceAndroid::AddPaymentWebAppManifest(
     base::android::ScopedJavaLocalRef<jobjectArray> jsection_fingerprints(
         Java_PaymentManifestWebDataService_getFingerprintsFromSection(
             env, jsection));
-    jsize jcount_of_fingerprints =
-        env->GetArrayLength(jsection_fingerprints.obj());
-    for (jsize j = 0; j < jcount_of_fingerprints; j++) {
+    for (auto jfingerprint : jsection_fingerprints.ReadElements<jbyteArray>()) {
       std::vector<uint8_t> fingerprint;
-      base::android::ScopedJavaLocalRef<jbyteArray> jfingerprint(
-          env, (jbyteArray)env->GetObjectArrayElement(
-                   jsection_fingerprints.obj(), j));
-      base::android::JavaByteArrayToByteVector(env, jfingerprint.obj(),
-                                               &fingerprint);
+      base::android::JavaByteArrayToByteVector(env, jfingerprint, &fingerprint);
       section.fingerprints.emplace_back(fingerprint);
     }
 
@@ -187,7 +188,7 @@ bool PaymentManifestWebDataServiceAndroid::GetPaymentMethodManifest(
       web_data_service->GetPaymentMethodManifest(
           base::android::ConvertJavaStringToUTF8(env, jmethod_name), this);
   web_data_service_requests_[handle] =
-      base::MakeUnique<base::android::ScopedJavaGlobalRef<jobject>>(jcallback);
+      std::make_unique<base::android::ScopedJavaGlobalRef<jobject>>(jcallback);
 
   return true;
 }
@@ -208,7 +209,7 @@ bool PaymentManifestWebDataServiceAndroid::GetPaymentWebAppManifest(
       web_data_service->GetPaymentWebAppManifest(
           base::android::ConvertJavaStringToUTF8(env, japp_package_name), this);
   web_data_service_requests_[handle] =
-      base::MakeUnique<base::android::ScopedJavaGlobalRef<jobject>>(jcallback);
+      std::make_unique<base::android::ScopedJavaGlobalRef<jobject>>(jcallback);
 
   return true;
 }

@@ -2,8 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#ifndef DEVICE_HID_HID_CONNECTION_WIN_H_
-#define DEVICE_HID_HID_CONNECTION_WIN_H_
+#ifndef SERVICES_DEVICE_HID_HID_CONNECTION_WIN_H_
+#define SERVICES_DEVICE_HID_HID_CONNECTION_WIN_H_
 
 #include <windows.h>
 #include <stddef.h>
@@ -21,32 +21,32 @@ class PendingHidTransfer;
 
 class HidConnectionWin : public HidConnection {
  public:
-  HidConnectionWin(scoped_refptr<HidDeviceInfo> device_info,
-                   base::win::ScopedHandle file);
+  static scoped_refptr<HidConnection> Create(
+      scoped_refptr<HidDeviceInfo> device_info,
+      base::win::ScopedHandle file);
 
  private:
   friend class HidServiceWin;
   friend class PendingHidTransfer;
 
+  HidConnectionWin(scoped_refptr<HidDeviceInfo> device_info,
+                   base::win::ScopedHandle file);
   ~HidConnectionWin() override;
 
   // HidConnection implementation.
   void PlatformClose() override;
-  void PlatformRead(ReadCallback callback) override;
-  void PlatformWrite(scoped_refptr<net::IOBuffer> buffer,
-                     size_t size,
+  void PlatformWrite(scoped_refptr<base::RefCountedBytes> buffer,
                      WriteCallback callback) override;
   void PlatformGetFeatureReport(uint8_t report_id,
                                 ReadCallback callback) override;
-  void PlatformSendFeatureReport(scoped_refptr<net::IOBuffer> buffer,
-                                 size_t size,
+  void PlatformSendFeatureReport(scoped_refptr<base::RefCountedBytes> buffer,
                                  WriteCallback callback) override;
 
-  void OnReadComplete(scoped_refptr<net::IOBuffer> buffer,
-                      ReadCallback callback,
-                      PendingHidTransfer* transfer,
-                      bool signaled);
-  void OnReadFeatureComplete(scoped_refptr<net::IOBuffer> buffer,
+  void ReadNextInputReport();
+  void OnReadInputReport(scoped_refptr<base::RefCountedBytes> buffer,
+                         PendingHidTransfer* transfer,
+                         bool signaled);
+  void OnReadFeatureComplete(scoped_refptr<base::RefCountedBytes> buffer,
                              ReadCallback callback,
                              PendingHidTransfer* transfer,
                              bool signaled);
@@ -66,4 +66,4 @@ class HidConnectionWin : public HidConnection {
 
 }  // namespace device
 
-#endif  // DEVICE_HID_HID_CONNECTION_WIN_H_
+#endif  // SERVICES_DEVICE_HID_HID_CONNECTION_WIN_H_

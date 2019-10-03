@@ -8,7 +8,6 @@ import android.content.Context;
 import android.content.Intent;
 import android.graphics.Typeface;
 import android.net.Uri;
-import android.os.AsyncTask;
 import android.text.Spannable;
 import android.text.SpannableString;
 import android.text.TextUtils;
@@ -19,9 +18,13 @@ import android.webkit.MimeTypeMap;
 
 import org.chromium.base.ContextUtils;
 import org.chromium.base.annotations.CalledByNative;
+import org.chromium.base.task.AsyncTask;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.download.DownloadManagerService;
+import org.chromium.chrome.browser.download.DownloadMetrics;
 import org.chromium.chrome.browser.download.DownloadUtils;
+import org.chromium.ui.modaldialog.ModalDialogProperties;
+import org.chromium.ui.modelutil.PropertyModel;
 
 import java.io.File;
 
@@ -55,7 +58,7 @@ public class DuplicateDownloadInfoBar extends ConfirmInfoBar {
      */
     private DuplicateDownloadInfoBar(Context context, String filePath, boolean isOfflinePage,
             String pageUrl, boolean isIncognito, boolean duplicateRequestExists) {
-        super(R.drawable.infobar_downloading, null, null, null,
+        super(R.drawable.infobar_downloading, R.color.infobar_icon_drawable_color, null, null, null,
                 context.getString(R.string.duplicate_download_infobar_download_button),
                 context.getString(R.string.cancel));
         mFilePath = filePath;
@@ -71,6 +74,7 @@ public class DuplicateDownloadInfoBar extends ConfirmInfoBar {
      * @param template Template of the text to be displayed.
      */
     private CharSequence getDownloadMessageText(final Context context, final String template) {
+        // TODO(qinmin): fix the case that mFilePath is a content Uri.
         final File file = new File(mFilePath);
         final Uri fileUri = Uri.fromFile(file);
         final String mimeType = getMimeTypeFromUri(fileUri);
@@ -78,22 +82,24 @@ public class DuplicateDownloadInfoBar extends ConfirmInfoBar {
         return getMessageText(template, filename, new ClickableSpan() {
             @Override
             public void onClick(View view) {
-                new AsyncTask<Void, Void, Boolean>() {
+                new AsyncTask<Boolean>() {
                     @Override
-                    protected Boolean doInBackground(Void... params) {
+                    protected Boolean doInBackground() {
                         return new File(mFilePath).exists();
                     }
 
                     @Override
                     protected void onPostExecute(Boolean fileExists) {
                         if (fileExists) {
-                            DownloadUtils.openFile(file, mimeType, null, mIsIncognito, null, null);
+                            DownloadUtils.openFile(mFilePath, mimeType, null, mIsIncognito, null,
+                                    null, DownloadMetrics.DownloadOpenSource.INFO_BAR);
                         } else {
                             DownloadManagerService.openDownloadsPage(
                                     ContextUtils.getApplicationContext());
                         }
                     }
-                }.execute();
+                }
+                        .executeOnExecutor(AsyncTask.THREAD_POOL_EXECUTOR);
             }
         });
     }
@@ -126,13 +132,13 @@ public class DuplicateDownloadInfoBar extends ConfirmInfoBar {
      * @param clickableSpan Action to perform when clicking on the file name.
      * @return message to be displayed on the infobar.
      */
-    private CharSequence getMessageText(final String template, final String fileName,
-            final ClickableSpan clickableSpan) {
+    private CharSequence getMessageText(
+            final String template, final String fileName, final ClickableSpan clickableSpan) {
         final SpannableString formattedFilePath = new SpannableString(fileName);
         formattedFilePath.setSpan(new StyleSpan(Typeface.BOLD), 0, fileName.length(),
                 Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
-        formattedFilePath.setSpan(clickableSpan, 0, fileName.length(),
-                Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
+        formattedFilePath.setSpan(
+                clickableSpan, 0, fileName.length(), Spannable.SPAN_EXCLUSIVE_EXCLUSIVE);
         return TextUtils.expandTemplate(template, formattedFilePath);
     }
 
@@ -158,5 +164,24 @@ public class DuplicateDownloadInfoBar extends ConfirmInfoBar {
         } else {
             layout.setMessage(getDownloadMessageText(context, template));
         }
+    }
+
+    @Override
+    public boolean supportsTouchlessMode() {
+        return true;
+    }
+
+    @Override
+    public PropertyModel createModel() {
+        PropertyModel model = super.createModel();
+
+        String template = getContext().getString(R.string.duplicate_download_request_infobar_text);
+
+        model.set(ModalDialogProperties.TITLE,
+                getContext().getResources().getString(R.string.menu_download));
+        model.set(ModalDialogProperties.MESSAGE,
+                getDownloadMessageText(getContext(), template).toString());
+
+        return model;
     }
 }

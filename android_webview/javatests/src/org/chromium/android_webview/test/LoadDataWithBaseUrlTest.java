@@ -7,6 +7,7 @@ package org.chromium.android_webview.test;
 import android.graphics.Bitmap;
 import android.support.test.InstrumentationRegistry;
 import android.support.test.filters.SmallTest;
+import android.util.Pair;
 
 import org.junit.Assert;
 import org.junit.Before;
@@ -15,18 +16,25 @@ import org.junit.Test;
 import org.junit.runner.RunWith;
 
 import org.chromium.android_webview.AwContents;
+import org.chromium.android_webview.AwCookieManager;
 import org.chromium.android_webview.AwSettings;
+import org.chromium.android_webview.AwWebResourceResponse;
 import org.chromium.android_webview.test.util.CommonResources;
+import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.Restriction;
-import org.chromium.content.browser.test.util.HistoryUtils;
-import org.chromium.content.browser.test.util.TestCallbackHelperContainer;
 import org.chromium.content_public.browser.WebContents;
+import org.chromium.content_public.browser.test.util.HistoryUtils;
+import org.chromium.content_public.browser.test.util.TestCallbackHelperContainer;
 import org.chromium.content_public.common.ContentUrlConstants;
 import org.chromium.net.test.util.TestWebServer;
 
+import java.io.ByteArrayInputStream;
 import java.io.File;
 import java.io.FileOutputStream;
+import java.io.InputStream;
+import java.nio.charset.Charset;
+import java.util.List;
 
 /**
  * Tests for the {@link android.webkit.WebView#loadDataWithBaseURL(String, String, String, String,
@@ -39,20 +47,23 @@ public class LoadDataWithBaseUrlTest {
 
     private TestAwContentsClient mContentsClient;
     private AwContents mAwContents;
+    private AwCookieManager mCookieManager;
     private WebContents mWebContents;
 
     @Before
     public void setUp() throws Exception {
         mContentsClient = new TestAwContentsClient();
+        mCookieManager = new AwCookieManager();
         final AwTestContainerView testContainerView =
                 mActivityTestRule.createAwTestContainerViewOnMainSync(mContentsClient);
         mAwContents = testContainerView.getAwContents();
         mWebContents = mAwContents.getWebContents();
+        mCookieManager.setAcceptCookie(true);
     }
 
-    protected void loadDataWithBaseUrlSync(
-            final String data, final String mimeType, final boolean isBase64Encoded,
-            final String baseUrl, final String historyUrl) throws Throwable {
+    protected void loadDataWithBaseUrlSync(final String data, final String mimeType,
+            final boolean isBase64Encoded, final String baseUrl, final String historyUrl)
+            throws Throwable {
         mActivityTestRule.loadDataWithBaseUrlSync(mAwContents,
                 mContentsClient.getOnPageFinishedHelper(), data, mimeType, isBase64Encoded, baseUrl,
                 historyUrl);
@@ -62,6 +73,7 @@ public class LoadDataWithBaseUrlTest {
     private static final String SCRIPT_LOADED = "Loaded";
     private static final String SCRIPT_NOT_LOADED = "Not loaded";
     private static final String SCRIPT_JS = "script_was_loaded = true;";
+    private static final String SIMPLE_HTML = "<html><body></body></html>";
 
     private String getScriptFileTestPageHtml(final String scriptUrl) {
         return "<html>"
@@ -123,8 +135,8 @@ public class LoadDataWithBaseUrlTest {
     public void testScriptLoad() throws Throwable {
         TestWebServer webServer = TestWebServer.start();
         try {
-            final String scriptUrl = webServer.setResponse(SCRIPT_FILE, SCRIPT_JS,
-                    CommonResources.getTextJavascriptHeaders(true));
+            final String scriptUrl = webServer.setResponse(
+                    SCRIPT_FILE, SCRIPT_JS, CommonResources.getTextJavascriptHeaders(true));
             final String pageHtml = getScriptFileTestPageHtml(scriptUrl);
 
             mActivityTestRule.getAwSettingsOnUiThread(mAwContents).setJavaScriptEnabled(true);
@@ -188,6 +200,53 @@ public class LoadDataWithBaseUrlTest {
     @Test
     @SmallTest
     @Feature({"AndroidWebView"})
+    public void testSetCookieInIframe() throws Throwable {
+        // Regression test for http://crrev/c/822572 (the first half of crbug.com/793648).
+        TestWebServer webServer = TestWebServer.start();
+        try {
+            List<Pair<String, String>> responseHeaders = CommonResources.getTextHtmlHeaders(true);
+            final String cookie = "key=value";
+            responseHeaders.add(Pair.create("Set-Cookie", cookie));
+            final String frameUrl = webServer.setResponse("/" + CommonResources.ABOUT_FILENAME,
+                    CommonResources.ABOUT_HTML, responseHeaders);
+            final String html = getCrossOriginAccessTestPageHtml(frameUrl);
+            final String baseUrl = frameUrl;
+
+            loadDataWithBaseUrlSync(html, "text/html", false, baseUrl, null);
+            Assert.assertEquals(cookie, mCookieManager.getCookie(frameUrl));
+        } finally {
+            webServer.shutdown();
+        }
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"AndroidWebView"})
+    public void testThirdPartyCookieInIframe() throws Throwable {
+        // Regression test for http://crrev/c/827018 (the second half of crbug.com/793648).
+        mActivityTestRule.getAwSettingsOnUiThread(mAwContents).setAcceptThirdPartyCookies(true);
+        TestWebServer webServer = TestWebServer.start();
+        try {
+            List<Pair<String, String>> responseHeaders = CommonResources.getTextHtmlHeaders(true);
+            final String cookie = "key=value";
+            final String expectedCookieHeader = "Cookie: " + cookie;
+            final String frameUrl = webServer.setResponse("/" + CommonResources.ABOUT_FILENAME,
+                    CommonResources.ABOUT_HTML, responseHeaders);
+            mCookieManager.setCookie(frameUrl, cookie);
+            final String html = getCrossOriginAccessTestPageHtml(frameUrl);
+            final String baseUrl = "http://www.google.com/"; // Treat the iframe as 3P.
+            loadDataWithBaseUrlSync(html, "text/html", false, baseUrl, null);
+            TestWebServer.HTTPRequest request =
+                    webServer.getLastRequest("/" + CommonResources.ABOUT_FILENAME);
+            Assert.assertEquals("Should send 3P cookies", cookie, request.headerValue("Cookie"));
+        } finally {
+            webServer.shutdown();
+        }
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"AndroidWebView"})
     public void testInvalidBaseUrl() throws Throwable {
         final String invalidBaseUrl = "http://";
         mActivityTestRule.getAwSettingsOnUiThread(mAwContents).setJavaScriptEnabled(true);
@@ -209,9 +268,8 @@ public class LoadDataWithBaseUrlTest {
                 mContentsClient.getOnPageFinishedHelper();
         final int pageStartedCount = onPageStartedHelper.getCallCount();
         final int pageFinishedCount = onPageFinishedHelper.getCallCount();
-        mActivityTestRule.loadDataWithBaseUrlAsync(
-                mAwContents, CommonResources.ABOUT_HTML, "text/html", false,
-                baseUrl, ContentUrlConstants.ABOUT_BLANK_DISPLAY_URL);
+        mActivityTestRule.loadDataWithBaseUrlAsync(mAwContents, CommonResources.ABOUT_HTML,
+                "text/html", false, baseUrl, ContentUrlConstants.ABOUT_BLANK_DISPLAY_URL);
         onPageStartedHelper.waitForCallback(pageStartedCount);
         Assert.assertEquals(baseUrl, onPageStartedHelper.getUrl());
 
@@ -411,7 +469,7 @@ public class LoadDataWithBaseUrlTest {
         while (i < doc.length()) doc.setCharAt(i++, 'A');
         doc.append("--><script>window.gotToEndOfBody=true;</script></body></html>");
 
-        mActivityTestRule.enableJavaScriptOnUiThread(mAwContents);
+        AwActivityTestRule.enableJavaScriptOnUiThread(mAwContents);
         loadDataWithBaseUrlSync(doc.toString(), "text/html", false, null, null);
         Assert.assertEquals("true",
                 mActivityTestRule.executeJavaScriptAndWaitForResult(
@@ -454,5 +512,145 @@ public class LoadDataWithBaseUrlTest {
         // Verify that the load succeeds. The actual base url is undefined.
         Assert.assertEquals(
                 CommonResources.ABOUT_TITLE, mActivityTestRule.getTitleOnUiThread(mAwContents));
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"AndroidWebView"})
+    public void testBaseUrlMetrics_empty() throws Throwable {
+        loadContentAndCheckMetrics(null, AwContents.UrlScheme.EMPTY);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"AndroidWebView"})
+    public void testBaseUrlMetrics_data() throws Throwable {
+        loadContentAndCheckMetrics("data:text/html", AwContents.UrlScheme.DATA_SCHEME);
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"AndroidWebView"})
+    public void testBaseUrlMetrics_http() throws Throwable {
+        loadContentAndCheckMetrics("http://www.google.com/", AwContents.UrlScheme.HTTP_SCHEME);
+    }
+
+    private void loadContentAndCheckMetrics(String baseUrl, int expectedSchemeEnum)
+            throws Throwable {
+        Assert.assertEquals(0,
+                RecordHistogram.getHistogramTotalCountForTesting(
+                        AwContents.DATA_BASE_URL_SCHEME_HISTOGRAM_NAME));
+        loadDataWithBaseUrlSync(SIMPLE_HTML, "text/html", false, baseUrl, null);
+        Assert.assertEquals(1,
+                RecordHistogram.getHistogramTotalCountForTesting(
+                        AwContents.DATA_BASE_URL_SCHEME_HISTOGRAM_NAME));
+        Assert.assertEquals(1,
+                RecordHistogram.getHistogramValueCountForTesting(
+                        AwContents.DATA_BASE_URL_SCHEME_HISTOGRAM_NAME, expectedSchemeEnum));
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"AndroidWebView"})
+    public void testWindowOriginForHttpSchemeUrl() throws Throwable {
+        String baseUri = "https://google.com";
+        AwSettings contentSettings = mActivityTestRule.getAwSettingsOnUiThread(mAwContents);
+        contentSettings.setJavaScriptEnabled(true);
+        loadDataWithBaseUrlSync("", "text/html", false, baseUri, null);
+        Assert.assertEquals("\"https://google.com\"",
+                mActivityTestRule.executeJavaScriptAndWaitForResult(
+                        mAwContents, mContentsClient, "window.origin;"));
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"AndroidWebView"})
+    public void testWindowOriginForCustomSchemeUrl() throws Throwable {
+        String baseUri = "x-thread://-86516399/2465766146407674724";
+        AwSettings contentSettings = mActivityTestRule.getAwSettingsOnUiThread(mAwContents);
+        contentSettings.setJavaScriptEnabled(true);
+        loadDataWithBaseUrlSync("", "text/html", false, baseUri, null);
+        Assert.assertEquals("\"x-thread://\"",
+                mActivityTestRule.executeJavaScriptAndWaitForResult(
+                        mAwContents, mContentsClient, "window.origin;"));
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"AndroidWebView"})
+    public void testXhrForHttpSchemeUrl() throws Throwable {
+        Assert.assertTrue(verifyXhrForUrls("https://google.com/1", "https://google.com/2"));
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"AndroidWebView"})
+    // https://crbug.com/900528
+    public void testXhrForCustomSchemeUrl() throws Throwable {
+        Assert.assertTrue(verifyXhrForUrls("myscheme://mydomain/1", "myscheme://mydomain/2"));
+    }
+
+    /**
+     * Verify that XHR can be correctly run with the set base URI, regardless of its scheme.
+     *
+     * @param baseUri Base URI to start from.
+     * @param textUri The text URI to fetch the text from.
+     * @throws Throwable
+     */
+    private boolean verifyXhrForUrls(String baseUri, String textUri) throws Throwable {
+        final String successMsg = "SUCCESS";
+        final String errorMsg = "ERROR";
+        final String data = "<html><head><script type='text/javascript'>"
+                + "var xhr = new XMLHttpRequest();"
+                + "xhr.open('GET', '" + textUri + "', true);"
+                + "xhr.onload = function(e) {"
+                + "  if (xhr.readyState === 4 && xhr.status === 200) {"
+                + "    document.title = xhr.responseText;"
+                + "  } else {"
+                + "    console.log('Error status: ' + xhr.statusText);"
+                + "    document.title = '" + errorMsg + "';"
+                + "  }"
+                + "};"
+                + "xhr.onerror = function(e) {"
+                + "  console.log('Error status: ' + xhr.statusText);"
+                + "  document.title = '" + errorMsg + "';"
+                + "};"
+                + "xhr.send(null);"
+                + "</script></head></html>";
+
+        // Intercept TEXT URI request, and respond with 'SUCCESS'.
+        TestAwContentsClient client = new TestAwContentsClient() {
+            @Override
+            public AwWebResourceResponse shouldInterceptRequest(AwWebResourceRequest request) {
+                String url = request.url;
+                if (textUri.equals(url)) {
+                    return new AwWebResourceResponse(
+                            "text/plaintext", "utf-8", createInputStreamForString(successMsg));
+                } else {
+                    return super.shouldInterceptRequest(request);
+                }
+            }
+        };
+
+        // We need extra setup with the new client.
+        final AwTestContainerView testContainerView =
+                mActivityTestRule.createAwTestContainerViewOnMainSync(client);
+        AwContents awContents = testContainerView.getAwContents();
+        mActivityTestRule.getAwSettingsOnUiThread(awContents).setJavaScriptEnabled(true);
+
+        // Starting from BASE URI, load data that loads JS URI.
+        mActivityTestRule.loadDataWithBaseUrlSync(awContents, client.getOnPageFinishedHelper(),
+                data, "text/html", false, baseUri, null);
+
+        // Polling here as XHR may take extra steps to change the title.
+        AwActivityTestRule.pollInstrumentationThread(() -> {
+            String title = mActivityTestRule.getTitleOnUiThread(awContents);
+            return successMsg.equals(title) || errorMsg.equals(title);
+        });
+        return successMsg.equals(mActivityTestRule.getTitleOnUiThread(awContents));
+    }
+
+    private InputStream createInputStreamForString(String str) {
+        return new ByteArrayInputStream(str.getBytes(Charset.defaultCharset()));
     }
 }

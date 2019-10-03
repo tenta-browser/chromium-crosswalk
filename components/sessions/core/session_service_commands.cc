@@ -12,6 +12,7 @@
 
 #include "base/memory/ptr_util.h"
 #include "base/pickle.h"
+#include "base/token.h"
 #include "components/sessions/core/base_session_service_commands.h"
 #include "components/sessions/core/base_session_service_delegate.h"
 #include "components/sessions/core/session_command.h"
@@ -24,16 +25,24 @@ static const SessionCommand::id_type kCommandSetTabWindow = 0;
 // OBSOLETE Superseded by kCommandSetWindowBounds3.
 // static const SessionCommand::id_type kCommandSetWindowBounds = 1;
 static const SessionCommand::id_type kCommandSetTabIndexInWindow = 2;
+
+// OBSOLETE: Preserved for backward compatibility. Using
+// kCommandTabNavigationPathPruned instead
 static const SessionCommand::id_type
     kCommandTabNavigationPathPrunedFromBack = 5;
+
 static const SessionCommand::id_type kCommandUpdateTabNavigation = 6;
 static const SessionCommand::id_type kCommandSetSelectedNavigationIndex = 7;
 static const SessionCommand::id_type kCommandSetSelectedTabInIndex = 8;
 static const SessionCommand::id_type kCommandSetWindowType = 9;
 // OBSOLETE Superseded by kCommandSetWindowBounds3. Except for data migration.
 // static const SessionCommand::id_type kCommandSetWindowBounds2 = 10;
+
+// OBSOLETE: Preserved for backward compatibility. Using
+// kCommandTabNavigationPathPruned instead
 static const SessionCommand::id_type
     kCommandTabNavigationPathPrunedFromFront = 11;
+
 static const SessionCommand::id_type kCommandSetPinnedState = 12;
 static const SessionCommand::id_type kCommandSetExtensionAppID = 13;
 static const SessionCommand::id_type kCommandSetWindowBounds3 = 14;
@@ -47,6 +56,8 @@ static const SessionCommand::id_type kCommandLastActiveTime = 21;
 // OBSOLETE Superseded by kCommandSetWindowWorkspace2.
 // static const SessionCommand::id_type kCommandSetWindowWorkspace = 22;
 static const SessionCommand::id_type kCommandSetWindowWorkspace2 = 23;
+static const SessionCommand::id_type kCommandTabNavigationPathPruned = 24;
+static const SessionCommand::id_type kCommandSetTabGroup = 25;
 
 namespace {
 
@@ -93,6 +104,26 @@ using WindowTypePayload = IDAndIndexPayload;
 
 using TabNavigationPathPrunedFromFrontPayload = IDAndIndexPayload;
 
+struct TabNavigationPathPrunedPayload {
+  SessionID::id_type id;
+  // Index starting which |count| entries were removed.
+  int32_t index;
+  // Number of entries removed.
+  int32_t count;
+};
+
+struct SerializedTabGroupId {
+  // These fields correspond to the high and low fields of |base::Token|.
+  uint64_t id_high;
+  uint64_t id_low;
+};
+
+struct TabGroupPayload {
+  SessionID::id_type tab_id;
+  SerializedTabGroupId maybe_group;
+  bool has_group;
+};
+
 struct PinnedStatePayload {
   SessionID::id_type tab_id;
   bool pinned_state;
@@ -117,10 +148,8 @@ enum PersistedWindowShowState {
   PERSISTED_SHOW_STATE_END = 8,
 };
 
-using IdToSessionTab =
-    std::map<SessionID::id_type, std::unique_ptr<SessionTab>>;
-using IdToSessionWindow =
-    std::map<SessionID::id_type, std::unique_ptr<SessionWindow>>;
+using IdToSessionTab = std::map<SessionID, std::unique_ptr<SessionTab>>;
+using IdToSessionWindow = std::map<SessionID, std::unique_ptr<SessionWindow>>;
 
 // Assert to ensure PersistedWindowShowState is updated if ui::WindowShowState
 // is changed.
@@ -190,12 +219,11 @@ void UpdateSelectedTabIndex(
 
 // Returns the window in windows with the specified id. If a window does
 // not exist, one is created.
-SessionWindow* GetWindow(SessionID::id_type window_id,
-                         IdToSessionWindow* windows) {
+SessionWindow* GetWindow(SessionID window_id, IdToSessionWindow* windows) {
   auto i = windows->find(window_id);
   if (i == windows->end()) {
     SessionWindow* window = new SessionWindow();
-    window->window_id.set_id(window_id);
+    window->window_id = window_id;
     (*windows)[window_id] = base::WrapUnique(window);
     return window;
   }
@@ -204,12 +232,12 @@ SessionWindow* GetWindow(SessionID::id_type window_id,
 
 // Returns the tab with the specified id in tabs. If a tab does not exist,
 // it is created.
-SessionTab* GetTab(SessionID::id_type tab_id, IdToSessionTab* tabs) {
+SessionTab* GetTab(SessionID tab_id, IdToSessionTab* tabs) {
   DCHECK(tabs);
   auto i = tabs->find(tab_id);
   if (i == tabs->end()) {
     SessionTab* tab = new SessionTab();
-    tab->tab_id.set_id(tab_id);
+    tab->tab_id = tab_id;
     (*tabs)[tab_id] = base::WrapUnique(tab);
     return tab;
   }
@@ -293,7 +321,7 @@ void AddTabsToWindows(IdToSessionTab* tabs, IdToSessionWindow* windows) {
       continue;
 
     SessionTab* tab_ptr = tab.get();
-    SessionWindow* window = GetWindow(tab_ptr->window_id.id(), windows);
+    SessionWindow* window = GetWindow(tab_ptr->window_id, windows);
     window->tabs.push_back(std::move(tab));
 
     // See note in SessionTab as to why we do this.
@@ -313,6 +341,31 @@ void AddTabsToWindows(IdToSessionTab* tabs, IdToSessionWindow* windows) {
   tabs->clear();
 }
 
+void ProcessTabNavigationPathPrunedCommand(
+    TabNavigationPathPrunedPayload& payload,
+    SessionTab* tab) {
+  // Update the selected navigation index.
+  if (tab->current_navigation_index >= payload.index &&
+      tab->current_navigation_index < payload.index + payload.count) {
+    tab->current_navigation_index = payload.index - 1;
+  } else if (tab->current_navigation_index >= payload.index + payload.count) {
+    tab->current_navigation_index =
+        tab->current_navigation_index - payload.count;
+  }  // Else no change if selected index is before payload.index
+
+  tab->navigations.erase(
+      FindClosestNavigationWithIndex(&(tab->navigations), payload.index),
+      FindClosestNavigationWithIndex(&(tab->navigations),
+                                     payload.index + payload.count));
+
+  // And update the index of existing navigations.
+  for (auto& entry : tab->navigations) {
+    if (entry.index() < payload.index)
+      continue;
+    entry.set_index(entry.index() - payload.count);
+  }
+}
+
 // Creates tabs and windows from the commands specified in |data|. The created
 // tabs and windows are added to |tabs| and |windows| respectively, with the
 // id of the active window set in |active_window_id|. It is up to the caller
@@ -324,7 +377,7 @@ bool CreateTabsAndWindows(
     const std::vector<std::unique_ptr<SessionCommand>>& data,
     IdToSessionTab* tabs,
     IdToSessionWindow* windows,
-    SessionID::id_type* active_window_id) {
+    SessionID* active_window_id) {
   // If the file is corrupt (command with wrong size, or unknown command), we
   // still return true and attempt to restore what we we can.
   DVLOG(1) << "CreateTabsAndWindows";
@@ -341,7 +394,9 @@ bool CreateTabsAndWindows(
           DVLOG(1) << "Failed reading command " << command->id();
           return true;
         }
-        GetTab(payload[1], tabs)->window_id.set_id(payload[0]);
+        SessionID window_id = SessionID::FromSerializedValue(payload[0]);
+        SessionID tab_id = SessionID::FromSerializedValue(payload[1]);
+        GetTab(tab_id, tabs)->window_id = window_id;
         break;
       }
 
@@ -353,13 +408,12 @@ bool CreateTabsAndWindows(
           DVLOG(1) << "Failed reading command " << command->id();
           return true;
         }
-        GetWindow(payload.window_id, windows)->bounds.SetRect(payload.x,
-                                                              payload.y,
-                                                              payload.w,
-                                                              payload.h);
-        GetWindow(payload.window_id, windows)->show_state =
-            payload.is_maximized ?
-                ui::SHOW_STATE_MAXIMIZED : ui::SHOW_STATE_NORMAL;
+        SessionID window_id = SessionID::FromSerializedValue(payload.window_id);
+        GetWindow(window_id, windows)
+            ->bounds.SetRect(payload.x, payload.y, payload.w, payload.h);
+        GetWindow(window_id, windows)->show_state =
+            payload.is_maximized ? ui::SHOW_STATE_MAXIMIZED
+                                 : ui::SHOW_STATE_NORMAL;
         break;
       }
 
@@ -369,11 +423,10 @@ bool CreateTabsAndWindows(
           DVLOG(1) << "Failed reading command " << command->id();
           return true;
         }
-        GetWindow(payload.window_id, windows)->bounds.SetRect(payload.x,
-                                                              payload.y,
-                                                              payload.w,
-                                                              payload.h);
-        GetWindow(payload.window_id, windows)->show_state =
+        SessionID window_id = SessionID::FromSerializedValue(payload.window_id);
+        GetWindow(window_id, windows)
+            ->bounds.SetRect(payload.x, payload.y, payload.w, payload.h);
+        GetWindow(window_id, windows)->show_state =
             PersistedShowStateToShowState(payload.show_state);
         break;
       }
@@ -384,7 +437,8 @@ bool CreateTabsAndWindows(
           DVLOG(1) << "Failed reading command " << command->id();
           return true;
         }
-        GetTab(payload.id, tabs)->tab_visual_index = payload.index;
+        SessionID tab_id = SessionID::FromSerializedValue(payload.id);
+        GetTab(tab_id, tabs)->tab_visual_index = payload.index;
         break;
       }
 
@@ -396,9 +450,9 @@ bool CreateTabsAndWindows(
           return true;
         }
         if (command->id() == kCommandTabClosed)
-          tabs->erase(payload.id);
+          tabs->erase(SessionID::FromSerializedValue(payload.id));
         else
-          windows->erase(payload.id);
+          windows->erase(SessionID::FromSerializedValue(payload.id));
 
         break;
       }
@@ -409,7 +463,9 @@ bool CreateTabsAndWindows(
           DVLOG(1) << "Failed reading command " << command->id();
           return true;
         }
-        SessionTab* tab = GetTab(payload.id, tabs);
+        SessionTab* tab =
+            GetTab(SessionID::FromSerializedValue(payload.id), tabs);
+
         tab->navigations.erase(
             FindClosestNavigationWithIndex(&(tab->navigations), payload.index),
             tab->navigations.end());
@@ -417,32 +473,40 @@ bool CreateTabsAndWindows(
       }
 
       case kCommandTabNavigationPathPrunedFromFront: {
-        TabNavigationPathPrunedFromFrontPayload payload;
-        if (!command->GetPayload(&payload, sizeof(payload)) ||
-            payload.index <= 0) {
+        TabNavigationPathPrunedFromFrontPayload prune_front_payload;
+        if (!command->GetPayload(&prune_front_payload,
+                                 sizeof(prune_front_payload)) ||
+            prune_front_payload.index <= 0) {
           DVLOG(1) << "Failed reading command " << command->id();
           return true;
         }
-        SessionTab* tab = GetTab(payload.id, tabs);
+        SessionTab* tab = GetTab(
+            SessionID::FromSerializedValue(prune_front_payload.id), tabs);
 
-        // Update the selected navigation index.
-        tab->current_navigation_index =
-            std::max(-1, tab->current_navigation_index - payload.index);
+        TabNavigationPathPrunedPayload payload;
+        payload.index = 0;
+        payload.count = prune_front_payload.index;
+        ProcessTabNavigationPathPrunedCommand(payload, tab);
+        break;
+      }
 
-        // And update the index of existing navigations.
-        for (auto i = tab->navigations.begin(); i != tab->navigations.end();) {
-          i->set_index(i->index() - payload.index);
-          if (i->index() < 0)
-            i = tab->navigations.erase(i);
-          else
-            ++i;
+      case kCommandTabNavigationPathPruned: {
+        TabNavigationPathPrunedPayload payload;
+        if (!command->GetPayload(&payload, sizeof(payload)) ||
+            payload.index < 0 || payload.count <= 0) {
+          DVLOG(1) << "Failed reading command " << command->id();
+          return true;
         }
+        SessionTab* tab =
+            GetTab(SessionID::FromSerializedValue(payload.id), tabs);
+
+        ProcessTabNavigationPathPrunedCommand(payload, tab);
         break;
       }
 
       case kCommandUpdateTabNavigation: {
         sessions::SerializedNavigationEntry navigation;
-        SessionID::id_type tab_id;
+        SessionID tab_id = SessionID::InvalidValue();
         if (!RestoreUpdateTabNavigationCommand(*command,
                                                &navigation,
                                                &tab_id)) {
@@ -465,7 +529,8 @@ bool CreateTabsAndWindows(
           DVLOG(1) << "Failed reading command " << command->id();
           return true;
         }
-        GetTab(payload.id, tabs)->current_navigation_index = payload.index;
+        GetTab(SessionID::FromSerializedValue(payload.id), tabs)
+            ->current_navigation_index = payload.index;
         break;
       }
 
@@ -475,7 +540,8 @@ bool CreateTabsAndWindows(
           DVLOG(1) << "Failed reading command " << command->id();
           return true;
         }
-        GetWindow(payload.id, windows)->selected_tab_index = payload.index;
+        GetWindow(SessionID::FromSerializedValue(payload.id), windows)
+            ->selected_tab_index = payload.index;
         break;
       }
 
@@ -485,9 +551,25 @@ bool CreateTabsAndWindows(
           DVLOG(1) << "Failed reading command " << command->id();
           return true;
         }
-        GetWindow(payload.id, windows)->is_constrained = false;
-        GetWindow(payload.id, windows)->type =
+        SessionID window_id = SessionID::FromSerializedValue(payload.id);
+        GetWindow(window_id, windows)->is_constrained = false;
+        GetWindow(window_id, windows)->type =
             static_cast<SessionWindow::WindowType>(payload.index);
+        break;
+      }
+
+      case kCommandSetTabGroup: {
+        TabGroupPayload payload;
+        if (!command->GetPayload(&payload, sizeof(payload))) {
+          DVLOG(1) << "Failed reading command " << command->id();
+          return true;
+        }
+        SessionTab* session_tab =
+            GetTab(SessionID::FromSerializedValue(payload.tab_id), tabs);
+        const base::Token token(payload.maybe_group.id_high,
+                                payload.maybe_group.id_low);
+        session_tab->group =
+            payload.has_group ? base::make_optional(token) : base::nullopt;
         break;
       }
 
@@ -497,12 +579,13 @@ bool CreateTabsAndWindows(
           DVLOG(1) << "Failed reading command " << command->id();
           return true;
         }
-        GetTab(payload.tab_id, tabs)->pinned = payload.pinned_state;
+        GetTab(SessionID::FromSerializedValue(payload.tab_id), tabs)->pinned =
+            payload.pinned_state;
         break;
       }
 
       case kCommandSetWindowAppName: {
-        SessionID::id_type window_id;
+        SessionID window_id = SessionID::InvalidValue();
         std::string app_name;
         if (!RestoreSetWindowAppNameCommand(*command, &window_id, &app_name))
           return true;
@@ -512,7 +595,7 @@ bool CreateTabsAndWindows(
       }
 
       case kCommandSetExtensionAppID: {
-        SessionID::id_type tab_id;
+        SessionID tab_id = SessionID::InvalidValue();
         std::string extension_app_id;
         if (!RestoreSetTabExtensionAppIDCommand(*command,
                                                 &tab_id,
@@ -526,7 +609,7 @@ bool CreateTabsAndWindows(
       }
 
       case kCommandSetTabUserAgentOverride: {
-        SessionID::id_type tab_id;
+        SessionID tab_id = SessionID::InvalidValue();
         std::string user_agent_override;
         if (!RestoreSetTabUserAgentOverrideCommand(
                 *command,
@@ -544,13 +627,13 @@ bool CreateTabsAndWindows(
             command->PayloadAsPickle());
         SessionID::id_type command_tab_id;
         std::string session_storage_persistent_id;
-        base::PickleIterator iter(*command_pickle.get());
+        base::PickleIterator iter(*command_pickle);
         if (!iter.ReadInt(&command_tab_id) ||
             !iter.ReadString(&session_storage_persistent_id))
           return true;
         // Associate the session storage back.
-        GetTab(command_tab_id, tabs)->session_storage_persistent_id =
-            session_storage_persistent_id;
+        GetTab(SessionID::FromSerializedValue(command_tab_id), tabs)
+            ->session_storage_persistent_id = session_storage_persistent_id;
         break;
       }
 
@@ -560,7 +643,7 @@ bool CreateTabsAndWindows(
           DVLOG(1) << "Failed reading command " << command->id();
           return true;
         }
-        *active_window_id = payload;
+        *active_window_id = SessionID::FromSerializedValue(payload);
         break;
       }
 
@@ -570,7 +653,8 @@ bool CreateTabsAndWindows(
           DVLOG(1) << "Failed reading command " << command->id();
           return true;
         }
-        SessionTab* tab = GetTab(payload.tab_id, tabs);
+        SessionTab* tab =
+            GetTab(SessionID::FromSerializedValue(payload.tab_id), tabs);
         tab->last_active_time =
             base::TimeTicks::FromInternalValue(payload.last_active_time);
         break;
@@ -579,13 +663,14 @@ bool CreateTabsAndWindows(
       case kCommandSetWindowWorkspace2: {
         std::unique_ptr<base::Pickle> pickle(command->PayloadAsPickle());
         base::PickleIterator it(*pickle);
-        SessionID::id_type window_id;
+        SessionID::id_type window_id = -1;
         std::string workspace;
          if (!it.ReadInt(&window_id) || !it.ReadString(&workspace)) {
           DVLOG(1) << "Failed reading command " << command->id();
           return true;
         }
-        GetWindow(window_id, windows)->workspace = workspace;
+        GetWindow(SessionID::FromSerializedValue(window_id), windows)
+            ->workspace = workspace;
         break;
       }
 
@@ -599,6 +684,15 @@ bool CreateTabsAndWindows(
   return true;
 }
 
+template <typename Payload>
+std::unique_ptr<SessionCommand> CreateSessionCommandForPayload(
+    SessionCommand::id_type id,
+    const Payload& payload) {
+  auto command = std::make_unique<SessionCommand>(id, sizeof(payload));
+  memcpy(command->contents(), &payload, sizeof(payload));
+  return command;
+}
+
 }  // namespace
 
 std::unique_ptr<SessionCommand> CreateSetSelectedTabInWindowCommand(
@@ -607,20 +701,14 @@ std::unique_ptr<SessionCommand> CreateSetSelectedTabInWindowCommand(
   SelectedTabInIndexPayload payload = { 0 };
   payload.id = window_id.id();
   payload.index = index;
-  std::unique_ptr<SessionCommand> command = base::MakeUnique<SessionCommand>(
-      kCommandSetSelectedTabInIndex, sizeof(payload));
-  memcpy(command->contents(), &payload, sizeof(payload));
-  return command;
+  return CreateSessionCommandForPayload(kCommandSetSelectedTabInIndex, payload);
 }
 
 std::unique_ptr<SessionCommand> CreateSetTabWindowCommand(
     const SessionID& window_id,
     const SessionID& tab_id) {
   SessionID::id_type payload[] = { window_id.id(), tab_id.id() };
-  std::unique_ptr<SessionCommand> command =
-      base::MakeUnique<SessionCommand>(kCommandSetTabWindow, sizeof(payload));
-  memcpy(command->contents(), payload, sizeof(payload));
-  return command;
+  return CreateSessionCommandForPayload(kCommandSetTabWindow, payload);
 }
 
 std::unique_ptr<SessionCommand> CreateSetWindowBoundsCommand(
@@ -634,10 +722,7 @@ std::unique_ptr<SessionCommand> CreateSetWindowBoundsCommand(
   payload.w = bounds.width();
   payload.h = bounds.height();
   payload.show_state = ShowStateToPersistedShowState(show_state);
-  std::unique_ptr<SessionCommand> command = base::MakeUnique<SessionCommand>(
-      kCommandSetWindowBounds3, sizeof(payload));
-  memcpy(command->contents(), &payload, sizeof(payload));
-  return command;
+  return CreateSessionCommandForPayload(kCommandSetWindowBounds3, payload);
 }
 
 std::unique_ptr<SessionCommand> CreateSetTabIndexInWindowCommand(
@@ -646,38 +731,28 @@ std::unique_ptr<SessionCommand> CreateSetTabIndexInWindowCommand(
   TabIndexInWindowPayload payload = { 0 };
   payload.id = tab_id.id();
   payload.index = new_index;
-  std::unique_ptr<SessionCommand> command = base::MakeUnique<SessionCommand>(
-      kCommandSetTabIndexInWindow, sizeof(payload));
-  memcpy(command->contents(), &payload, sizeof(payload));
-  return command;
+  return CreateSessionCommandForPayload(kCommandSetTabIndexInWindow, payload);
 }
 
-std::unique_ptr<SessionCommand> CreateTabClosedCommand(
-    const SessionID::id_type tab_id) {
+std::unique_ptr<SessionCommand> CreateTabClosedCommand(const SessionID tab_id) {
   ClosedPayload payload;
   // Because of what appears to be a compiler bug setting payload to {0} doesn't
   // set the padding to 0, resulting in Purify reporting an UMR when we write
   // the structure to disk. To avoid this we explicitly memset the struct.
   memset(&payload, 0, sizeof(payload));
-  payload.id = tab_id;
+  payload.id = tab_id.id();
   payload.close_time = base::Time::Now().ToInternalValue();
-  std::unique_ptr<SessionCommand> command =
-      base::MakeUnique<SessionCommand>(kCommandTabClosed, sizeof(payload));
-  memcpy(command->contents(), &payload, sizeof(payload));
-  return command;
+  return CreateSessionCommandForPayload(kCommandTabClosed, payload);
 }
 
 std::unique_ptr<SessionCommand> CreateWindowClosedCommand(
-    const SessionID::id_type window_id) {
+    const SessionID window_id) {
   ClosedPayload payload;
   // See comment in CreateTabClosedCommand as to why we do this.
   memset(&payload, 0, sizeof(payload));
-  payload.id = window_id;
+  payload.id = window_id.id();
   payload.close_time = base::Time::Now().ToInternalValue();
-  std::unique_ptr<SessionCommand> command =
-      base::MakeUnique<SessionCommand>(kCommandWindowClosed, sizeof(payload));
-  memcpy(command->contents(), &payload, sizeof(payload));
-  return command;
+  return CreateSessionCommandForPayload(kCommandWindowClosed, payload);
 }
 
 std::unique_ptr<SessionCommand> CreateSetSelectedNavigationIndexCommand(
@@ -686,10 +761,8 @@ std::unique_ptr<SessionCommand> CreateSetSelectedNavigationIndexCommand(
   SelectedNavigationIndexPayload payload = { 0 };
   payload.id = tab_id.id();
   payload.index = index;
-  std::unique_ptr<SessionCommand> command = base::MakeUnique<SessionCommand>(
-      kCommandSetSelectedNavigationIndex, sizeof(payload));
-  memcpy(command->contents(), &payload, sizeof(payload));
-  return command;
+  return CreateSessionCommandForPayload(kCommandSetSelectedNavigationIndex,
+                                        payload);
 }
 
 std::unique_ptr<SessionCommand> CreateSetWindowTypeCommand(
@@ -698,10 +771,21 @@ std::unique_ptr<SessionCommand> CreateSetWindowTypeCommand(
   WindowTypePayload payload = { 0 };
   payload.id = window_id.id();
   payload.index = static_cast<int32_t>(type);
-  std::unique_ptr<SessionCommand> command =
-      base::MakeUnique<SessionCommand>(kCommandSetWindowType, sizeof(payload));
-  memcpy(command->contents(), &payload, sizeof(payload));
-  return command;
+  return CreateSessionCommandForPayload(kCommandSetWindowType, payload);
+}
+
+std::unique_ptr<SessionCommand> CreateTabGroupCommand(
+    const SessionID& tab_id,
+    base::Optional<base::Token> group) {
+  TabGroupPayload payload = {0};
+  payload.tab_id = tab_id.id();
+  if (group.has_value()) {
+    DCHECK(!group.value().is_zero());
+    payload.maybe_group.id_high = group.value().high();
+    payload.maybe_group.id_low = group.value().low();
+    payload.has_group = true;
+  }
+  return CreateSessionCommandForPayload(kCommandSetTabGroup, payload);
 }
 
 std::unique_ptr<SessionCommand> CreatePinnedStateCommand(
@@ -710,10 +794,7 @@ std::unique_ptr<SessionCommand> CreatePinnedStateCommand(
   PinnedStatePayload payload = { 0 };
   payload.tab_id = tab_id.id();
   payload.pinned_state = is_pinned;
-  std::unique_ptr<SessionCommand> command =
-      base::MakeUnique<SessionCommand>(kCommandSetPinnedState, sizeof(payload));
-  memcpy(command->contents(), &payload, sizeof(payload));
-  return command;
+  return CreateSessionCommandForPayload(kCommandSetPinnedState, payload);
 }
 
 std::unique_ptr<SessionCommand> CreateSessionStorageAssociatedCommand(
@@ -722,18 +803,15 @@ std::unique_ptr<SessionCommand> CreateSessionStorageAssociatedCommand(
   base::Pickle pickle;
   pickle.WriteInt(tab_id.id());
   pickle.WriteString(session_storage_persistent_id);
-  return std::unique_ptr<SessionCommand>(base::MakeUnique<SessionCommand>(
-      kCommandSessionStorageAssociated, pickle));
+  return std::make_unique<SessionCommand>(kCommandSessionStorageAssociated,
+                                          pickle);
 }
 
 std::unique_ptr<SessionCommand> CreateSetActiveWindowCommand(
     const SessionID& window_id) {
   ActiveWindowPayload payload = 0;
   payload = window_id.id();
-  std::unique_ptr<SessionCommand> command = base::MakeUnique<SessionCommand>(
-      kCommandSetActiveWindow, sizeof(payload));
-  memcpy(command->contents(), &payload, sizeof(payload));
-  return command;
+  return CreateSessionCommandForPayload(kCommandSetActiveWindow, payload);
 }
 
 std::unique_ptr<SessionCommand> CreateLastActiveTimeCommand(
@@ -742,10 +820,7 @@ std::unique_ptr<SessionCommand> CreateLastActiveTimeCommand(
   LastActiveTimePayload payload = {0};
   payload.tab_id = tab_id.id();
   payload.last_active_time = last_active_time.ToInternalValue();
-  std::unique_ptr<SessionCommand> command =
-      base::MakeUnique<SessionCommand>(kCommandLastActiveTime, sizeof(payload));
-  memcpy(command->contents(), &payload, sizeof(payload));
-  return command;
+  return CreateSessionCommandForPayload(kCommandLastActiveTime, payload);
 }
 
 std::unique_ptr<SessionCommand> CreateSetWindowWorkspaceCommand(
@@ -754,65 +829,47 @@ std::unique_ptr<SessionCommand> CreateSetWindowWorkspaceCommand(
   base::Pickle pickle;
   pickle.WriteInt(window_id.id());
   pickle.WriteString(workspace);
-  std::unique_ptr<SessionCommand> command =
-      base::MakeUnique<SessionCommand>(kCommandSetWindowWorkspace2, pickle);
-  return command;
+  return std::make_unique<SessionCommand>(kCommandSetWindowWorkspace2, pickle);
 }
 
-std::unique_ptr<SessionCommand> CreateTabNavigationPathPrunedFromBackCommand(
+std::unique_ptr<SessionCommand> CreateTabNavigationPathPrunedCommand(
     const SessionID& tab_id,
+    int index,
     int count) {
-  TabNavigationPathPrunedFromBackPayload payload = { 0 };
+  TabNavigationPathPrunedPayload payload = {0};
   payload.id = tab_id.id();
-  payload.index = count;
-  std::unique_ptr<SessionCommand> command = base::MakeUnique<SessionCommand>(
-      kCommandTabNavigationPathPrunedFromBack, sizeof(payload));
-  memcpy(command->contents(), &payload, sizeof(payload));
-  return command;
-}
-
-std::unique_ptr<SessionCommand> CreateTabNavigationPathPrunedFromFrontCommand(
-    const SessionID& tab_id,
-    int count) {
-  TabNavigationPathPrunedFromFrontPayload payload = { 0 };
-  payload.id = tab_id.id();
-  payload.index = count;
-  std::unique_ptr<SessionCommand> command = base::MakeUnique<SessionCommand>(
-      kCommandTabNavigationPathPrunedFromFront, sizeof(payload));
-  memcpy(command->contents(), &payload, sizeof(payload));
-  return command;
+  payload.index = index;
+  payload.count = count;
+  return CreateSessionCommandForPayload(kCommandTabNavigationPathPruned,
+                                        payload);
 }
 
 std::unique_ptr<SessionCommand> CreateUpdateTabNavigationCommand(
     const SessionID& tab_id,
     const sessions::SerializedNavigationEntry& navigation) {
-  return CreateUpdateTabNavigationCommand(kCommandUpdateTabNavigation,
-                                            tab_id.id(),
-                                            navigation);
+  return CreateUpdateTabNavigationCommand(kCommandUpdateTabNavigation, tab_id,
+                                          navigation);
 }
 
 std::unique_ptr<SessionCommand> CreateSetTabExtensionAppIDCommand(
     const SessionID& tab_id,
     const std::string& extension_id) {
-  return CreateSetTabExtensionAppIDCommand(kCommandSetExtensionAppID,
-                                             tab_id.id(),
-                                             extension_id);
+  return CreateSetTabExtensionAppIDCommand(kCommandSetExtensionAppID, tab_id,
+                                           extension_id);
 }
 
 std::unique_ptr<SessionCommand> CreateSetTabUserAgentOverrideCommand(
     const SessionID& tab_id,
     const std::string& user_agent_override) {
   return CreateSetTabUserAgentOverrideCommand(kCommandSetTabUserAgentOverride,
-                                                tab_id.id(),
-                                                user_agent_override);
+                                              tab_id, user_agent_override);
 }
 
 std::unique_ptr<SessionCommand> CreateSetWindowAppNameCommand(
     const SessionID& window_id,
     const std::string& app_name) {
-  return CreateSetWindowAppNameCommand(kCommandSetWindowAppName,
-                                         window_id.id(),
-                                         app_name);
+  return CreateSetWindowAppNameCommand(kCommandSetWindowAppName, window_id,
+                                       app_name);
 }
 
 bool ReplacePendingCommand(BaseSessionService* base_session_service,
@@ -880,7 +937,7 @@ bool IsClosingCommand(SessionCommand* command) {
 void RestoreSessionFromCommands(
     const std::vector<std::unique_ptr<SessionCommand>>& commands,
     std::vector<std::unique_ptr<SessionWindow>>* valid_windows,
-    SessionID::id_type* active_window_id) {
+    SessionID* active_window_id) {
   IdToSessionTab tabs;
   IdToSessionWindow windows;
 

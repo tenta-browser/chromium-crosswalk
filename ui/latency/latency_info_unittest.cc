@@ -23,63 +23,43 @@ TEST(LatencyInfoTest, AddTwoSeparateEvent) {
   LatencyInfo info;
   info.set_trace_id(1);
   EXPECT_FALSE(info.began());
-  info.AddLatencyNumberWithTimestamp(INPUT_EVENT_LATENCY_BEGIN_RWH_COMPONENT, 0,
-                                     1, ToTestTimeTicks(100), 1);
+  info.AddLatencyNumberWithTimestamp(INPUT_EVENT_LATENCY_BEGIN_RWH_COMPONENT,
+                                     ToTestTimeTicks(100));
   EXPECT_TRUE(info.began());
-  info.AddLatencyNumberWithTimestamp(INPUT_EVENT_LATENCY_ORIGINAL_COMPONENT, 1,
-                                     5, ToTestTimeTicks(1000), 2);
+  info.AddLatencyNumberWithTimestamp(INPUT_EVENT_LATENCY_ORIGINAL_COMPONENT,
+                                     ToTestTimeTicks(1000));
 
   EXPECT_EQ(info.latency_components().size(), 2u);
-  LatencyInfo::LatencyComponent component;
-  EXPECT_FALSE(
-      info.FindLatency(INPUT_EVENT_LATENCY_UI_COMPONENT, 0, &component));
-  EXPECT_FALSE(
-      info.FindLatency(INPUT_EVENT_LATENCY_BEGIN_RWH_COMPONENT, 1, &component));
+  base::TimeTicks timestamp;
+  EXPECT_FALSE(info.FindLatency(INPUT_EVENT_LATENCY_UI_COMPONENT, &timestamp));
   EXPECT_TRUE(
-      info.FindLatency(INPUT_EVENT_LATENCY_BEGIN_RWH_COMPONENT, 0, &component));
-  EXPECT_EQ(component.sequence_number, 1);
-  EXPECT_EQ(component.event_count, 1u);
-  EXPECT_EQ(component.event_time, ToTestTimeTicks(100));
+      info.FindLatency(INPUT_EVENT_LATENCY_BEGIN_RWH_COMPONENT, &timestamp));
+  EXPECT_EQ(timestamp, ToTestTimeTicks(100));
   EXPECT_TRUE(
-      info.FindLatency(INPUT_EVENT_LATENCY_ORIGINAL_COMPONENT, 1, &component));
-  EXPECT_EQ(component.sequence_number, 5);
-  EXPECT_EQ(component.event_count, 2u);
-  EXPECT_EQ(component.event_time, ToTestTimeTicks(1000));
+      info.FindLatency(INPUT_EVENT_LATENCY_ORIGINAL_COMPONENT, &timestamp));
+  EXPECT_EQ(timestamp, ToTestTimeTicks(1000));
 }
 
-TEST(LatencyInfoTest, AddTwoSameEvent) {
-  LatencyInfo info;
-  info.set_trace_id(1);
-  info.AddLatencyNumberWithTimestamp(INPUT_EVENT_LATENCY_ORIGINAL_COMPONENT, 0,
-                                     30, ToTestTimeTicks(100), 2);
-  info.AddLatencyNumberWithTimestamp(INPUT_EVENT_LATENCY_ORIGINAL_COMPONENT, 0,
-                                     13, ToTestTimeTicks(200), 3);
+TEST(LatencyInfoTest, CoalesceTwoGSU) {
+  LatencyInfo info1, info2;
+  info1.set_trace_id(1);
+  info1.AddLatencyNumberWithTimestamp(
+      INPUT_EVENT_LATENCY_SCROLL_UPDATE_LAST_EVENT_COMPONENT,
+      ToTestTimeTicks(1234));
+  info1.set_scroll_update_delta(-3);
 
-  EXPECT_EQ(info.latency_components().size(), 1u);
-  LatencyInfo::LatencyComponent component;
-  EXPECT_FALSE(
-      info.FindLatency(INPUT_EVENT_LATENCY_UI_COMPONENT, 0, &component));
-  EXPECT_FALSE(
-      info.FindLatency(INPUT_EVENT_LATENCY_ORIGINAL_COMPONENT, 1, &component));
-  EXPECT_TRUE(
-      info.FindLatency(INPUT_EVENT_LATENCY_ORIGINAL_COMPONENT, 0, &component));
-  EXPECT_EQ(component.sequence_number, 30);
-  EXPECT_EQ(component.event_count, 5u);
-  EXPECT_EQ(component.event_time, ToTestTimeTicks((100 * 2 + 200 * 3) / 5));
-}
+  info2.set_trace_id(2);
+  info2.AddLatencyNumberWithTimestamp(
+      INPUT_EVENT_LATENCY_SCROLL_UPDATE_LAST_EVENT_COMPONENT,
+      ToTestTimeTicks(2345));
+  info2.set_scroll_update_delta(5);
 
-TEST(LatencyInfoTest, RemoveLatency) {
-  LatencyInfo info;
-  info.set_trace_id(1);
-  info.AddLatencyNumber(INPUT_EVENT_LATENCY_ORIGINAL_COMPONENT, 0, 0);
-  info.AddLatencyNumber(INPUT_EVENT_LATENCY_ORIGINAL_COMPONENT, 1, 0);
-  info.AddLatencyNumber(INPUT_EVENT_LATENCY_UI_COMPONENT, 0, 0);
-
-  info.RemoveLatency(INPUT_EVENT_LATENCY_ORIGINAL_COMPONENT);
-
-  EXPECT_FALSE(info.FindLatency(INPUT_EVENT_LATENCY_ORIGINAL_COMPONENT, 0, 0));
-  EXPECT_FALSE(info.FindLatency(INPUT_EVENT_LATENCY_ORIGINAL_COMPONENT, 1, 0));
-  EXPECT_TRUE(info.FindLatency(INPUT_EVENT_LATENCY_UI_COMPONENT, 0, 0));
+  info1.CoalesceScrollUpdateWith(info2);
+  base::TimeTicks timestamp;
+  EXPECT_TRUE(info1.FindLatency(
+      INPUT_EVENT_LATENCY_SCROLL_UPDATE_LAST_EVENT_COMPONENT, &timestamp));
+  EXPECT_EQ(timestamp, ToTestTimeTicks(2345));
+  EXPECT_EQ(info1.scroll_update_delta(), 2);
 }
 
 }  // namespace ui

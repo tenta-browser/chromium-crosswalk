@@ -11,8 +11,7 @@
 
 #include "ash/public/cpp/shelf_types.h"
 #include "ash/resources/vector_icons/vector_icons.h"
-#include "ash/shelf/app_list_button.h"
-#include "ash/shelf/ink_drop_button_listener.h"
+#include "ash/shelf/home_button.h"
 #include "ash/shelf/shelf.h"
 #include "ash/shelf/shelf_constants.h"
 #include "ash/shelf/shelf_view.h"
@@ -25,9 +24,8 @@
 #include "base/metrics/user_metrics_action.h"
 #include "base/time/time.h"
 #include "base/timer/timer.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "ui/accessibility/ax_node_data.h"
-#include "ui/app_list/presenter/app_list.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/compositor/callback_layer_animation_observer.h"
 #include "ui/compositor/layer_animation_element.h"
@@ -279,7 +277,6 @@ class AssistantIconBackground : public ui::Layer, public ui::LayerDelegate {
       AddPaintLayer(static_cast<PaintedShape>(i));
   }
   ~AssistantIconBackground() override = default;
-  ;
 
   void MoveLargeShadow(const gfx::PointF& new_center) {
     gfx::Transform transform;
@@ -594,7 +591,7 @@ class AssistantIconBackground : public ui::Layer, public ui::LayerDelegate {
   DISALLOW_COPY_AND_ASSIGN(AssistantIconBackground);
 };
 
-AssistantOverlay::AssistantOverlay(AppListButton* host_view)
+AssistantOverlay::AssistantOverlay(HomeButton* host_view)
     : ripple_layer_(std::make_unique<ui::Layer>()),
       icon_layer_(std::make_unique<AssistantIcon>()),
       background_layer_(std::make_unique<AssistantIconBackground>()),
@@ -631,7 +628,7 @@ void AssistantOverlay::StartAnimation(bool show_icon) {
       kRippleCircleStartRadiusDip / kRippleCircleInitRadiusDip;
   gfx::Transform transform;
 
-  const gfx::Point center = host_view_->GetAppListButtonCenterPoint();
+  const gfx::Point center = host_view_->GetCenterPoint();
   transform.Translate(center.x() - kRippleCircleStartRadiusDip,
                       center.y() - kRippleCircleStartRadiusDip);
   transform.Scale(scale_factor, scale_factor);
@@ -671,9 +668,8 @@ void AssistantOverlay::StartAnimation(bool show_icon) {
   transform.Scale(scale_factor, scale_factor);
   icon_layer_->SetTransform(transform);
 
-  const bool is_tablet_mode = Shell::Get()
-                                  ->tablet_mode_controller()
-                                  ->IsTabletModeWindowManagerEnabled();
+  const bool is_tablet_mode =
+      Shell::Get()->tablet_mode_controller()->InTabletMode();
   const int icon_x_offset = is_tablet_mode ? 0 : kIconOffsetDip;
   const int icon_y_offset =
       is_tablet_mode ? -kRippleCircleRadiusDip : -kIconOffsetDip;
@@ -734,7 +730,7 @@ void AssistantOverlay::StartAnimation(bool show_icon) {
 void AssistantOverlay::BurstAnimation() {
   animation_state_ = AnimationState::BURSTING;
 
-  gfx::Point center = host_view_->GetAppListButtonCenterPoint();
+  gfx::Point center = host_view_->GetCenterPoint();
   gfx::Transform transform;
 
   // Setup ripple animations.
@@ -786,9 +782,8 @@ void AssistantOverlay::BurstAnimation() {
   // We want to animate from the background's current position into a larger
   // size. The animation moves the background's center point while morphing from
   // circle to a rectangle.
-  const bool is_tablet_mode = Shell::Get()
-                                  ->tablet_mode_controller()
-                                  ->IsTabletModeWindowManagerEnabled();
+  const bool is_tablet_mode =
+      Shell::Get()->tablet_mode_controller()->InTabletMode();
   const int icon_x_offset = is_tablet_mode ? 0 : kIconOffsetDip;
   const int icon_y_offset =
       is_tablet_mode ? -kRippleCircleRadiusDip : -kIconOffsetDip;
@@ -810,7 +805,7 @@ void AssistantOverlay::WaitingAnimation() {
 
   animation_state_ = AnimationState::WAITING;
 
-  gfx::Point center = host_view_->GetAppListButtonCenterPoint();
+  gfx::Point center = host_view_->GetCenterPoint();
   gfx::Transform transform;
 
   ripple_layer_->SetOpacity(0);
@@ -874,7 +869,7 @@ void AssistantOverlay::EndAnimation() {
       kRippleCircleStartRadiusDip / kRippleCircleInitRadiusDip;
   gfx::Transform transform;
 
-  const gfx::Point center = host_view_->GetAppListButtonCenterPoint();
+  const gfx::Point center = host_view_->GetCenterPoint();
   transform.Translate(center.x() - kRippleCircleStartRadiusDip,
                       center.y() - kRippleCircleStartRadiusDip);
   transform.Scale(scale_factor, scale_factor);
@@ -979,6 +974,10 @@ void AssistantOverlay::HideAnimation() {
 
     background_layer_->SetOpacity(0);
   }
+}
+
+const char* AssistantOverlay::GetClassName() const {
+  return "AssistantOverlay";
 }
 
 }  // namespace ash

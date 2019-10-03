@@ -17,7 +17,6 @@
 #include "base/files/file_util.h"
 #include "base/guid.h"
 #include "base/location.h"
-#include "base/memory/ptr_util.h"
 #include "base/run_loop.h"
 #include "base/single_thread_task_runner.h"
 #include "base/strings/string_number_conversions.h"
@@ -52,8 +51,7 @@
 
 namespace {
 
-// A BrowserContextKeyedServiceFactory::TestingFactoryFunction that creates a
-// HistoryService for a TestingProfile.
+// A testing factory that creates a HistoryService for a TestingProfile.
 std::unique_ptr<KeyedService> BuildHistoryService(
     content::BrowserContext* context) {
   TestingProfile* profile = static_cast<TestingProfile*>(context);
@@ -70,7 +68,7 @@ std::unique_ptr<KeyedService> BuildHistoryService(
 
   std::unique_ptr<history::HistoryService> history_service(
       new history::HistoryService(
-          base::MakeUnique<ChromeHistoryClient>(
+          std::make_unique<ChromeHistoryClient>(
               BookmarkModelFactory::GetForBrowserContext(profile)),
           std::unique_ptr<history::VisitDelegate>()));
   if (history_service->Init(
@@ -102,8 +100,8 @@ static const base::FilePath::CharType kBinaryFileName[] =
     FILE_PATH_LITERAL("spam.exe");
 #endif
 
-static const base::FilePath::CharType kPDFFileName[] =
-    FILE_PATH_LITERAL("download.pdf");
+static const base::FilePath::CharType kTxtFileName[] =
+    FILE_PATH_LITERAL("download.txt");
 
 }  // namespace
 
@@ -168,18 +166,16 @@ class LastDownloadFinderTest : public testing::Test {
 
   TestingProfile* CreateProfile(SafeBrowsingDisposition safe_browsing_opt_in) {
     std::string profile_name("profile");
-    profile_name.append(base::IntToString(++profile_number_));
+    profile_name.append(base::NumberToString(++profile_number_));
 
     // Set up keyed service factories.
     TestingProfile::TestingFactories factories;
     // Build up a custom history service.
-    factories.push_back(std::make_pair(HistoryServiceFactory::GetInstance(),
-                                       &BuildHistoryService));
+    factories.emplace_back(HistoryServiceFactory::GetInstance(),
+                           base::BindRepeating(&BuildHistoryService));
     // Suppress WebHistoryService since it makes network requests.
-    factories.push_back(std::make_pair(
-        WebHistoryServiceFactory::GetInstance(),
-        static_cast<BrowserContextKeyedServiceFactory::TestingFactoryFunction>(
-            NULL)));
+    factories.emplace_back(WebHistoryServiceFactory::GetInstance(),
+                           BrowserContextKeyedServiceFactory::TestingFactory());
 
     // Create prefs for the profile with safe browsing enabled or not.
     std::unique_ptr<sync_preferences::TestingPrefServiceSyncable> prefs(
@@ -199,7 +195,7 @@ class LastDownloadFinderTest : public testing::Test {
         base::UTF8ToUTF16(profile_name),  // user_name
         0,                                // avatar_id
         std::string(),                    // supervised_user_id
-        factories);
+        std::move(factories));
 
     return profile;
   }
@@ -244,35 +240,32 @@ class LastDownloadFinderTest : public testing::Test {
   history::DownloadRow CreateTestDownloadRow(
       const base::FilePath::CharType* file_path) {
     base::Time now(base::Time::Now());
-    return history::DownloadRow(
-        base::FilePath(file_path), base::FilePath(file_path),
-        std::vector<GURL>(1, GURL("http://www.google.com")),  // url_chain
-        GURL("http://referrer.example.com/"),                 // referrer
-        GURL("http://site-url.example.com/"),        // site instance URL
-        GURL("http://tab-url.example.com/"),         // tab URL
-        GURL("http://tab-referrer.example.com/"),    // tab referrer URL
-        std::string(),                               // HTTP method
-        "application/octet-stream",                  // mime_type
-        "application/octet-stream",                  // original_mime_type
-        now - base::TimeDelta::FromMinutes(10),      // start
-        now - base::TimeDelta::FromMinutes(9),       // end
-        std::string(),                               // etag
-        std::string(),                               // last_modified
-        47LL,                                        // received
-        47LL,                                        // total
-        history::DownloadState::COMPLETE,            // download_state
-        history::DownloadDangerType::NOT_DANGEROUS,  // danger_type
-        history::ToHistoryDownloadInterruptReason(
-            content::DOWNLOAD_INTERRUPT_REASON_NONE),  // interrupt_reason,
-        std::string(),                                 // hash
-        download_id_++,                                // id
-        base::GenerateGUID(),                          // GUID
-        false,                                         // download_opened
-        now - base::TimeDelta::FromMinutes(5),         // last_access_time
-        false,                                         // transient
-        std::string(),                                 // ext_id
-        std::string(),                                 // ext_name
-        std::vector<history::DownloadSliceInfo>());    // download_slice_info
+
+    history::DownloadRow row;
+    row.current_path = base::FilePath(file_path);
+    row.target_path = base::FilePath(file_path);
+    row.url_chain.push_back(GURL("http://www.google.com/"));
+    row.referrer_url = GURL("http://referrer.example.com/");
+    row.site_url = GURL("http://site-url.example.com/");
+    row.tab_url = GURL("http://tab-url.example.com/");
+    row.tab_referrer_url = GURL("http://tab-referrer.example.com/");
+    row.mime_type = "application/octet-stream";
+    row.original_mime_type = "application/octet-stream";
+    row.start_time = now - base::TimeDelta::FromMinutes(10);
+    row.end_time = now - base::TimeDelta::FromMinutes(9);
+    row.received_bytes = 47;
+    row.total_bytes = 47;
+    row.state = history::DownloadState::COMPLETE;
+    row.danger_type = history::DownloadDangerType::NOT_DANGEROUS;
+    row.interrupt_reason = history::ToHistoryDownloadInterruptReason(
+        download::DOWNLOAD_INTERRUPT_REASON_NONE);
+    row.id = download_id_++;
+    row.guid = base::GenerateGUID();
+    row.opened = false;
+    row.last_access_time = now - base::TimeDelta::FromMinutes(5);
+    row.transient = false;
+
+    return row;
   }
 
  private:
@@ -352,7 +345,7 @@ TEST_F(LastDownloadFinderTest, SimpleEndToEnd) {
 
   // Add a binary and non-binary download.
   AddDownload(profile, CreateTestDownloadRow(kBinaryFileName));
-  AddDownload(profile, CreateTestDownloadRow(kPDFFileName));
+  AddDownload(profile, CreateTestDownloadRow(kTxtFileName));
 
   std::unique_ptr<ClientIncidentReport_DownloadDetails> last_binary_download;
   std::unique_ptr<ClientIncidentReport_NonBinaryDownloadDetails>
@@ -368,7 +361,7 @@ TEST_F(LastDownloadFinderTest, NonBinaryOnly) {
   TestingProfile* profile = CreateProfile(SAFE_BROWSING_AND_EXTENDED_REPORTING);
 
   // Add a non-binary download.
-  AddDownload(profile, CreateTestDownloadRow(kPDFFileName));
+  AddDownload(profile, CreateTestDownloadRow(kTxtFileName));
 
   std::unique_ptr<ClientIncidentReport_DownloadDetails> last_binary_download;
   std::unique_ptr<ClientIncidentReport_NonBinaryDownloadDetails>

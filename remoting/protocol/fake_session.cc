@@ -4,9 +4,9 @@
 
 #include "remoting/protocol/fake_session.h"
 
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "remoting/protocol/fake_authenticator.h"
 #include "remoting/protocol/session_plugin.h"
@@ -84,14 +84,14 @@ void FakeSession::Close(ErrorCode error) {
       peer->Close(error);
     } else {
       base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-          FROM_HERE, base::Bind(&FakeSession::Close, peer, error),
+          FROM_HERE, base::BindOnce(&FakeSession::Close, peer, error),
           signaling_delay_);
     }
   }
 }
 
 void FakeSession::SendTransportInfo(
-    std::unique_ptr<buzz::XmlElement> transport_info) {
+    std::unique_ptr<jingle_xmpp::XmlElement> transport_info) {
   if (!peer_)
     return;
 
@@ -99,14 +99,15 @@ void FakeSession::SendTransportInfo(
     peer_->ProcessTransportInfo(std::move(transport_info));
   } else {
     base::ThreadTaskRunnerHandle::Get()->PostDelayedTask(
-        FROM_HERE, base::Bind(&FakeSession::ProcessTransportInfo, peer_,
-                              base::Passed(&transport_info)),
+        FROM_HERE,
+        base::BindOnce(&FakeSession::ProcessTransportInfo, peer_,
+                       std::move(transport_info)),
         signaling_delay_);
   }
 }
 
 void FakeSession::ProcessTransportInfo(
-    std::unique_ptr<buzz::XmlElement> transport_info) {
+    std::unique_ptr<jingle_xmpp::XmlElement> transport_info) {
   transport_->ProcessTransportInfo(transport_info.get());
 }
 
@@ -116,14 +117,14 @@ void FakeSession::AddPlugin(SessionPlugin* plugin) {
     if (message) {
       JingleMessage jingle_message;
       jingle_message.AddAttachment(
-          base::MakeUnique<buzz::XmlElement>(*message));
+          std::make_unique<jingle_xmpp::XmlElement>(*message));
       plugin->OnIncomingMessage(*(jingle_message.attachments));
     }
   }
 }
 
 void FakeSession::SetAttachment(size_t round,
-                                std::unique_ptr<buzz::XmlElement> attachment) {
+                                std::unique_ptr<jingle_xmpp::XmlElement> attachment) {
   while (attachments_.size() <= round) {
     attachments_.emplace_back();
   }

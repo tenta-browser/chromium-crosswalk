@@ -12,7 +12,6 @@
 #include "base/callback_forward.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/time.h"
-#include "content/browser/media/media_devices_permission_checker.h"
 #include "content/browser/renderer_host/media/media_stream_manager.h"
 #include "media/audio/audio_device_description.h"
 #include "media/base/audio_parameters.h"
@@ -66,28 +65,34 @@ class CONTENT_EXPORT AudioOutputAuthorizationHandler {
   static void UMALogDeviceAuthorizationTime(base::TimeTicks auth_start_time);
 
  private:
-  void HashDeviceId(
-      AuthorizationCompletedCallback cb,
-      const std::string& raw_device_id,
-      const media::AudioParameters& params,
-      const std::pair<std::string, url::Origin>& salt_and_origin) const;
+  // Helper class for recording traces.
+  class TraceScope;
 
-  void AccessChecked(AuthorizationCompletedCallback cb,
+  void HashDeviceId(std::unique_ptr<TraceScope> trace_scope,
+                    AuthorizationCompletedCallback cb,
+                    const std::string& raw_device_id,
+                    const MediaDeviceSaltAndOrigin& salt_and_origin) const;
+
+  void AccessChecked(std::unique_ptr<TraceScope> trace_scope,
+                     AuthorizationCompletedCallback cb,
                      const std::string& device_id,
                      std::string salt,
-                     const url::Origin& security_origin,
+                     url::Origin security_origin,
                      bool has_access) const;
 
-  void TranslateDeviceID(AuthorizationCompletedCallback cb,
+  void TranslateDeviceID(std::unique_ptr<TraceScope> trace_scope,
+                         AuthorizationCompletedCallback cb,
                          const std::string& device_id,
                          const std::string& salt,
                          const url::Origin& security_origin,
                          const MediaDeviceEnumeration& enumeration) const;
 
-  void GetDeviceParameters(AuthorizationCompletedCallback cb,
+  void GetDeviceParameters(std::unique_ptr<TraceScope> trace_scope,
+                           AuthorizationCompletedCallback cb,
                            const std::string& raw_device_id) const;
 
   void DeviceParametersReceived(
+      std::unique_ptr<TraceScope> trace_scope,
       AuthorizationCompletedCallback cb,
       const std::string& device_id_for_renderer,
       const std::string& raw_device_id,
@@ -102,7 +107,7 @@ class CONTENT_EXPORT AudioOutputAuthorizationHandler {
   // All access is on the IO thread, and taking a weak pointer to const looks
   // const, so this can be mutable.
   mutable base::WeakPtrFactory<const AudioOutputAuthorizationHandler>
-      weak_factory_;
+      weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(AudioOutputAuthorizationHandler);
 };

@@ -4,18 +4,21 @@
 
 #include "chrome/browser/offline_pages/android/evaluation/offline_page_evaluation_bridge.h"
 
+#include <memory>
+#include <string>
+#include <utility>
+#include <vector>
+
 #include "base/android/callback_android.h"
 #include "base/android/jni_android.h"
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "base/sequenced_task_runner.h"
-#include "base/task_scheduler/post_task.h"
-#include "chrome/browser/net/nqe/ui_network_quality_estimator_service.h"
-#include "chrome/browser/net/nqe/ui_network_quality_estimator_service_factory.h"
+#include "base/task/post_task.h"
+#include "chrome/android/chrome_jni_headers/OfflinePageEvaluationBridge_jni.h"
+#include "chrome/browser/browser_process.h"
 #include "chrome/browser/offline_pages/android/background_scheduler_bridge.h"
-#include "chrome/browser/offline_pages/android/downloads/offline_page_notification_bridge.h"
 #include "chrome/browser/offline_pages/android/evaluation/evaluation_test_scheduler.h"
 #include "chrome/browser/offline_pages/background_loader_offliner.h"
 #include "chrome/browser/offline_pages/offline_page_model_factory.h"
@@ -29,14 +32,11 @@
 #include "components/offline_pages/core/background/request_notifier.h"
 #include "components/offline_pages/core/background/request_queue.h"
 #include "components/offline_pages/core/background/request_queue_store.h"
-#include "components/offline_pages/core/background/request_queue_store_sql.h"
 #include "components/offline_pages/core/background/save_page_request.h"
 #include "components/offline_pages/core/downloads/download_notifying_observer.h"
 #include "components/offline_pages/core/offline_page_item.h"
 #include "components/offline_pages/core/offline_page_model.h"
-#include "components/offline_pages/core/offline_pages_ukm_reporter.h"
 #include "content/public/browser/browser_context.h"
-#include "jni/OfflinePageEvaluationBridge_jni.h"
 
 using base::android::ConvertJavaStringToUTF8;
 using base::android::ConvertUTF16ToJavaString;
@@ -45,6 +45,10 @@ using base::android::JavaParamRef;
 using base::android::JavaRef;
 using base::android::ScopedJavaGlobalRef;
 using base::android::ScopedJavaLocalRef;
+
+namespace network {
+class NetworkQualityTracker;
+}
 
 namespace offline_pages {
 namespace android {
@@ -111,12 +115,7 @@ void GetAllPagesCallback(
   JNIEnv* env = base::android::AttachCurrentThread();
   JNI_OfflinePageEvaluationBridge_ToJavaOfflinePageList(env, j_result_obj,
                                                         result);
-  base::android::RunCallbackAndroid(j_callback_obj, j_result_obj);
-}
-
-void OnPushRequestsDone(const ScopedJavaGlobalRef<jobject>& j_callback_obj,
-                        bool result) {
-  base::android::RunCallbackAndroid(j_callback_obj, result);
+  base::android::RunObjectCallbackAndroid(j_callback_obj, j_result_obj);
 }
 
 void OnGetAllRequestsDone(
@@ -127,13 +126,13 @@ void OnGetAllRequestsDone(
   ScopedJavaLocalRef<jobjectArray> j_result_obj =
       JNI_OfflinePageEvaluationBridge_CreateJavaSavePageRequests(
           env, std::move(all_requests));
-  base::android::RunCallbackAndroid(j_callback_obj, j_result_obj);
+  base::android::RunObjectCallbackAndroid(j_callback_obj, j_result_obj);
 }
 
 void OnRemoveRequestsDone(const ScopedJavaGlobalRef<jobject>& j_callback_obj,
                           const MultipleItemStatuses& removed_request_results) {
-  base::android::RunCallbackAndroid(j_callback_obj,
-                                    int(removed_request_results.size()));
+  base::android::RunIntCallbackAndroid(
+      j_callback_obj, static_cast<int>(removed_request_results.size()));
 }
 
 std::unique_ptr<KeyedService> GetTestingRequestCoordinator(
@@ -146,28 +145,20 @@ std::unique_ptr<KeyedService> GetTestingRequestCoordinator(
   base::FilePath queue_store_path =
       profile->GetPath().Append(kTestRequestQueueDirname);
 
-  std::unique_ptr<RequestQueueStoreSQL> queue_store(
-      new RequestQueueStoreSQL(background_task_runner, queue_store_path));
+  std::unique_ptr<RequestQueueStore> queue_store(
+      new RequestQueueStore(background_task_runner, queue_store_path));
   std::unique_ptr<RequestQueue> queue(new RequestQueue(std::move(queue_store)));
   std::unique_ptr<android::EvaluationTestScheduler> scheduler(
       new android::EvaluationTestScheduler());
-  net::NetworkQualityEstimator::NetworkQualityProvider*
-      network_quality_estimator =
-          UINetworkQualityEstimatorServiceFactory::GetForProfile(profile);
-  std::unique_ptr<OfflinePagesUkmReporter> ukm_reporter(
-      new OfflinePagesUkmReporter());
+  network::NetworkQualityTracker* network_quality_tracker =
+      g_browser_process->network_quality_tracker();
   std::unique_ptr<RequestCoordinator> request_coordinator =
-      base::MakeUnique<RequestCoordinator>(
+      std::make_unique<RequestCoordinator>(
           std::move(policy), std::move(offliner), std::move(queue),
-          std::move(scheduler), network_quality_estimator,
-          std::move(ukm_reporter));
+          std::move(scheduler), network_quality_tracker);
   request_coordinator->SetInternalStartProcessingCallbackForTest(
       base::Bind(&android::EvaluationTestScheduler::ImmediateScheduleCallback,
                  base::Unretained(scheduler.get())));
-
-  DownloadNotifyingObserver::CreateAndStartObserving(
-      request_coordinator.get(),
-      base::MakeUnique<android::OfflinePageNotificationBridge>());
 
   return std::move(request_coordinator);
 }
@@ -190,7 +181,8 @@ RequestCoordinator* GetRequestCoordinator(Profile* profile,
   }
   return static_cast<RequestCoordinator*>(
       RequestCoordinatorFactory::GetInstance()->SetTestingFactoryAndUse(
-          profile, &GetTestBackgroundLoaderRequestCoordinator));
+          profile,
+          base::BindRepeating(&GetTestBackgroundLoaderRequestCoordinator)));
 }
 
 }  // namespace
@@ -257,7 +249,7 @@ void OfflinePageEvaluationBridge::OfflinePageAdded(
     const OfflinePageItem& added_page) {}
 
 void OfflinePageEvaluationBridge::OfflinePageDeleted(
-    const OfflinePageModel::DeletedPageInfo& page_info) {}
+    const OfflinePageItem& item) {}
 
 // Implement RequestCoordinator::Observer
 void OfflinePageEvaluationBridge::OnAdded(const SavePageRequest& request) {
@@ -328,10 +320,10 @@ bool OfflinePageEvaluationBridge::PushRequestProcessing(
     const JavaParamRef<jobject>& j_callback_obj) {
   ScopedJavaGlobalRef<jobject> j_callback_ref(j_callback_obj);
   DCHECK(request_coordinator_);
-  base::android::RunCallbackAndroid(j_callback_obj, false);
+  base::android::RunBooleanCallbackAndroid(j_callback_obj, false);
 
-  return request_coordinator_->StartImmediateProcessing(
-      base::Bind(&OnPushRequestsDone, j_callback_ref));
+  return request_coordinator_->StartImmediateProcessing(base::BindRepeating(
+      &base::android::RunBooleanCallbackAndroid, j_callback_ref));
 }
 
 void OfflinePageEvaluationBridge::SavePageLater(

@@ -14,13 +14,14 @@ import android.widget.RemoteViews;
 
 /**
  * Abstraction over Notification.Builder and NotificationCompat.Builder interfaces.
- *
- * TODO(awdf) Remove this once we've updated to revision 26 of the support library.
  */
 public interface ChromeNotificationBuilder {
     ChromeNotificationBuilder setAutoCancel(boolean autoCancel);
 
+    @Deprecated
     ChromeNotificationBuilder setContentIntent(PendingIntent contentIntent);
+
+    ChromeNotificationBuilder setContentIntent(PendingIntentProvider contentIntent);
 
     ChromeNotificationBuilder setContentTitle(CharSequence title);
 
@@ -29,6 +30,8 @@ public interface ChromeNotificationBuilder {
     ChromeNotificationBuilder setSmallIcon(int icon);
 
     ChromeNotificationBuilder setSmallIcon(Icon icon);
+
+    ChromeNotificationBuilder setColor(int argb);
 
     ChromeNotificationBuilder setTicker(CharSequence text);
 
@@ -46,13 +49,28 @@ public interface ChromeNotificationBuilder {
 
     ChromeNotificationBuilder setShowWhen(boolean showWhen);
 
+    @Deprecated
     ChromeNotificationBuilder addAction(int icon, CharSequence title, PendingIntent intent);
 
+    ChromeNotificationBuilder addAction(int icon, CharSequence title, PendingIntentProvider intent,
+            @NotificationUmaTracker.ActionType int actionType);
+
+    @Deprecated
     ChromeNotificationBuilder addAction(Notification.Action action);
 
+    ChromeNotificationBuilder addAction(Notification.Action action, int flags,
+            @NotificationUmaTracker.ActionType int actionType);
+
+    @Deprecated
     ChromeNotificationBuilder setDeleteIntent(PendingIntent intent);
 
-    ChromeNotificationBuilder setPriority(int pri);
+    ChromeNotificationBuilder setDeleteIntent(PendingIntentProvider intent);
+
+    /**
+     * Sets the priority of single notification on Android versions prior to Oreo.
+     * (From Oreo onwards, priority is instead determined by channel importance.)
+     */
+    ChromeNotificationBuilder setPriorityBeforeO(int pri);
 
     ChromeNotificationBuilder setProgress(int max, int percentage, boolean indeterminate);
 
@@ -81,9 +99,14 @@ public interface ChromeNotificationBuilder {
     ChromeNotificationBuilder setMediaStyle(MediaSessionCompat session, int[] actions,
             PendingIntent intent, boolean showCancelButton);
 
-    Notification buildWithBigContentView(RemoteViews bigView);
+    ChromeNotificationBuilder setCategory(String category);
 
-    Notification buildWithBigTextStyle(String bigText);
+    ChromeNotification buildWithBigContentView(RemoteViews bigView);
 
+    ChromeNotification buildWithBigTextStyle(String bigText);
+
+    @Deprecated
     Notification build();
+
+    ChromeNotification buildChromeNotification();
 }

@@ -11,6 +11,9 @@
 #include <vector>
 
 #include "base/macros.h"
+#include "base/memory/ref_counted.h"
+#include "base/sequence_checker.h"
+#include "base/sequenced_task_runner.h"
 
 namespace re2 {
 class RE2;
@@ -29,11 +32,16 @@ struct CustomPatternWithoutContext {
 
 class AnonymizerTool {
  public:
-  AnonymizerTool();
+  // |first_party_extension_ids| is a null terminated array of all the 1st
+  // party extension IDs whose URLs won't be redacted. It is OK to pass null for
+  // that value if it's OK to redact those URLs or they won't be present.
+  AnonymizerTool(const char* const* first_party_extension_ids);
   ~AnonymizerTool();
 
   // Returns an anonymized version of |input|. PII-sensitive data (such as MAC
   // addresses) in |input| is replaced with unique identifiers.
+  // This is an expensive operation. Make sure not to execute this on the UI
+  // thread.
   std::string Anonymize(const std::string& input);
 
  private:
@@ -51,6 +59,10 @@ class AnonymizerTool {
       const std::string& input,
       const CustomPatternWithoutContext& pattern,
       std::map<std::string, std::string>* identifier_space);
+
+  // Null-terminated list of first party extension IDs. We need to have this
+  // passed into us because we can't refer to the code where these are defined.
+  const char* const* first_party_extension_ids_;  // Not owned.
 
   // Map of MAC addresses discovered in anonymized strings to anonymized
   // representations. 11:22:33:44:55:66 gets anonymized to 11:22:33:00:00:01,
@@ -70,7 +82,32 @@ class AnonymizerTool {
   // pattern. Key is the string representation of the RegEx.
   std::map<std::string, std::unique_ptr<re2::RE2>> regexp_cache_;
 
+  SEQUENCE_CHECKER(sequence_checker_);
+
   DISALLOW_COPY_AND_ASSIGN(AnonymizerTool);
+};
+
+// A container for a AnonymizerTool that is thread-safely ref-countable.
+// This is useful for a class that wants to post an async anonymization task
+// to a background sequence runner and not deal with its own life-cycle ending
+// while the AnonymizerTool is busy on another sequence.
+class AnonymizerToolContainer
+    : public base::RefCountedThreadSafe<AnonymizerToolContainer> {
+ public:
+  explicit AnonymizerToolContainer(
+      scoped_refptr<base::SequencedTaskRunner> task_runner,
+      const char* const* first_party_extension_ids);
+
+  // Returns a pointer to the instance of this anonymier. May only be called
+  // on |task_runner_|.
+  AnonymizerTool* Get();
+
+ private:
+  friend class base::RefCountedThreadSafe<AnonymizerToolContainer>;
+  ~AnonymizerToolContainer();
+
+  std::unique_ptr<AnonymizerTool> anonymizer_;
+  scoped_refptr<base::SequencedTaskRunner> task_runner_;
 };
 
 }  // namespace feedback

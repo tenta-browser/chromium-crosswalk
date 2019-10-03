@@ -31,6 +31,14 @@ class ChromeNetworkDelegateBrowserTest : public InProcessBrowserTest {
     ChromeNetworkDelegate::EnableAccessToAllFilesForTesting(false);
   }
 
+  void SetUpOnMainThread() override {
+    base::FilePath temp_dir;
+    ASSERT_TRUE(base::PathService::Get(base::DIR_TEMP, &temp_dir));
+    ASSERT_TRUE(scoped_temp_dir_.CreateUniqueTempDirUnderPath(temp_dir));
+  }
+
+  base::ScopedTempDir scoped_temp_dir_;
+
  private:
   DISALLOW_COPY_AND_ASSIGN(ChromeNetworkDelegateBrowserTest);
 };
@@ -39,7 +47,7 @@ class ChromeNetworkDelegateBrowserTest : public InProcessBrowserTest {
 // via file: scheme is rejected with ERR_ACCESS_DENIED.
 IN_PROC_BROWSER_TEST_F(ChromeNetworkDelegateBrowserTest, AccessToFile) {
   base::FilePath test_dir;
-  ASSERT_TRUE(PathService::Get(chrome::DIR_TEST_DATA, &test_dir));
+  ASSERT_TRUE(base::PathService::Get(chrome::DIR_TEST_DATA, &test_dir));
   base::FilePath test_file = test_dir.AppendASCII("empty.html");
   ASSERT_FALSE(
       ChromeNetworkDelegate::IsAccessAllowed(test_file, base::FilePath()));
@@ -58,16 +66,14 @@ IN_PROC_BROWSER_TEST_F(ChromeNetworkDelegateBrowserTest, AccessToFile) {
 // ERR_ACCESS_DENIED.
 IN_PROC_BROWSER_TEST_F(ChromeNetworkDelegateBrowserTest, AccessToSymlink) {
   base::FilePath test_dir;
-  ASSERT_TRUE(PathService::Get(chrome::DIR_TEST_DATA, &test_dir));
+  ASSERT_TRUE(base::PathService::Get(chrome::DIR_TEST_DATA, &test_dir));
   base::FilePath test_file = test_dir.AppendASCII("empty.html");
   ASSERT_FALSE(
       ChromeNetworkDelegate::IsAccessAllowed(test_file, base::FilePath()));
 
   base::FilePath temp_dir;
-  ASSERT_TRUE(PathService::Get(base::DIR_TEMP, &temp_dir));
-  base::ScopedTempDir scoped_temp_dir;
-  ASSERT_TRUE(scoped_temp_dir.CreateUniqueTempDirUnderPath(temp_dir));
-  base::FilePath symlink = scoped_temp_dir.GetPath().AppendASCII("symlink");
+  ASSERT_TRUE(base::PathService::Get(base::DIR_TEMP, &temp_dir));
+  base::FilePath symlink = scoped_temp_dir_.GetPath().AppendASCII("symlink");
   ASSERT_TRUE(base::CreateSymbolicLink(test_file, symlink));
   ASSERT_TRUE(
       ChromeNetworkDelegate::IsAccessAllowed(symlink, base::FilePath()));

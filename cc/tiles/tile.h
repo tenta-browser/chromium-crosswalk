@@ -8,7 +8,6 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "cc/paint/draw_image.h"
 #include "cc/raster/tile_task.h"
@@ -51,7 +50,10 @@ class CC_EXPORT Tile {
 
   typedef uint64_t Id;
 
+  Tile(const Tile&) = delete;
   ~Tile();
+
+  Tile& operator=(const Tile&) = delete;
 
   Id id() const {
     return id_;
@@ -65,6 +67,10 @@ class CC_EXPORT Tile {
   bool required_for_draw() const { return required_for_draw_; }
   void set_required_for_draw(bool is_required) {
     required_for_draw_ = is_required;
+  }
+
+  bool is_prepaint() const {
+    return !required_for_activation() && !required_for_draw();
   }
 
   bool use_picture_analysis() const {
@@ -176,8 +182,6 @@ class CC_EXPORT Tile {
   // rasterize a resource with checker images.
   bool raster_task_scheduled_with_checker_images_ = false;
   scoped_refptr<TileTask> raster_task_;
-
-  DISALLOW_COPY_AND_ASSIGN(Tile);
 };
 
 }  // namespace cc

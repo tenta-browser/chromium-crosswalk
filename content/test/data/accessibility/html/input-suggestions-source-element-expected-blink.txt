@@ -1,3 +1,4 @@
 rootWebArea
 ++genericContainer
-++++textFieldWithComboBox haspopup autoComplete='list'
+++++textFieldWithComboBox autoComplete='list' haspopup=listbox
+++++++genericContainer

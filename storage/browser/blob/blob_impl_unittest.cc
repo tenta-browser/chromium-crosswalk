@@ -4,10 +4,16 @@
 
 #include "storage/browser/blob/blob_impl.h"
 
+#include <limits>
+#include <memory>
+#include <string>
+#include <utility>
+
+#include "base/bind.h"
 #include "base/run_loop.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "base/test/scoped_task_environment.h"
-#include "mojo/common/data_pipe_drainer.h"
+#include "mojo/public/cpp/system/data_pipe_drainer.h"
 #include "net/base/net_errors.h"
 #include "storage/browser/blob/blob_data_builder.h"
 #include "storage/browser/blob/blob_data_handle.h"
@@ -18,7 +24,7 @@ namespace storage {
 
 namespace {
 
-class DataPipeReader : public mojo::common::DataPipeDrainer::Client {
+class DataPipeReader : public mojo::DataPipeDrainer::Client {
  public:
   DataPipeReader(std::string* data_out, base::OnceClosure done_callback)
       : data_out_(data_out), done_callback_(std::move(done_callback)) {}
@@ -61,21 +67,21 @@ class MockBlobReaderClient : public blink::mojom::BlobReaderClient {
 
 class BlobImplTest : public testing::Test {
  public:
-  void SetUp() override { context_ = base::MakeUnique<BlobStorageContext>(); }
+  void SetUp() override { context_ = std::make_unique<BlobStorageContext>(); }
 
   std::unique_ptr<BlobDataHandle> CreateBlobFromString(
       const std::string& uuid,
       const std::string& contents) {
-    BlobDataBuilder builder(uuid);
-    builder.set_content_type("text/plain");
-    builder.AppendData(contents);
-    return context_->AddFinishedBlob(builder);
+    auto builder = std::make_unique<BlobDataBuilder>(uuid);
+    builder->set_content_type("text/plain");
+    builder->AppendData(contents);
+    return context_->AddFinishedBlob(std::move(builder));
   }
 
   std::string UUIDFromBlob(blink::mojom::Blob* blob) {
     base::RunLoop loop;
     std::string received_uuid;
-    blob->GetInternalUUID(base::Bind(
+    blob->GetInternalUUID(base::BindOnce(
         [](base::Closure quit_closure, std::string* uuid_out,
            const std::string& uuid) {
           *uuid_out = uuid;
@@ -90,7 +96,7 @@ class BlobImplTest : public testing::Test {
     base::RunLoop loop;
     std::string data;
     DataPipeReader reader(&data, loop.QuitClosure());
-    mojo::common::DataPipeDrainer drainer(&reader, std::move(pipe));
+    mojo::DataPipeDrainer drainer(&reader, std::move(pipe));
     loop.Run();
     return data;
   }
@@ -268,6 +274,36 @@ TEST_F(BlobImplTest, ReadRange_TooLargeLength) {
 
   std::string received = ReadDataPipe(std::move(pipe.consumer_handle));
   EXPECT_EQ(kContents.substr(2, 15), received);
+
+  client_binding.FlushForTesting();
+  EXPECT_TRUE(client.calculated_size_);
+  EXPECT_EQ(kContents.size(), client.total_size_);
+  EXPECT_EQ(kContents.size() - 2, client.expected_content_size_);
+
+  EXPECT_TRUE(client.completed_);
+  EXPECT_EQ(net::OK, client.status_);
+  EXPECT_EQ(kContents.size() - 2, client.data_length_);
+}
+
+TEST_F(BlobImplTest, ReadRange_UnboundedLength) {
+  const std::string kId = "id";
+  const std::string kContents = "hello world";
+  auto handle = CreateBlobFromString(kId, kContents);
+
+  blink::mojom::BlobPtr ptr;
+  BlobImpl::Create(std::move(handle), MakeRequest(&ptr));
+
+  MockBlobReaderClient client;
+  blink::mojom::BlobReaderClientPtr client_ptr;
+  mojo::Binding<blink::mojom::BlobReaderClient> client_binding(
+      &client, MakeRequest(&client_ptr));
+
+  mojo::DataPipe pipe;
+  ptr->ReadRange(2, std::numeric_limits<uint64_t>::max(),
+                 std::move(pipe.producer_handle), std::move(client_ptr));
+
+  std::string received = ReadDataPipe(std::move(pipe.consumer_handle));
+  EXPECT_EQ(kContents.substr(2, kContents.size()), received);
 
   client_binding.FlushForTesting();
   EXPECT_TRUE(client.calculated_size_);

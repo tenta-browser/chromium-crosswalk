@@ -9,7 +9,7 @@
 #include <vector>
 
 #include "base/macros.h"
-#include "chromecast/media/cma/backend/mixer_output_stream.h"
+#include "chromecast/public/media/mixer_output_stream.h"
 
 #include <alsa/asoundlib.h>
 
@@ -26,13 +26,12 @@ class MixerOutputStreamAlsa : public MixerOutputStream {
 
   void SetAlsaWrapperForTest(std::unique_ptr<AlsaWrapper> alsa);
 
-  // MixerOutputStream interface.
-  bool IsFixedSampleRate() override;
+  // MixerOutputStream implementation:
   bool Start(int requested_sample_rate, int channels) override;
-  bool GetTimeUntilUnderrun(base::TimeDelta* result) override;
   int GetSampleRate() override;
   MediaPipelineBackend::AudioDecoder::RenderingDelay GetRenderingDelay()
       override;
+  int OptimalWriteFramesCount() override;
   bool Write(const float* data,
              int data_size,
              bool* out_playback_interrupted) override;
@@ -55,10 +54,12 @@ class MixerOutputStreamAlsa : public MixerOutputStream {
   // rate the device supports.
   int DetermineOutputRate(int requested_rate);
 
-  void UpdateRenderingDelay(int newly_pushed_frames);
+  void UpdateRenderingDelay();
 
-  // Value of --alsa-fixed-output-sample-rate flag if any.
-  int fixed_sample_rate_ = kInvalidSampleRate;
+  // Checks ALSA output for current state and if it's suspended, tries to
+  // recover.
+  // Returns true if ALSA device is recovered successfully.
+  bool MaybeRecoverDeviceFromSuspendedState();
 
   std::unique_ptr<AlsaWrapper> alsa_;
 

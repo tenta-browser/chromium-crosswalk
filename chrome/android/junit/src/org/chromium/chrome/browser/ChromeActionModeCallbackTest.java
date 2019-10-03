@@ -16,17 +16,16 @@ import org.junit.runner.RunWith;
 import org.mockito.Mock;
 import org.mockito.Mockito;
 import org.mockito.MockitoAnnotations;
-import org.robolectric.RuntimeEnvironment;
 import org.robolectric.annotation.Config;
 
 import org.chromium.base.Callback;
-import org.chromium.base.ContextUtils;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.browser.firstrun.FirstRunStatus;
 import org.chromium.chrome.browser.locale.LocaleManager;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.content.R;
 import org.chromium.content_public.browser.ActionModeCallbackHelper;
+import org.chromium.content_public.browser.WebContents;
 import org.chromium.testing.local.LocalRobolectricTestRunner;
 
 /**
@@ -44,16 +43,26 @@ public class ChromeActionModeCallbackTest {
     @Mock
     private Menu mMenu;
 
-    private ChromeActionModeCallback mActionModeCallback;
+    private class TestChromeActionModeCallback extends ChromeActionModeCallback {
+        public TestChromeActionModeCallback(Tab tab, ActionModeCallbackHelper helper) {
+            super(tab, null);
+        }
+
+        @Override
+        public ActionModeCallbackHelper getActionModeCallbackHelper(WebContents webContents) {
+            return mActionModeCallbackHelper;
+        }
+    }
+
+    private TestChromeActionModeCallback mActionModeCallback;
 
     @Before
     public void setUp() throws Exception {
         MockitoAnnotations.initMocks(this);
-        ContextUtils.initApplicationContextForTests(RuntimeEnvironment.application);
         RecordUserAction.setDisabledForTests(true);
 
-        mActionModeCallback = Mockito.spy(new ChromeActionModeCallback(
-                RuntimeEnvironment.application, mTab, mActionModeCallbackHelper));
+        mActionModeCallback =
+                Mockito.spy(new TestChromeActionModeCallback(mTab, mActionModeCallbackHelper));
     }
 
     @After

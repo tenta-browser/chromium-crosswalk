@@ -20,10 +20,16 @@
 #include "media/formats/mp4/parse_result.h"
 #include "media/formats/mp4/track_run_iterator.h"
 
+#if BUILDFLAG(USE_PROPRIETARY_CODECS)
+#include "media/formats/mp4/aac.h"
+#endif
+
 namespace media {
 namespace mp4 {
 
 struct Movie;
+struct MovieHeader;
+struct TrackHeader;
 class BoxReader;
 
 class MEDIA_EXPORT MP4StreamParser : public StreamParser {
@@ -33,7 +39,7 @@ class MEDIA_EXPORT MP4StreamParser : public StreamParser {
                   bool has_flac);
   ~MP4StreamParser() override;
 
-  void Init(const InitCB& init_cb,
+  void Init(InitCB init_cb,
             const NewConfigCB& config_cb,
             const NewBuffersCB& new_buffers_cb,
             bool ignore_text_tracks,
@@ -42,7 +48,12 @@ class MEDIA_EXPORT MP4StreamParser : public StreamParser {
             const EndMediaSegmentCB& end_of_segment_cb,
             MediaLog* media_log) override;
   void Flush() override;
+  bool GetGenerateTimestampsFlag() const override;
   bool Parse(const uint8_t* buf, int size) override;
+
+  // Calculates the rotation value from the track header display matricies.
+  VideoTransformation CalculateRotation(const TrackHeader& track,
+                                        const MovieHeader& movie);
 
  private:
   enum State {
@@ -73,9 +84,11 @@ class MEDIA_EXPORT MP4StreamParser : public StreamParser {
   void ChangeState(State new_state);
 
   bool EmitConfigs();
+#if BUILDFLAG(USE_PROPRIETARY_CODECS)
   bool PrepareAACBuffer(const AAC& aac_config,
                         std::vector<uint8_t>* frame_buf,
                         std::vector<SubsampleEntry>* subsamples) const;
+#endif
   ParseResult EnqueueSample(BufferQueueMap* buffers);
   bool SendAndFlushSamples(BufferQueueMap* buffers);
 
@@ -128,13 +141,15 @@ class MEDIA_EXPORT MP4StreamParser : public StreamParser {
   const std::set<int> audio_object_types_;
   const bool has_sbr_;
   const bool has_flac_;
-  std::map<uint32_t, bool> is_track_encrypted_;
 
   // Tracks the number of MEDIA_LOGS for skipping empty trun samples.
   int num_empty_samples_skipped_;
 
   // Tracks the number of MEDIA_LOGS for invalid bitstream conversion.
   int num_invalid_conversions_;
+
+  // Tracks the number of MEDIA_LOGS for video keyframe MP4<->frame mismatch.
+  int num_video_keyframe_mismatches_;
 
   DISALLOW_COPY_AND_ASSIGN(MP4StreamParser);
 };

@@ -9,6 +9,7 @@
 #include <string>
 
 #include "base/memory/ref_counted.h"
+#include "build/build_config.h"
 #include "components/translate/core/browser/translate_prefs.h"
 #include "components/translate/core/browser/translate_step.h"
 #include "components/translate/core/common/translate_errors.h"
@@ -20,17 +21,11 @@ namespace infobars {
 class InfoBar;
 }  // namespace infobars
 
-namespace metrics {
-class TranslateEventProto;
-}  // namespace metrics
-
 namespace translate {
 
 class TranslateAcceptLanguages;
 class TranslateDriver;
 class TranslateInfoBarDelegate;
-
-struct LanguageDetectionDetails;
 
 // A client interface that needs to be supplied to TranslateManager by the
 // embedder.
@@ -39,7 +34,7 @@ struct LanguageDetectionDetails;
 // TranslateManager is used (e.g. a single tab).
 class TranslateClient {
  public:
-  virtual ~TranslateClient() {};
+  virtual ~TranslateClient() {}
 
   // Gets the TranslateDriver associated with the client.
   virtual TranslateDriver* GetTranslateDriver() = 0;
@@ -53,28 +48,20 @@ class TranslateClient {
   // Returns the associated TranslateAcceptLanguages.
   virtual TranslateAcceptLanguages* GetTranslateAcceptLanguages() = 0;
 
-  // Returns the resource ID of the icon to be shown for the Translate infobars.
-  virtual int GetInfobarIconID() const = 0;
-
-  // Record language detection event.
-  virtual void RecordLanguageDetectionEvent(
-      const LanguageDetectionDetails& details) const = 0;
-
-  // Record translate event.
-  // This is for user ID keyed event logging.
-  // This function will take metrics::TranslateEventProto and log the evnet that
-  // we care about.
-  virtual void RecordTranslateEvent(const metrics::TranslateEventProto&) = 0;
-
-#if !defined(USE_AURA)
+#if defined(OS_ANDROID) || defined(OS_IOS)
   // Returns a translate infobar that owns |delegate|.
   virtual std::unique_ptr<infobars::InfoBar> CreateInfoBar(
       std::unique_ptr<TranslateInfoBarDelegate> delegate) const = 0;
+
+  // Returns the resource ID of the icon to be shown for the Translate infobars.
+  virtual int GetInfobarIconID() const = 0;
 #endif
 
   // Called when the embedder should present UI to the user corresponding to the
-  // user's current |step|.
-  virtual void ShowTranslateUI(translate::TranslateStep step,
+  // user's current |step|. Returns false if the method decided not to show the
+  // UI (e.g. because of TranslateRanker overrides, or same-language
+  // navigation).
+  virtual bool ShowTranslateUI(translate::TranslateStep step,
                                const std::string& source_language,
                                const std::string& target_language,
                                TranslateErrors::Type error_type,

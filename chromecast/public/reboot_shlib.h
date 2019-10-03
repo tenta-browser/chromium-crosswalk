@@ -15,6 +15,7 @@ namespace chromecast {
 // All methods in the RebootShlib interface can be called from any thread.
 class CHROMECAST_EXPORT RebootShlib {
  public:
+  // GENERATED_JAVA_ENUM_PACKAGE: com.google.android.apps.cast
   enum RebootSource {
     // A default value to use if the source of a reboot is not known.
     UNKNOWN = 0,
@@ -50,13 +51,27 @@ class CHROMECAST_EXPORT RebootShlib {
     // detected.
     CRASH_UPLOADER = 7,
 
-    // A reboot caused by an FDR  related source.
+    // A reboot caused by an FDR related source.
     // Note: Calling RebootNow(RebootSource::FDR) does not imply that
     // an FDR must happen upon reboot; it is simply an indicator that a reboot
     // request is coming from an FDR-related source.
     // Only if SetFdrForNextReboot() has been called must reboot to result
     // in an OTA update.
     FDR = 8,
+
+    // A reboot caused by hardware watchdog. This requires additional
+    // information from the SoC. Otherwise, it can be categorized as forced.
+    HW_WATCHDOG = 9,
+
+    // A reboot caused by other software reason that is not listed above.
+    SW_OTHER = 10,
+
+    // A reboot caused by overheat.
+    OVERHEAT = 11,
+
+    // The device got into a state such that it needs to regenerate the cloud
+    // device id.
+    REGENERATE_CLOUD_ID = 12,
   };
 
   // Initializes any platform-specific reboot systems.

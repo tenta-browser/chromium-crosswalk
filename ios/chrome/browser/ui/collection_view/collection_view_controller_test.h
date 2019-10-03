@@ -9,7 +9,6 @@
 
 #include "base/compiler_specific.h"
 #import "base/ios/block_types.h"
-#import "base/mac/scoped_nsobject.h"
 #import "ios/chrome/test/block_cleanup_test.h"
 #import "ios/third_party/material_components_ios/src/components/CollectionCells/src/MaterialCollectionCells.h"
 
@@ -72,6 +71,14 @@ class CollectionViewControllerTest : public BlockCleanupTest {
   // items in a dedicated section.
   void CheckSectionFooterWithId(int expected_text_id, int section);
 
+  // Verifies that the text cell at |item| in |section| has a text property
+  // which matches |expected_title|.
+  void CheckTextCellText(NSString* expected_text, int section, int item);
+
+  // Verifies that the text cell at |item| in |section| has a text property
+  // which matches the l10n string for |expected_title_id|.
+  void CheckTextCellTextWithId(int expected_text_id, int section, int item);
+
   // Verifies that the text cell at |item| in |section| has a title which
   // matches |expected_title|.
   void CheckTextCellTitle(NSString* expected_title, int section, int item);
@@ -122,7 +129,7 @@ class CollectionViewControllerTest : public BlockCleanupTest {
   void DeleteItem(int section, int item, ProceduralBlock completion_block);
 
  private:
-  base::scoped_nsobject<CollectionViewController> controller_;
+  CollectionViewController* controller_;
 };
 
 #endif  // IOS_CHROME_BROWSER_UI_COLLECTION_VIEW_COLLECTION_VIEW_CONTROLLER_TEST_H_

@@ -5,7 +5,6 @@
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/values.h"
 #include "extensions/browser/value_store/value_store_change.h"
 #include "extensions/common/value_builder.h"
@@ -74,8 +73,8 @@ TEST(ValueStoreChangeTest, ToJson) {
       "key.with.dots", value->CreateDeepCopy(), value->CreateDeepCopy()));
 
   std::string json = ValueStoreChange::ToJson(change_list);
-  std::unique_ptr<base::Value> from_json(base::JSONReader::Read(json));
-  ASSERT_TRUE(from_json.get());
+  base::Optional<base::Value> from_json = base::JSONReader::Read(json);
+  ASSERT_TRUE(from_json);
 
   DictionaryBuilder v1(*value);
   DictionaryBuilder v2(*value);

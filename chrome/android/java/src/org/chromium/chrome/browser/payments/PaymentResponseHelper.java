@@ -8,7 +8,8 @@ import org.chromium.chrome.browser.autofill.PersonalDataManager;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.AutofillProfile;
 import org.chromium.chrome.browser.autofill.PersonalDataManager.NormalizedAddressRequestDelegate;
 import org.chromium.chrome.browser.autofill.PhoneNumberUtil;
-import org.chromium.chrome.browser.payments.ui.PaymentOption;
+import org.chromium.chrome.browser.widget.prefeditor.EditableOption;
+import org.chromium.payments.mojom.PayerDetail;
 import org.chromium.payments.mojom.PaymentResponse;
 
 /**
@@ -41,10 +42,11 @@ public class PaymentResponseHelper implements NormalizedAddressRequestDelegate {
      * @param selectedContact         The contact info picked by the user.
      * @param delegate                The object that will recieve the completed PaymentResponse.
      */
-    public PaymentResponseHelper(PaymentOption selectedShippingAddress,
-            PaymentOption selectedShippingOption, PaymentOption selectedContact,
+    public PaymentResponseHelper(EditableOption selectedShippingAddress,
+            EditableOption selectedShippingOption, EditableOption selectedContact,
             PaymentResponseRequesterDelegate delegate) {
         mPaymentResponse = new PaymentResponse();
+        mPaymentResponse.payer = new PayerDetail();
 
         mDelegate = delegate;
 
@@ -52,14 +54,14 @@ public class PaymentResponseHelper implements NormalizedAddressRequestDelegate {
         if (selectedContact != null) {
             // Contacts are created in PaymentRequestImpl.init(). These should all be instances of
             // AutofillContact.
-            mPaymentResponse.payerName = ((AutofillContact) selectedContact).getPayerName();
-            mPaymentResponse.payerPhone = ((AutofillContact) selectedContact).getPayerPhone();
-            mPaymentResponse.payerEmail = ((AutofillContact) selectedContact).getPayerEmail();
+            mPaymentResponse.payer.name = ((AutofillContact) selectedContact).getPayerName();
+            mPaymentResponse.payer.phone = ((AutofillContact) selectedContact).getPayerPhone();
+            mPaymentResponse.payer.email = ((AutofillContact) selectedContact).getPayerEmail();
 
             // Normalize the phone number only if it's not null since this calls native code.
-            if (mPaymentResponse.payerPhone != null) {
-                mPaymentResponse.payerPhone =
-                        PhoneNumberUtil.formatForResponse(mPaymentResponse.payerPhone);
+            if (mPaymentResponse.payer.phone != null) {
+                mPaymentResponse.payer.phone =
+                        PhoneNumberUtil.formatForResponse(mPaymentResponse.payer.phone);
             }
         }
 

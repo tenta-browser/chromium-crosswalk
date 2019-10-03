@@ -81,10 +81,11 @@ class MEDIA_EXPORT AlsaPcmOutputStream : public AudioOutputStream {
   void Close() override;
   void Start(AudioSourceCallback* callback) override;
   void Stop() override;
+  void Flush() override;
   void SetVolume(double volume) override;
   void GetVolume(double* volume) override;
 
-  void SetTickClockForTesting(std::unique_ptr<base::TickClock> tick_clock);
+  void SetTickClockForTesting(const base::TickClock* tick_clock);
 
  private:
   friend class AlsaPcmOutputStreamTest;
@@ -211,14 +212,14 @@ class MEDIA_EXPORT AlsaPcmOutputStream : public AudioOutputStream {
   std::unique_ptr<ChannelMixer> channel_mixer_;
   std::unique_ptr<AudioBus> mixed_audio_bus_;
 
-  std::unique_ptr<base::TickClock> tick_clock_;
+  const base::TickClock* tick_clock_;
 
   SEQUENCE_CHECKER(sequence_checker_);
 
   // Allows us to run tasks on the AlsaPcmOutputStream instance which are
   // bound by its lifetime.
   // NOTE: Weak pointers must be invalidated before all other member variables.
-  base::WeakPtrFactory<AlsaPcmOutputStream> weak_factory_;
+  base::WeakPtrFactory<AlsaPcmOutputStream> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(AlsaPcmOutputStream);
 };
@@ -226,6 +227,6 @@ class MEDIA_EXPORT AlsaPcmOutputStream : public AudioOutputStream {
 MEDIA_EXPORT std::ostream& operator<<(std::ostream& os,
                                       AlsaPcmOutputStream::InternalState);
 
-};  // namespace media
+}  // namespace media
 
 #endif  // MEDIA_AUDIO_ALSA_ALSA_OUTPUT_H_

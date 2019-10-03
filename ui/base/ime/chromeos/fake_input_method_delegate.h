@@ -9,18 +9,20 @@
 
 #include "base/callback.h"
 #include "base/compiler_specific.h"
+#include "base/component_export.h"
 #include "base/macros.h"
 #include "ui/base/ime/chromeos/input_method_delegate.h"
-#include "ui/base/ime/ui_base_ime_export.h"
 
 namespace chromeos {
 namespace input_method {
 
-class UI_BASE_IME_EXPORT FakeInputMethodDelegate : public InputMethodDelegate {
+class COMPONENT_EXPORT(UI_BASE_IME_CHROMEOS) FakeInputMethodDelegate
+    : public InputMethodDelegate {
  public:
-  typedef base::Callback<base::string16 (const std::string& language_code)>
+  typedef base::RepeatingCallback<base::string16(
+      const std::string& language_code)>
       LanguageNameLocalizationCallback;
-  typedef base::Callback<base::string16 (int resource_id)>
+  typedef base::RepeatingCallback<base::string16(int resource_id)>
       GetLocalizedStringCallback;
 
   FakeInputMethodDelegate();

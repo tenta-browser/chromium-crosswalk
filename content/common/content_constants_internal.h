@@ -8,6 +8,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "build/build_config.h"
 #include "content/common/content_export.h"
 
 namespace content {
@@ -18,6 +19,10 @@ CONTENT_EXPORT extern const int64_t kHungRendererDelayMs;
 // How long to wait for newly loaded content to send a compositor frame
 // before clearing previously displayed graphics.
 extern const int64_t kNewContentRenderingDelayMs;
+
+// Maximum wait time for an asynchronous hit test request sent to a renderer
+// process (in milliseconds).
+CONTENT_EXPORT extern const int64_t kAsyncHitTestTimeoutMs;
 
 // The maximum length of string as data url.
 extern const size_t kMaxLengthOfDataURLString;
@@ -31,6 +36,9 @@ CONTENT_EXPORT extern const int kTraceEventGpuProcessSortIndex;
 
 // Constants used to organize content threads in about:tracing.
 CONTENT_EXPORT extern const int kTraceEventRendererMainThreadSortIndex;
+
+// HTTP header set in requests to indicate they should be marked DoNotTrack.
+extern const char kDoNotTrackHeader[];
 
 } // namespace content
 

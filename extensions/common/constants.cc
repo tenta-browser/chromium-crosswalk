@@ -4,6 +4,9 @@
 
 #include "extensions/common/constants.h"
 
+#include "base/stl_util.h"
+#include "base/strings/string_piece.h"
+
 namespace extensions {
 
 const char kExtensionScheme[] = "chrome-extension";
@@ -28,8 +31,6 @@ const base::FilePath::CharType kIndexedRulesetFilename[] =
 const char kInstallDirectoryName[] = "Extensions";
 
 const char kTempExtensionName[] = "CRX_INSTALL";
-
-const char kDecodedImagesFilename[] = "DECODED_IMAGES";
 
 const char kDecodedMessageCatalogsFilename[] = "DECODED_MESSAGE_CATALOGS";
 
@@ -83,19 +84,24 @@ const uint8_t kWebstoreSignaturesPublicKey[] = {
     0xcd, 0x02, 0x03, 0x01, 0x00, 0x01};
 
 const size_t kWebstoreSignaturesPublicKeySize =
-    arraysize(kWebstoreSignaturesPublicKey);
+    base::size(kWebstoreSignaturesPublicKey);
 
 const int kMainThreadId = 0;
 
 const char kMimeTypeJpeg[] = "image/jpeg";
 const char kMimeTypePng[] = "image/png";
 
-const int64_t kInvalidServiceWorkerVersionId = -1;
-
 }  // namespace extensions
 
 namespace extension_misc {
 
+#if defined(OS_CHROMEOS) || defined(IS_CHROMECAST)
+// The extension id for the built-in component extension.
+const char kChromeVoxExtensionId[] = "mndnfokpggljbaajbnioimlmbfngpief";
+#else
+// The extension id for the web store extension.
+const char kChromeVoxExtensionId[] = "kgejglhpjiefppelpmljglcjbhoiplfn";
+#endif
 const char kFeedbackExtensionId[] = "gfdkimpbcpahaombhbimeihdjnejgicl";
 const char kPdfExtensionId[] = "mhjfbmdgcfjbbpaeojofohoefgiehjai";
 const char kQuickOfficeComponentExtensionId[] =
@@ -105,6 +111,48 @@ const char kQuickOfficeInternalExtensionId[] =
 const char kQuickOfficeExtensionId[] = "gbkeegbaiigmenfmjfclcdgdpimamgkj";
 const char kMimeHandlerPrivateTestExtensionId[] =
     "oickdpebdnfbgkcaoklfcdhjniefkcji";
+const char kCameraAppId[] = "hfhhnacclhffhdffklopdkcgdhifgngh";
+const char kChromeAppId[] = "mgndgikekgjfcpckkfioiadnlibdjbkf";
+const char kFilesManagerAppId[] = "hhaomjibdihmijegdhdafkllkbggdgoj";
+const char kGoogleKeepAppId[] = "hmjkmjkepdijhoojdojkdfohbdgmmhki";
+const char kYoutubeAppId[] = "blpcfgokakmgnkcojhhkbfbldkacnbeo";
+const char kGeniusAppId[] = "ljoammodoonkhnehlncldjelhidljdpi";
+
+#if defined(OS_CHROMEOS)
+// TODO(michaelpg): Deprecate old app IDs before adding new ones to avoid bloat.
+const char kHighlightsAppId[] = "lpmakjfjcconjeehbidjclhdlpjmfjjj";
+const char kHighlightsEveAppId[] = "iggildboghmjpbjcpmobahnkmoefkike";
+const char kHighlightsNocturneAppId[] = "elhbopodaklenjkeihkdhhfaghalllba";
+const char kHighlightsAltAppId[] = "gjeelkjnolfmhphfhhjokaijbicopfln";
+const char kScreensaverAppId[] = "mnoijifedipmbjaoekhadjcijipaijjc";
+const char kScreensaverEveAppId[] = "gdobaoeekhiklaljmhladjfdfkigampc";
+const char kScreensaverNocturneAppId[] = "lminefdanffajachfahfpmphfkhahcnj";
+const char kScreensaverAltAppId[] = "bnabjkecnachpogjlfilfcnlpcmacglh";
+
+bool IsSystemUIApp(base::StringPiece extension_id) {
+  static const char* const kApps[] = {
+      // clang-format off
+      kCameraAppId,
+      kChromeVoxExtensionId,
+      kFeedbackExtensionId,
+      kFilesManagerAppId,
+      kHighlightsEveAppId,
+      kHighlightsNocturneAppId,
+      kHighlightsAltAppId,
+      kHighlightsAppId,
+      kScreensaverEveAppId,
+      kScreensaverNocturneAppId,
+      kScreensaverAltAppId,
+      kScreensaverAppId,
+      // clang-format on
+  };
+  for (const char* id : kApps) {
+    if (extension_id == id)
+      return true;
+  }
+  return false;
+}
+#endif  // defined(OS_CHROMEOS)
 
 const char kProdHangoutsExtensionId[] = "nckgahadagoaajjgafhacjanaoiihapd";
 const char* const kHangoutsExtensionIds[6] = {
@@ -120,5 +168,9 @@ const char* const kHangoutsExtensionIds[6] = {
 // Error returned when scripting of a page is denied due to enterprise policy.
 const char kPolicyBlockedScripting[] =
     "This page cannot be scripted due to an ExtensionsSettings policy.";
+
+const int kContentVerificationDefaultBlockSize = 4096;
+
+const logging::LogSeverity kMinimumSeverityToReportError = logging::LOG_WARNING;
 
 }  // namespace extension_misc

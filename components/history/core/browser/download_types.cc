@@ -63,6 +63,9 @@ DownloadDangerType IntToDownloadDangerType(int danger_type) {
     case DownloadDangerType::USER_VALIDATED:
     case DownloadDangerType::DANGEROUS_HOST:
     case DownloadDangerType::POTENTIALLY_UNWANTED:
+    case DownloadDangerType::WHITELISTED_BY_POLICY:
+    case DownloadDangerType::ASYNC_SCANNING:
+    case DownloadDangerType::BLOCKED_PASSWORD_PROTECTED:
       return static_cast<DownloadDangerType>(danger_type);
 
     case DownloadDangerType::INVALID:
@@ -100,6 +103,13 @@ std::ostream& operator<<(std::ostream& stream, DownloadDangerType danger_type) {
       return stream << "history::DownloadDangerType::DANGEROUS_HOST";
     case DownloadDangerType::POTENTIALLY_UNWANTED:
       return stream << "history::DownloadDangerType::POTENTIALLY_UNWANTED";
+    case DownloadDangerType::WHITELISTED_BY_POLICY:
+      return stream << "history::DownloadDangerType::WHITELISTED_BY_POLICY";
+    case DownloadDangerType::ASYNC_SCANNING:
+      return stream << "history::DownloadDangerType::ASYNC_SCANNING";
+    case DownloadDangerType::BLOCKED_PASSWORD_PROTECTED:
+      return stream
+             << "history::DownloadDangerType::BLOCKED_PASSWORD_PROTECTED";
   }
   NOTREACHED();
   return stream;

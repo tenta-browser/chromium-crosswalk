@@ -17,7 +17,6 @@
 #include "base/json/json_file_value_serializer.h"
 #include "base/json/json_reader.h"
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/stl_util.h"
 #include "components/policy/core/common/policy_bundle.h"
 #include "components/policy/core/common/policy_load_status.h"
@@ -100,7 +99,7 @@ base::Time ConfigDirPolicyLoader::LastModificationTime() {
   base::Time last_modification = base::Time();
   base::File::Info info;
 
-  for (size_t i = 0; i < arraysize(kConfigDirSuffixes); ++i) {
+  for (size_t i = 0; i < base::size(kConfigDirSuffixes); ++i) {
     base::FilePath path(config_dir_.Append(kConfigDirSuffixes[i]));
 
     // Skip if the file doesn't exist, or it isn't a directory.
@@ -142,8 +141,7 @@ void ConfigDirPolicyLoader::LoadFromPath(const base::FilePath& path,
   // The files are processed in reverse order because |MergeFrom| gives priority
   // to existing keys, but the ConfigDirPolicyProvider gives priority to the
   // last file in lexicographic order.
-  for (std::set<base::FilePath>::reverse_iterator config_file_iter =
-           files.rbegin(); config_file_iter != files.rend();
+  for (auto config_file_iter = files.rbegin(); config_file_iter != files.rend();
        ++config_file_iter) {
     JSONFileValueDeserializer deserializer(*config_file_iter,
                                            base::JSON_ALLOW_TRAILING_COMMAS);
@@ -151,7 +149,7 @@ void ConfigDirPolicyLoader::LoadFromPath(const base::FilePath& path,
     std::string error_msg;
     std::unique_ptr<base::Value> value =
         deserializer.Deserialize(&error_code, &error_msg);
-    if (!value.get()) {
+    if (!value) {
       LOG(WARNING) << "Failed to read configuration file "
                    << config_file_iter->value() << ": " << error_msg;
       status.Add(JsonErrorToPolicyLoadStatus(error_code));
@@ -199,7 +197,7 @@ void ConfigDirPolicyLoader::Merge3rdPartyPolicy(
 
   for (base::DictionaryValue::Iterator domains_it(*domains_dictionary);
        !domains_it.IsAtEnd(); domains_it.Advance()) {
-    if (!base::ContainsKey(supported_domains, domains_it.key())) {
+    if (!base::Contains(supported_domains, domains_it.key())) {
       LOG(WARNING) << "Unsupported 3rd party policy domain: "
                    << domains_it.key();
       continue;

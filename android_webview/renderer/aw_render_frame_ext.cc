@@ -4,26 +4,32 @@
 
 #include "android_webview/renderer/aw_render_frame_ext.h"
 
+#include <map>
+#include <memory>
+
 #include "android_webview/common/aw_hit_test_data.h"
 #include "android_webview/common/render_view_messages.h"
+#include "base/lazy_instance.h"
 #include "base/strings/utf_string_conversions.h"
 #include "components/autofill/content/renderer/autofill_agent.h"
 #include "components/autofill/content/renderer/password_autofill_agent.h"
+#include "components/content_capture/common/content_capture_features.h"
+#include "components/content_capture/renderer/content_capture_sender.h"
 #include "content/public/renderer/document_state.h"
 #include "content/public/renderer/render_frame.h"
 #include "content/public/renderer/render_view.h"
-#include "third_party/WebKit/public/platform/WebSecurityOrigin.h"
-#include "third_party/WebKit/public/platform/WebSize.h"
-#include "third_party/WebKit/public/web/WebDocument.h"
-#include "third_party/WebKit/public/web/WebElement.h"
-#include "third_party/WebKit/public/web/WebElementCollection.h"
-#include "third_party/WebKit/public/web/WebFrameWidget.h"
-#include "third_party/WebKit/public/web/WebHitTestResult.h"
-#include "third_party/WebKit/public/web/WebImageCache.h"
-#include "third_party/WebKit/public/web/WebLocalFrame.h"
-#include "third_party/WebKit/public/web/WebMeaningfulLayout.h"
-#include "third_party/WebKit/public/web/WebNode.h"
-#include "third_party/WebKit/public/web/WebView.h"
+#include "third_party/blink/public/platform/web_security_origin.h"
+#include "third_party/blink/public/platform/web_size.h"
+#include "third_party/blink/public/web/web_document.h"
+#include "third_party/blink/public/web/web_element.h"
+#include "third_party/blink/public/web/web_element_collection.h"
+#include "third_party/blink/public/web/web_frame_widget.h"
+#include "third_party/blink/public/web/web_hit_test_result.h"
+#include "third_party/blink/public/web/web_image_cache.h"
+#include "third_party/blink/public/web/web_local_frame.h"
+#include "third_party/blink/public/web/web_meaningful_layout.h"
+#include "third_party/blink/public/web/web_node.h"
+#include "third_party/blink/public/web/web_view.h"
 #include "url/url_canon.h"
 #include "url/url_constants.h"
 #include "url/url_util.h"
@@ -77,8 +83,9 @@ bool RemovePrefixAndAssignIfMatches(const base::StringPiece& prefix,
 
   if (spec.starts_with(prefix)) {
     url::RawCanonOutputW<1024> output;
-    url::DecodeURLEscapeSequences(spec.data() + prefix.length(),
-                                  spec.length() - prefix.length(), &output);
+    url::DecodeURLEscapeSequences(
+        spec.data() + prefix.length(), spec.length() - prefix.length(),
+        url::DecodeURLMode::kUTF8OrIsomorphic, &output);
     *dest =
         base::UTF16ToUTF8(base::StringPiece16(output.data(), output.length()));
     return true;
@@ -138,30 +145,63 @@ void PopulateHitTestData(const GURL& absolute_link_url,
 
 }  // namespace
 
+// Registry for RenderFrame => AwRenderFrameExt lookups
+typedef std::map<content::RenderFrame*, AwRenderFrameExt*> FrameExtMap;
+base::LazyInstance<FrameExtMap>::Leaky render_frame_ext_map =
+    LAZY_INSTANCE_INITIALIZER;
+
 AwRenderFrameExt::AwRenderFrameExt(content::RenderFrame* render_frame)
     : content::RenderFrameObserver(render_frame) {
-  registry_ = base::MakeUnique<service_manager::BinderRegistry>();
-
   // TODO(sgurun) do not create a password autofill agent (change
   // autofill agent to store a weakptr).
   autofill::PasswordAutofillAgent* password_autofill_agent =
-      new autofill::PasswordAutofillAgent(render_frame, registry_.get());
+      new autofill::PasswordAutofillAgent(render_frame, &registry_);
   new autofill::AutofillAgent(render_frame, password_autofill_agent, nullptr,
-                              registry_.get());
+                              &registry_);
+  if (content_capture::features::IsContentCaptureEnabled())
+    new content_capture::ContentCaptureSender(render_frame, &registry_);
+
+  // Add myself to the RenderFrame => AwRenderFrameExt register.
+  render_frame_ext_map.Get().emplace(render_frame, this);
 }
 
 AwRenderFrameExt::~AwRenderFrameExt() {
+  // Remove myself from the RenderFrame => AwRenderFrameExt register. Ideally,
+  // we'd just use render_frame() and erase by key. However, by this time the
+  // render_frame has already been cleared so we have to iterate over all
+  // render_frames in the map and wipe the one(s) that point to this
+  // AwRenderFrameExt
+
+  auto& map = render_frame_ext_map.Get();
+  auto it = map.begin();
+  while (it != map.end()) {
+    if (it->second == this) {
+      it = map.erase(it);
+    } else {
+      ++it;
+    }
+  }
 }
 
-void AwRenderFrameExt::OnInterfaceRequestForFrame(
+AwRenderFrameExt* AwRenderFrameExt::FromRenderFrame(
+    content::RenderFrame* render_frame) {
+  DCHECK(render_frame != nullptr);
+  auto iter = render_frame_ext_map.Get().find(render_frame);
+  DCHECK(render_frame_ext_map.Get().end() != iter)
+      << "Should always exist a render_frame_ext for a render_frame";
+  AwRenderFrameExt* render_frame_ext = iter->second;
+  return render_frame_ext;
+}
+
+bool AwRenderFrameExt::OnAssociatedInterfaceRequestForFrame(
     const std::string& interface_name,
-    mojo::ScopedMessagePipeHandle* interface_pipe) {
-  registry_->TryBindInterface(interface_name, interface_pipe);
+    mojo::ScopedInterfaceEndpointHandle* handle) {
+  return registry_.TryBindInterface(interface_name, handle);
 }
 
 void AwRenderFrameExt::DidCommitProvisionalLoad(
-    bool is_new_navigation,
-    bool is_same_document_navigation) {
+    bool is_same_document_navigation,
+    ui::PageTransition transition) {
   blink::WebLocalFrame* frame = render_frame()->GetWebFrame();
   content::DocumentState* document_state =
       content::DocumentState::FromDocumentLoader(frame->GetDocumentLoader());
@@ -194,6 +234,8 @@ bool AwRenderFrameExt::OnMessageReceived(const IPC::Message& message) {
                         OnResetScrollAndScaleState)
     IPC_MESSAGE_HANDLER(AwViewMsg_SetInitialPageScale, OnSetInitialPageScale)
     IPC_MESSAGE_HANDLER(AwViewMsg_SetBackgroundColor, OnSetBackgroundColor)
+    IPC_MESSAGE_HANDLER(AwViewMsg_WillSuppressErrorPage,
+                        OnSetWillSuppressErrorPage)
     IPC_MESSAGE_HANDLER(AwViewMsg_SmoothScroll, OnSmoothScroll)
     IPC_MESSAGE_UNHANDLED(handled = false)
   IPC_END_MESSAGE_MAP()
@@ -214,20 +256,18 @@ void AwRenderFrameExt::OnDocumentHasImagesRequest(uint32_t id) {
                                                    has_images));
 }
 
-void AwRenderFrameExt::FocusedNodeChanged(const blink::WebNode& node) {
-  if (node.IsNull() || !node.IsElementNode() || !render_frame() ||
-      !render_frame()->GetRenderView())
+void AwRenderFrameExt::FocusedElementChanged(const blink::WebElement& element) {
+  if (element.IsNull() || !render_frame() || !render_frame()->GetRenderView())
     return;
 
-  const blink::WebElement element = node.ToConst<blink::WebElement>();
   AwHitTestData data;
 
   data.href = GetHref(element);
   data.anchor_text = element.TextContent().Utf16();
 
   GURL absolute_link_url;
-  if (node.IsLink())
-    absolute_link_url = GetAbsoluteUrl(node, data.href);
+  if (element.IsLink())
+    absolute_link_url = GetAbsoluteUrl(element, data.href);
 
   GURL absolute_image_url = GetChildImageUrlFromElement(element);
 
@@ -271,7 +311,7 @@ void AwRenderFrameExt::OnSetTextZoomFactor(float zoom_factor) {
     return;
 
   // Hide selection and autofill popups.
-  webview->HidePopups();
+  webview->CancelPagePopup();
   webview->SetTextZoomFactor(zoom_factor);
 }
 
@@ -292,21 +332,29 @@ void AwRenderFrameExt::OnSetInitialPageScale(double page_scale_factor) {
 }
 
 void AwRenderFrameExt::OnSetBackgroundColor(SkColor c) {
-  blink::WebFrameWidget* web_frame_widget = GetWebFrameWidget();
-  if (!web_frame_widget)
-    return;
-
-  web_frame_widget->SetBaseBackgroundColor(c);
-}
-
-void AwRenderFrameExt::OnSmoothScroll(int target_x,
-                                      int target_y,
-                                      int duration_ms) {
   blink::WebView* webview = GetWebView();
   if (!webview)
     return;
 
-  webview->SmoothScroll(target_x, target_y, static_cast<long>(duration_ms));
+  webview->SetBaseBackgroundColor(c);
+}
+
+void AwRenderFrameExt::OnSmoothScroll(int target_x,
+                                      int target_y,
+                                      uint64_t duration_ms) {
+  blink::WebView* webview = GetWebView();
+  if (!webview)
+    return;
+
+  webview->SmoothScroll(target_x, target_y, duration_ms);
+}
+
+void AwRenderFrameExt::OnSetWillSuppressErrorPage(bool suppress) {
+  this->will_suppress_error_page_ = suppress;
+}
+
+bool AwRenderFrameExt::GetWillSuppressErrorPage() {
+  return this->will_suppress_error_page_;
 }
 
 blink::WebView* AwRenderFrameExt::GetWebView() {
@@ -318,10 +366,9 @@ blink::WebView* AwRenderFrameExt::GetWebView() {
 }
 
 blink::WebFrameWidget* AwRenderFrameExt::GetWebFrameWidget() {
-  if (!render_frame() || !render_frame()->GetRenderView())
-    return nullptr;
-
-  return render_frame()->GetRenderView()->GetWebFrameWidget();
+  return render_frame()
+             ? render_frame()->GetWebFrame()->LocalRoot()->FrameWidget()
+             : nullptr;
 }
 
 void AwRenderFrameExt::OnDestruct() {

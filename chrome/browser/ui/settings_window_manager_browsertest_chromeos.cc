@@ -2,29 +2,24 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "chrome/browser/ui/settings_window_manager_chromeos.h"
-
 #include <stddef.h>
 
-#include "base/command_line.h"
-#include "base/files/file_util.h"
-#include "base/files/scoped_temp_dir.h"
 #include "base/macros.h"
-#include "base/run_loop.h"
-#include "build/build_config.h"
-#include "chrome/browser/browser_process.h"
-#include "chrome/browser/profiles/profile_manager.h"
+#include "base/test/scoped_feature_list.h"
 #include "chrome/browser/ui/browser.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_list.h"
 #include "chrome/browser/ui/browser_window.h"
 #include "chrome/browser/ui/chrome_pages.h"
+#include "chrome/browser/ui/settings_window_manager_chromeos.h"
 #include "chrome/browser/ui/settings_window_manager_observer_chromeos.h"
-#include "chrome/common/chrome_switches.h"
+#include "chrome/browser/web_applications/system_web_app_manager.h"
+#include "chrome/browser/web_applications/web_app_provider.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/url_constants.h"
+#include "chrome/common/webui_url_constants.h"
 #include "chrome/test/base/in_process_browser_test.h"
-#include "content/public/browser/notification_service.h"
-#include "content/public/test/test_utils.h"
+#include "chromeos/constants/chromeos_features.h"
 #include "url/gurl.h"
 
 namespace {
@@ -32,8 +27,8 @@ namespace {
 class SettingsWindowTestObserver
     : public chrome::SettingsWindowManagerObserver {
  public:
-  SettingsWindowTestObserver() : browser_(NULL), new_settings_count_(0) {}
-  ~SettingsWindowTestObserver() override {}
+  SettingsWindowTestObserver() = default;
+  ~SettingsWindowTestObserver() override = default;
 
   void OnNewSettingsWindow(Browser* settings_browser) override {
     browser_ = settings_browser;
@@ -44,47 +39,40 @@ class SettingsWindowTestObserver
   size_t new_settings_count() const { return new_settings_count_; }
 
  private:
-  Browser* browser_;
-  size_t new_settings_count_;
+  Browser* browser_ = nullptr;
+  size_t new_settings_count_ = 0;
 
   DISALLOW_COPY_AND_ASSIGN(SettingsWindowTestObserver);
 };
 
 }  // namespace
 
-class SettingsWindowManagerTest : public InProcessBrowserTest {
+class SettingsWindowManagerTest : public InProcessBrowserTest,
+                                  public ::testing::WithParamInterface<bool> {
  public:
   SettingsWindowManagerTest()
-      : settings_manager_(chrome::SettingsWindowManager::GetInstance()),
-        test_profile_(NULL) {
+      : settings_manager_(chrome::SettingsWindowManager::GetInstance()) {
     settings_manager_->AddObserver(&observer_);
+    if (EnableSystemWebApps())
+      scoped_feature_list_.InitAndEnableFeature(features::kSystemWebApps);
+    else
+      scoped_feature_list_.InitAndDisableFeature(features::kSystemWebApps);
   }
+
+  void SetUpOnMainThread() override {
+    if (!EnableSystemWebApps())
+      return;
+
+    // Install the Settings App.
+    web_app::WebAppProvider::Get(browser()->profile())
+        ->system_web_app_manager()
+        .InstallSystemAppsForTesting();
+  }
+
+  bool EnableSystemWebApps() { return GetParam(); }
+
   ~SettingsWindowManagerTest() override {
     settings_manager_->RemoveObserver(&observer_);
-  }
-
-  Profile* CreateTestProfile() {
-    CHECK(!test_profile_);
-
-    ProfileManager* profile_manager = g_browser_process->profile_manager();
-    base::RunLoop run_loop;
-    profile_manager->CreateProfileAsync(
-        profile_manager->GenerateNextProfileDirectoryPath(),
-        base::Bind(&SettingsWindowManagerTest::ProfileInitialized,
-                   base::Unretained(this), run_loop.QuitClosure()),
-        base::string16(), std::string(), std::string());
-    run_loop.Run();
-
-    return test_profile_;
-  }
-
-  void ProfileInitialized(const base::Closure& closure,
-                          Profile* profile,
-                          Profile::CreateStatus status) {
-    if (status == Profile::CREATE_STATUS_INITIALIZED) {
-      test_profile_ = profile;
-      closure.Run();
-    }
   }
 
   void ShowSettingsForProfile(Profile* profile) {
@@ -107,13 +95,12 @@ class SettingsWindowManagerTest : public InProcessBrowserTest {
  protected:
   chrome::SettingsWindowManager* settings_manager_;
   SettingsWindowTestObserver observer_;
-  base::ScopedTempDir temp_profile_dir_;
-  Profile* test_profile_;  // Owned by g_browser_process->profile_manager()
+  base::test::ScopedFeatureList scoped_feature_list_;
 
   DISALLOW_COPY_AND_ASSIGN(SettingsWindowManagerTest);
 };
 
-IN_PROC_BROWSER_TEST_F(SettingsWindowManagerTest, OpenSettingsWindow) {
+IN_PROC_BROWSER_TEST_P(SettingsWindowManagerTest, OpenSettingsWindow) {
   // Open a settings window.
   ShowSettingsForProfile(browser()->profile());
   Browser* settings_browser =
@@ -143,35 +130,7 @@ IN_PROC_BROWSER_TEST_F(SettingsWindowManagerTest, OpenSettingsWindow) {
   CloseBrowserSynchronously(settings_browser2);
 }
 
-#if !defined(OS_CHROMEOS)
-IN_PROC_BROWSER_TEST_F(SettingsWindowManagerTest, SettingsWindowMultiProfile) {
-  Profile* test_profile = CreateTestProfile();
-  ASSERT_TRUE(test_profile);
-
-  // Open a settings window.
-  ShowSettingsForProfile(browser()->profile());
-  Browser* settings_browser =
-      settings_manager_->FindBrowserForProfile(browser()->profile());
-  ASSERT_TRUE(settings_browser);
-  // Ensure the observer fired correctly.
-  EXPECT_EQ(1u, observer_.new_settings_count());
-  EXPECT_EQ(settings_browser, observer_.browser());
-
-  // Open a settings window for a new profile.
-  ShowSettingsForProfile(test_profile);
-  Browser* settings_browser2 =
-      settings_manager_->FindBrowserForProfile(test_profile);
-  ASSERT_TRUE(settings_browser2);
-  // Ensure the observer fired correctly.
-  EXPECT_EQ(2u, observer_.new_settings_count());
-  EXPECT_EQ(settings_browser2, observer_.browser());
-
-  CloseBrowserSynchronously(settings_browser);
-  CloseBrowserSynchronously(settings_browser2);
-}
-#endif
-
-IN_PROC_BROWSER_TEST_F(SettingsWindowManagerTest, OpenChromePages) {
+IN_PROC_BROWSER_TEST_P(SettingsWindowManagerTest, OpenChromePages) {
   EXPECT_EQ(1u, chrome::GetTotalBrowserCount());
 
   // History should open in the existing browser window.
@@ -201,3 +160,41 @@ IN_PROC_BROWSER_TEST_F(SettingsWindowManagerTest, OpenChromePages) {
   chrome::ShowAboutChrome(browser());
   EXPECT_EQ(2u, chrome::GetTotalBrowserCount());
 }
+
+IN_PROC_BROWSER_TEST_P(SettingsWindowManagerTest, SplitSettings) {
+  base::test::ScopedFeatureList feature_list;
+  feature_list.InitAndEnableFeature(chromeos::features::kSplitSettings);
+  EXPECT_EQ(1u, chrome::GetTotalBrowserCount());
+
+  // Browser settings opens in the existing browser window.
+  chrome::ShowSettings(browser());
+  EXPECT_EQ(1u, chrome::GetTotalBrowserCount());
+
+  // OS settings opens in a new window.
+  settings_manager_->ShowOSSettings(browser()->profile());
+  EXPECT_EQ(1u, observer_.new_settings_count());
+  EXPECT_EQ(2u, chrome::GetTotalBrowserCount());
+
+  content::WebContents* web_contents =
+      observer_.browser()->tab_strip_model()->GetWebContentsAt(0);
+  EXPECT_EQ(chrome::kChromeUIOSSettingsHost, web_contents->GetURL().host());
+
+  // Showing an OS sub-page reuses the OS settings window.
+  settings_manager_->ShowOSSettings(browser()->profile(),
+                                    chrome::kBluetoothSubPage);
+  EXPECT_EQ(1u, observer_.new_settings_count());
+  EXPECT_EQ(2u, chrome::GetTotalBrowserCount());
+
+  // Close the settings window.
+  CloseNonDefaultBrowsers();
+  EXPECT_EQ(1u, chrome::GetTotalBrowserCount());
+
+  // Showing a browser setting sub-page reuses the browser window.
+  chrome::ShowSettingsSubPage(browser(), chrome::kAutofillSubPage);
+  EXPECT_EQ(1u, chrome::GetTotalBrowserCount());
+}
+
+INSTANTIATE_TEST_SUITE_P(
+    /* no prefix */,
+    SettingsWindowManagerTest,
+    ::testing::Bool());

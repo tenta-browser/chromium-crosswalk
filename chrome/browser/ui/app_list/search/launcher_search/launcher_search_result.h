@@ -8,16 +8,18 @@
 #include <memory>
 #include <string>
 
-#include "ash/app_list/model/search_result.h"
+#include "ash/public/cpp/app_list/app_list_metrics.h"
 #include "base/macros.h"
+#include "base/memory/scoped_refptr.h"
 #include "chrome/browser/profiles/profile.h"
+#include "chrome/browser/ui/app_list/search/chrome_search_result.h"
 #include "chrome/browser/ui/app_list/search/launcher_search/launcher_search_icon_image_loader.h"
 #include "extensions/common/extension.h"
 #include "url/gurl.h"
 
 namespace app_list {
 
-class LauncherSearchResult : public SearchResult,
+class LauncherSearchResult : public ChromeSearchResult,
                              public LauncherSearchIconImageLoader::Observer {
  public:
   LauncherSearchResult(
@@ -29,8 +31,11 @@ class LauncherSearchResult : public SearchResult,
       std::unique_ptr<chromeos::launcher_search_provider::ErrorReporter>
           error_reporter);
   ~LauncherSearchResult() override;
-  std::unique_ptr<SearchResult> Duplicate() const override;
+  std::unique_ptr<LauncherSearchResult> Duplicate() const;
+
+  // ChromeSearchResult overrides:
   void Open(int event_flags) override;
+  SearchResultType GetSearchResultType() const override;
 
   void OnIconImageChanged(LauncherSearchIconImageLoader* image_loader) override;
   void OnBadgeIconImageChanged(
@@ -43,7 +48,7 @@ class LauncherSearchResult : public SearchResult,
       const int discrete_value_relevance,
       Profile* profile,
       const extensions::Extension* extension,
-      const linked_ptr<LauncherSearchIconImageLoader>& icon_image_loader);
+      const scoped_refptr<LauncherSearchIconImageLoader>& icon_image_loader);
   void Initialize();
 
   // Returns search result ID. The search result ID is comprised of the
@@ -56,7 +61,7 @@ class LauncherSearchResult : public SearchResult,
   const int discrete_value_relevance_;
   Profile* profile_;
   const extensions::Extension* extension_;
-  linked_ptr<LauncherSearchIconImageLoader> icon_image_loader_;
+  scoped_refptr<LauncherSearchIconImageLoader> icon_image_loader_;
 
   DISALLOW_COPY_AND_ASSIGN(LauncherSearchResult);
 };

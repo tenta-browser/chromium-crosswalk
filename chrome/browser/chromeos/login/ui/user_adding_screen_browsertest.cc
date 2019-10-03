@@ -2,8 +2,9 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/macros.h"
+#include "ash/public/cpp/ash_pref_names.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/chromeos/login/lock/screen_locker.h"
 #include "chrome/browser/chromeos/login/lock/screen_locker_tester.h"
@@ -31,14 +32,15 @@ namespace chromeos {
 class UserAddingScreenTest : public LoginManagerTest,
                              public UserAddingScreen::Observer {
  public:
-  UserAddingScreenTest() : LoginManagerTest(false) {
+  UserAddingScreenTest()
+      : LoginManagerTest(false, true /* should_initialize_webui */) {
     struct {
       const char* email;
       const char* gaia_id;
     } const kTestUsers[] = {{"test-user1@gmail.com", "1111111111"},
                             {"test-user2@gmail.com", "2222222222"},
                             {"test-user3@gmail.com", "3333333333"}};
-    for (size_t i = 0; i < arraysize(kTestUsers); ++i) {
+    for (size_t i = 0; i < base::size(kTestUsers); ++i) {
       test_users_.emplace_back(AccountId::FromUserEmailGaiaId(
           kTestUsers[i].email, kTestUsers[i].gaia_id));
     }
@@ -73,11 +75,11 @@ class UserAddingScreenTest : public LoginManagerTest,
   }
 
   void CheckScreenIsVisible() {
-    views::View* web_view =
-        LoginDisplayHost::default_host()->GetWebUILoginView()->child_at(0);
+    auto* login_view = LoginDisplayHost::default_host()->GetWebUILoginView();
+    views::View* web_view = login_view->children().front();
     for (views::View* current_view = web_view; current_view;
          current_view = current_view->parent()) {
-      EXPECT_TRUE(current_view->visible());
+      EXPECT_TRUE(current_view->GetVisible());
       if (current_view->layer())
         EXPECT_EQ(current_view->layer()->GetCombinedOpacity(), 1.f);
     }
@@ -193,13 +195,13 @@ IN_PROC_BROWSER_TEST_F(UserAddingScreenTest, AddingSeveralUsers) {
   ASSERT_TRUE(prefs1 != nullptr);
   ASSERT_TRUE(prefs2 != nullptr);
   ASSERT_TRUE(prefs3 != nullptr);
-  prefs1->SetBoolean(prefs::kEnableAutoScreenLock, false);
-  prefs2->SetBoolean(prefs::kEnableAutoScreenLock, false);
-  prefs3->SetBoolean(prefs::kEnableAutoScreenLock, false);
+  prefs1->SetBoolean(ash::prefs::kEnableAutoScreenLock, false);
+  prefs2->SetBoolean(ash::prefs::kEnableAutoScreenLock, false);
+  prefs3->SetBoolean(ash::prefs::kEnableAutoScreenLock, false);
 
   // One of the users has the primary-only policy.
   // List of unlock users doesn't depend on kEnableLockScreen preference.
-  prefs1->SetBoolean(prefs::kEnableAutoScreenLock, true);
+  prefs1->SetBoolean(ash::prefs::kEnableAutoScreenLock, true);
   prefs1->SetString(prefs::kMultiProfileUserBehavior,
                     MultiProfileUserController::kBehaviorPrimaryOnly);
   prefs2->SetString(prefs::kMultiProfileUserBehavior,
@@ -210,7 +212,7 @@ IN_PROC_BROWSER_TEST_F(UserAddingScreenTest, AddingSeveralUsers) {
   ASSERT_EQ(1UL, unlock_users.size());
   EXPECT_EQ(test_users_[0], unlock_users[0]->GetAccountId());
 
-  prefs1->SetBoolean(prefs::kEnableAutoScreenLock, false);
+  prefs1->SetBoolean(ash::prefs::kEnableAutoScreenLock, false);
   unlock_users = user_manager->GetUnlockUsers();
   ASSERT_EQ(1UL, unlock_users.size());
   EXPECT_EQ(test_users_[0], unlock_users[0]->GetAccountId());
@@ -224,7 +226,7 @@ IN_PROC_BROWSER_TEST_F(UserAddingScreenTest, AddingSeveralUsers) {
     EXPECT_EQ(test_users_[i], unlock_users[i]->GetAccountId());
 
   // This preference doesn't affect list of unlock users.
-  prefs2->SetBoolean(prefs::kEnableAutoScreenLock, true);
+  prefs2->SetBoolean(ash::prefs::kEnableAutoScreenLock, true);
   unlock_users = user_manager->GetUnlockUsers();
   ASSERT_EQ(3UL, unlock_users.size());
   for (int i = 0; i < 3; ++i)
@@ -256,8 +258,8 @@ IN_PROC_BROWSER_TEST_F(UserAddingScreenTest, PRE_ScreenVisibility) {
   StartupUtils::MarkOobeCompleted();
 }
 
-// Trying to catch http://crbug.com/362153.
-IN_PROC_BROWSER_TEST_F(UserAddingScreenTest, ScreenVisibility) {
+// http://crbug.com/978267
+IN_PROC_BROWSER_TEST_F(UserAddingScreenTest, DISABLED_ScreenVisibility) {
   LoginUser(test_users_[0]);
 
   UserAddingScreen::Get()->Start();

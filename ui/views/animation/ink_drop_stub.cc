@@ -6,9 +6,9 @@
 
 namespace views {
 
-InkDropStub::InkDropStub() {}
+InkDropStub::InkDropStub() = default;
 
-InkDropStub::~InkDropStub() {}
+InkDropStub::~InkDropStub() = default;
 
 void InkDropStub::HostSizeChanged(const gfx::Size& new_size) {}
 
@@ -18,7 +18,13 @@ InkDropState InkDropStub::GetTargetInkDropState() const {
 
 void InkDropStub::AnimateToState(InkDropState state) {}
 
+void InkDropStub::SetHoverHighlightFadeDurationMs(int duration_ms) {}
+
+void InkDropStub::UseDefaultHoverHighlightFadeDuration() {}
+
 void InkDropStub::SnapToActivated() {}
+
+void InkDropStub::SnapToHidden() {}
 
 void InkDropStub::SetHovered(bool is_hovered) {}
 

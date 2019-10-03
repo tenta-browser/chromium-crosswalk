@@ -7,6 +7,8 @@
 #include "base/logging.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/search_engines/template_url_service_factory.h"
+#include "chrome/browser/ui/layout_constants.h"
+#include "chrome/browser/ui/omnibox/omnibox_theme.h"
 #include "chrome/browser/ui/views/location_bar/location_bar_view.h"
 #include "chrome/grit/generated_resources.h"
 #include "components/search_engines/template_url_service.h"
@@ -16,11 +18,13 @@
 #include "ui/gfx/color_palette.h"
 #include "ui/gfx/color_utils.h"
 #include "ui/gfx/paint_vector_icon.h"
-#include "ui/native_theme/native_theme.h"
 
-SelectedKeywordView::SelectedKeywordView(const gfx::FontList& font_list,
+SelectedKeywordView::SelectedKeywordView(LocationBarView* location_bar,
+                                         const gfx::FontList& font_list,
                                          Profile* profile)
-    : IconLabelBubbleView(font_list), profile_(profile) {
+    : IconLabelBubbleView(font_list),
+      location_bar_(location_bar),
+      profile_(profile) {
   full_label_.SetFontList(font_list);
   full_label_.SetVisible(false);
   partial_label_.SetFontList(font_list);
@@ -28,19 +32,20 @@ SelectedKeywordView::SelectedKeywordView(const gfx::FontList& font_list,
   label()->SetElideBehavior(gfx::FADE_TAIL);
 }
 
-SelectedKeywordView::~SelectedKeywordView() {
-}
+SelectedKeywordView::~SelectedKeywordView() {}
 
 void SelectedKeywordView::ResetImage() {
   SetImage(gfx::CreateVectorIcon(vector_icons::kSearchIcon,
-                                 LocationBarView::kIconWidth, GetTextColor()));
+                                 GetLayoutConstant(LOCATION_BAR_ICON_SIZE),
+                                 GetTextColor()));
 }
 
 SkColor SelectedKeywordView::GetTextColor() const {
-  return GetNativeTheme()->GetSystemColor(
-      color_utils::IsDark(GetParentBackgroundColor())
-          ? ui::NativeTheme::kColorId_TextfieldDefaultColor
-          : ui::NativeTheme::kColorId_LinkEnabled);
+  return location_bar_->GetColor(OmniboxPart::LOCATION_BAR_SELECTED_KEYWORD);
+}
+
+SkColor SelectedKeywordView::GetInkDropBaseColor() const {
+  return location_bar_->GetLocationIconInkDropColor();
 }
 
 gfx::Size SelectedKeywordView::CalculatePreferredSize() const {
@@ -60,7 +65,7 @@ void SelectedKeywordView::Layout() {
   bool use_full_label =
       width() >
       GetSizeForLabelWidth(partial_label_.GetPreferredSize().width()).width();
-  SetLabel(use_full_label ? full_label_.text() : partial_label_.text());
+  SetLabel(use_full_label ? full_label_.GetText() : partial_label_.GetText());
 
   IconLabelBubbleView::Layout();
 }
@@ -90,6 +95,11 @@ void SelectedKeywordView::SetKeyword(const base::string16& keyword) {
   // class is calculating the preferred size. It will be updated again in
   // Layout(), taking into account how much space has actually been allotted.
   SetLabel(full_name);
+}
+
+int SelectedKeywordView::GetExtraInternalSpacing() const {
+  // Align the label text with the suggestion text.
+  return 11;
 }
 
 const char* SelectedKeywordView::GetClassName() const {

@@ -11,6 +11,7 @@ stories as memory ones, only with fewer actions (no memory dumping).
 
 import unittest
 
+from core import path_util
 from core import perf_benchmark
 
 from telemetry import benchmark as benchmark_module
@@ -33,39 +34,135 @@ def GetSystemHealthBenchmarksToSmokeTest():
 
 
 _DISABLED_TESTS = frozenset({
-  # crbug.com/733427
-  'benchmarks.system_health_smoke_test.SystemHealthBenchmarkSmokeTest.system_health.memory_mobile.browse:news:cnn',  # pylint: disable=line-too-long
-  # cburg.com/721549
-  'benchmarks.system_health_smoke_test.SystemHealthBenchmarkSmokeTest.system_health.memory_mobile.browse:news:toi',  # pylint: disable=line-too-long
+  # crbug.com/983326 - flaky.
+  'system_health.memory_desktop/browse_accessibility:media:youtube',
+
+  # crbug.com/878390 - These stories are already covered by their 2018 versions
+  # and will later be removed.
+  'system_health.memory_mobile/browse:tech:discourse_infinite_scroll',
+  'system_health.memory_mobile/browse:social:facebook_infinite_scroll',
+  'system_health.memory_mobile/browse:social:tumblr_infinite_scroll',
+  'system_health.memory_mobile/browse:news:cnn',
+  'system_health.memory_mobile/load:news:cnn',
+  'system_health.memory_mobile/load:tools:stackoverflow',
+  'system_health.memory_desktop/load_accessibility:shopping:amazon',
+  'system_health.memory_desktop/browse_accessibility:tech:codesearch',
+  'system_health.memory_desktop/load_accessibility:media:wikipedia',
+  'system_health.memory_desktop/browse:tech:discourse_infinite_scroll',
+  'system_health.memory_desktop/browse:social:facebook_infinite_scroll',
+  'system_health.memory_desktop/browse:social:tumblr_infinite_scroll',
+  'system_health.memory_desktop/browse:news:flipboard',
+  'system_health.memory_desktop/browse:search:google',
+  'system_health.memory_desktop/browse:news:hackernews',
+  'system_health.memory_desktop/load:search:amazon',
+  'system_health.memory_desktop/load:news:bbc',
+  'system_health.memory_desktop/load:news:hackernews',
+  'system_health.memory_desktop/load:social:instagram',
+  'system_health.memory_desktop/load:news:reddit',
+  'system_health.memory_desktop/load:search:taobao',
+  'system_health.memory_desktop/multitab:misc:typical24',
+  'system_health.memory_desktop/browse:news:reddit',
+  'system_health.memory_desktop/browse:media:tumblr',
+  'system_health.memory_desktop/browse:social:twitter_infinite_scroll',
+
   # crbug.com/637230
-  'benchmarks.system_health_smoke_test.SystemHealthBenchmarkSmokeTest.system_health.memory_desktop.browse:news:cnn',  # pylint: disable=line-too-long
+  'system_health.memory_desktop/browse:news:cnn',
   # Permenently disabled from smoke test for being long-running.
-  'benchmarks.system_health_smoke_test.SystemHealthBenchmarkSmokeTest.system_health.memory_mobile.long_running:tools:gmail-foreground',  # pylint: disable=line-too-long
-  'benchmarks.system_health_smoke_test.SystemHealthBenchmarkSmokeTest.system_health.memory_mobile.long_running:tools:gmail-background',  # pylint: disable=line-too-long
-  'benchmarks.system_health_smoke_test.SystemHealthBenchmarkSmokeTest.system_health.memory_desktop.long_running:tools:gmail-foreground',  # pylint: disable=line-too-long
-  'benchmarks.system_health_smoke_test.SystemHealthBenchmarkSmokeTest.system_health.memory_desktop.long_running:tools:gmail-background',  # pylint: disable=line-too-long
+  'system_health.memory_mobile/long_running:tools:gmail-foreground',
+  'system_health.memory_mobile/long_running:tools:gmail-background',
+  'system_health.memory_desktop/long_running:tools:gmail-foreground',
+  'system_health.memory_desktop/long_running:tools:gmail-background',
 
   # crbug.com/769263
-  'benchmarks.system_health_smoke_test.SystemHealthBenchmarkSmokeTest.system_health.memory_desktop.play:media:soundcloud',  # pylint: disable=line-too-long
-
-  # crbug.com/769809
-  'benchmarks.system_health_smoke_test.SystemHealthBenchmarkSmokeTest.system_health.memory_desktop.browse_accessibility:tools:gmail_compose', # pylint: disable=line-too-long
+  'system_health.memory_desktop/play:media:soundcloud',
 
   # crbug.com/
-  'benchmarks.system_health_smoke_test.SystemHealthBenchmarkSmokeTest.system_health.memory_desktop.browse:news:nytimes',  # pylint: disable=line-too-long
+  'system_health.memory_desktop/browse:news:nytimes',
 
   # crbug.com/688190
-  'benchmarks.system_health_smoke_test.SystemHealthBenchmarkSmokeTest.system_health.memory_mobile.browse:news:washingtonpost',  # pylint: disable=line-too-long
+  'system_health.memory_mobile/browse:news:washingtonpost',
 
   # crbug.com/696824
-  'benchmarks.system_health_smoke_test.SystemHealthBenchmarkSmokeTest.system_health.memory_desktop.load:news:qq',  # pylint: disable=line-too-long
+  'system_health.memory_desktop/load:news:qq',
+  # crbug.com/893615
+  # DESKTOP:
+  'system_health.memory_desktop/browse:media:pinterest',
+  'system_health.memory_desktop/browse:media:youtube',
+  'system_health.memory_desktop/browse:search:google_india',
+  'system_health.memory_desktop/load:games:alphabetty',
+  'system_health.memory_desktop/load:games:miniclip',
+  'system_health.memory_desktop/load:games:spychase',
+  'system_health.memory_desktop/load:media:flickr',
+  'system_health.memory_desktop/load:media:google_images',
+  'system_health.memory_desktop/load:media:imgur',
+  'system_health.memory_desktop/load:media:soundcloud',
+  'system_health.memory_desktop/load:media:youtube',
+  'system_health.memory_desktop/load:news:cnn',
+  'system_health.memory_desktop/load:news:wikipedia',
+  'system_health.memory_desktop/load:search:baidu',
+  'system_health.memory_desktop/load:search:ebay',
+  'system_health.memory_desktop/load:search:google',
+  'system_health.memory_desktop/load:search:yahoo',
+  'system_health.memory_desktop/load:search:yandex',
+  'system_health.memory_desktop/load:tools:stackoverflow',
+  'system_health.memory_mobile/load:media:soundcloud',
+  # MOBILE:
+  'system_health.memory_mobile/load:games:spychase',
+  'system_health.memory_mobile/load:media:flickr',
+  'system_health.memory_mobile/load:media:google_images',
+  'system_health.memory_mobile/load:media:imgur',
+  'system_health.memory_mobile/load:media:youtube',
+  'system_health.memory_mobile/load:news:wikipedia',
+  'system_health.memory_mobile/load:search:baidu',
+  'system_health.memory_mobile/load:search:ebay',
+  'system_health.memory_mobile/load:search:google',
+  'system_health.memory_mobile/load:search:yahoo',
+  'system_health.memory_mobile/load:search:yandex',
 
   # crbug.com/698006
-  'benchmarks.system_health_smoke_test.SystemHealthBenchmarkSmokeTest.system_health.memory_desktop.load:tools:drive',  # pylint: disable=line-too-long
-  'benchmarks.system_health_smoke_test.SystemHealthBenchmarkSmokeTest.system_health.memory_desktop.load:tools:gmail',  # pylint: disable=line-too-long
+  'system_health.memory_desktop/load:tools:drive',
+  'system_health.memory_desktop/load:tools:gmail',
 
   # crbug.com/725386
-  'benchmarks.system_health_smoke_test.SystemHealthBenchmarkSmokeTest.system_health.memory_desktop.browse:social:twitter', # pylint: disable=line-too-long
+  'system_health.memory_desktop/browse:social:twitter',
+
+  # crbug.com/816482
+  'system_health.memory_desktop/load:news:nytimes',
+
+  # crbug.com/885320
+  'system_health.memory_desktop/browse:search:google:2018',
+
+  # crbug.com/893615
+  'system_health.memory_desktop/multitab:misc:typical24:2018',
+
+  # crbug.com/903849
+  'system_health.memory_mobile/browse:news:cnn:2018',
+
+  # crbug.com/937006
+  'system_health.memory_mobile/browse:news:toi',
+
+  # crbug.com/978358
+  'system_health.memory_desktop/browse:news:flipboard:2018',
+
+  # The following tests are disabled because they are disabled on the perf
+  # waterfall (using tools/perf/expectations.config) on one platform or another.
+  # They may run fine on the CQ, but it isn't worth the bot time to run them.
+  # [
+  # crbug.com/799106
+  'system_health.memory_desktop/browse:media:flickr_infinite_scroll'
+  # crbug.com/836407
+  'system_health.memory_desktop/browse:tools:maps'
+  # crbug.com/924330
+  'system_health.memory_desktop/browse:media:pinterest:2018'
+  # crbug.com/899887
+  'system_health.memory_desktop/browse:social:facebook_infinite_scroll:2018'
+  # crbug.com/649392
+  'system_health.memory_desktop/play:media:google_play_music'
+  # crbug.com/934885
+  'system_health.memory_desktop/load_accessibility:media:wikipedia:2018'
+  # crbug.com/942952
+  'system_health.memory_desktop/browse:news:hackernews:2018'
+  # ]
 })
 
 
@@ -111,16 +208,31 @@ def _GenerateSmokeTestCase(benchmark_class, story_to_smoke_test):
     if possible_browser is None:
       self.skipTest('Cannot find the browser to run the test.')
 
-    if self.id() in _DISABLED_TESTS:
+
+    simplified_test_name = self.id().replace(
+        'benchmarks.system_health_smoke_test.SystemHealthBenchmarkSmokeTest.',
+        '')
+
+    # Sanity check to ensure that that substring removal was effective.
+    assert len(simplified_test_name) < len(self.id())
+
+    if (simplified_test_name in _DISABLED_TESTS and
+        not options.run_disabled_tests):
       self.skipTest('Test is explicitly disabled')
 
-    self.assertEqual(0, SinglePageBenchmark().Run(options),
-                     msg='Failed: %s' % benchmark_class)
+    single_page_benchmark = SinglePageBenchmark()
+    with open(path_util.GetExpectationsPath()) as fp:
+      single_page_benchmark.AugmentExpectationsWithParser(fp.read())
+
+    return_code = single_page_benchmark.Run(options)
+    if return_code == -1:
+      self.skipTest('The benchmark was not run.')
+    self.assertEqual(0, return_code, msg='Failed: %s' % benchmark_class)
 
   # We attach the test method to SystemHealthBenchmarkSmokeTest dynamically
   # so that we can set the test method name to include
-  # '<benchmark class name>.<story name>'.
-  test_method_name = '%s.%s' % (
+  # '<benchmark class name>/<story name>'.
+  test_method_name = '%s/%s' % (
       benchmark_class.Name(), story_to_smoke_test.name)
 
   class SystemHealthBenchmarkSmokeTest(unittest.TestCase):
@@ -154,6 +266,8 @@ def GenerateBenchmarkOptions(benchmark_class):
   # all crashes and hence remove the need to enable logging in actual perf
   # benchmarks.
   options.browser_options.logging_verbosity = 'non-verbose'
+  options.target_platforms = benchmark_class.GetSupportedPlatformNames(
+      benchmark_class.SUPPORTED_PLATFORMS)
   return options
 
 
@@ -162,6 +276,7 @@ def load_tests(loader, standard_tests, pattern):
   suite = progress_reporter.TestSuite()
   benchmark_classes = GetSystemHealthBenchmarksToSmokeTest()
   assert benchmark_classes, 'This list should never be empty'
+  names_stories_to_smoke_tests = []
   for benchmark_class in benchmark_classes:
 
     # HACK: these options should be derived from options_for_unittests which are
@@ -175,10 +290,26 @@ def load_tests(loader, standard_tests, pattern):
     # Prefetch WPR archive needed by the stories set to avoid race condition
     # when feching them when tests are run in parallel.
     # See crbug.com/700426 for more details.
-    stories_set.wpr_archive_info.DownloadArchivesIfNeeded()
+    story_names = [s.name for s in stories_set if not s.is_local]
+    stories_set.wpr_archive_info.DownloadArchivesIfNeeded(
+        story_names=story_names)
 
     for story_to_smoke_test in stories_set.stories:
       suite.addTest(
           _GenerateSmokeTestCase(benchmark_class, story_to_smoke_test))
+
+      names_stories_to_smoke_tests.append(
+          benchmark_class.Name() + '/' + story_to_smoke_test.name)
+
+  for i, story_name in enumerate(names_stories_to_smoke_tests):
+    for j in xrange(i + 1, len(names_stories_to_smoke_tests)):
+      other_story_name = names_stories_to_smoke_tests[j]
+      if (other_story_name.startswith(story_name + ':') and
+          story_name not in _DISABLED_TESTS):
+        raise ValueError(
+            'Story %s is to be replaced by %s. Please put %s in '
+            '_DISABLED_TESTS list to save CQ capacity (see crbug.com/893615)). '
+            'You can use crbug.com/878390 for the disabling reference.' %
+            (repr(story_name), repr(other_story_name), repr(story_name)))
 
   return suite

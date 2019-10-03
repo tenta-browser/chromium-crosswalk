@@ -7,11 +7,13 @@ package org.chromium.chrome.browser.download;
 import android.graphics.Bitmap;
 
 import org.chromium.components.offline_items_collection.ContentId;
+import org.chromium.components.offline_items_collection.FailState;
 import org.chromium.components.offline_items_collection.OfflineItem.Progress;
+import org.chromium.components.offline_items_collection.PendingState;
 
 /**
  * Class representing information relating to an update in download status.
- * TODO(jming): Consolidate with other downloads-related objects (http://crbug.com/746692).
+ * TODO(crbug.com/691805): Consolidate with other downloads-related objects.
  */
 public final class DownloadUpdate {
     private final ContentId mContentId;
@@ -19,18 +21,21 @@ public final class DownloadUpdate {
     private final String mFilePath;
     private final Bitmap mIcon;
     private final int mIconId;
-    private final boolean mIsDownloadPending;
     private final boolean mIsOffTheRecord;
     private final boolean mIsOpenable;
     private final boolean mIsSupportedMimeType;
     private final boolean mIsTransient;
     private final int mNotificationId;
     private final String mOriginalUrl;
+    private final boolean mShouldPromoteOrigin;
     private final Progress mProgress;
     private final String mReferrer;
     private final long mStartTime;
     private final long mSystemDownloadId;
     private final long mTimeRemainingInMillis;
+    private final long mTotalBytes;
+    private final @FailState int mFailState;
+    private final @PendingState int mPendingState;
 
     private DownloadUpdate(Builder builder) {
         this.mContentId = builder.mContentId;
@@ -38,18 +43,21 @@ public final class DownloadUpdate {
         this.mFilePath = builder.mFilePath;
         this.mIcon = builder.mIcon;
         this.mIconId = builder.mIconId;
-        this.mIsDownloadPending = builder.mIsDownloadPending;
         this.mIsOffTheRecord = builder.mIsOffTheRecord;
         this.mIsOpenable = builder.mIsOpenable;
         this.mIsSupportedMimeType = builder.mIsSupportedMimeType;
         this.mIsTransient = builder.mIsTransient;
         this.mNotificationId = builder.mNotificationId;
         this.mOriginalUrl = builder.mOriginalUrl;
+        this.mShouldPromoteOrigin = builder.mShouldPromoteOrigin;
         this.mProgress = builder.mProgress;
         this.mReferrer = builder.mReferrer;
         this.mStartTime = builder.mStartTime;
         this.mSystemDownloadId = builder.mSystemDownloadId;
         this.mTimeRemainingInMillis = builder.mTimeRemainingInMillis;
+        this.mTotalBytes = builder.mTotalBytes;
+        this.mFailState = builder.mFailState;
+        this.mPendingState = builder.mPendingState;
     }
 
     public ContentId getContentId() {
@@ -73,7 +81,7 @@ public final class DownloadUpdate {
     }
 
     public boolean getIsDownloadPending() {
-        return mIsDownloadPending;
+        return getPendingState() != PendingState.NOT_PENDING;
     }
 
     public boolean getIsOffTheRecord() {
@@ -100,6 +108,10 @@ public final class DownloadUpdate {
         return mOriginalUrl;
     }
 
+    public boolean getShouldPromoteOrigin() {
+        return mShouldPromoteOrigin;
+    }
+
     public Progress getProgress() {
         return mProgress;
     }
@@ -120,6 +132,18 @@ public final class DownloadUpdate {
         return mTimeRemainingInMillis;
     }
 
+    public long getTotalBytes() {
+        return mTotalBytes;
+    }
+
+    public @FailState int getFailState() {
+        return mFailState;
+    }
+
+    public @PendingState int getPendingState() {
+        return mPendingState;
+    }
+
     /**
      * Helper class for building the DownloadUpdate object.
      */
@@ -129,18 +153,21 @@ public final class DownloadUpdate {
         private String mFilePath;
         private Bitmap mIcon;
         private int mIconId = -1;
-        private boolean mIsDownloadPending;
         private boolean mIsOffTheRecord;
         private boolean mIsOpenable;
         private boolean mIsSupportedMimeType;
         private boolean mIsTransient;
         private int mNotificationId = -1;
         private String mOriginalUrl;
+        private boolean mShouldPromoteOrigin;
         private Progress mProgress;
         private String mReferrer;
         private long mStartTime;
         private long mSystemDownloadId = -1;
         private long mTimeRemainingInMillis;
+        private long mTotalBytes;
+        private @FailState int mFailState;
+        private @PendingState int mPendingState;
 
         public Builder setContentId(ContentId contentId) {
             this.mContentId = contentId;
@@ -164,11 +191,6 @@ public final class DownloadUpdate {
 
         public Builder setIconId(int iconId) {
             this.mIconId = iconId;
-            return this;
-        }
-
-        public Builder setIsDownloadPending(boolean isDownloadPending) {
-            this.mIsDownloadPending = isDownloadPending;
             return this;
         }
 
@@ -202,6 +224,11 @@ public final class DownloadUpdate {
             return this;
         }
 
+        public Builder setShouldPromoteOrigin(boolean shouldPromoteOrigin) {
+            this.mShouldPromoteOrigin = shouldPromoteOrigin;
+            return this;
+        }
+
         public Builder setProgress(Progress progress) {
             this.mProgress = progress;
             return this;
@@ -224,6 +251,21 @@ public final class DownloadUpdate {
 
         public Builder setTimeRemainingInMillis(long timeRemainingInMillis) {
             this.mTimeRemainingInMillis = timeRemainingInMillis;
+            return this;
+        }
+
+        public Builder setTotalBytes(long totalBytes) {
+            this.mTotalBytes = totalBytes;
+            return this;
+        }
+
+        public Builder setFailState(@FailState int failState) {
+            this.mFailState = failState;
+            return this;
+        }
+
+        public Builder setPendingState(@PendingState int pendingState) {
+            this.mPendingState = pendingState;
             return this;
         }
 

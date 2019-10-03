@@ -4,26 +4,30 @@
 
 suite('controlled button', function() {
   /** @type {ControlledButtonElement} */
-  var controlledButton;
+  let controlledButton;
 
   /** @type {!chrome.settingsPrivate.PrefObject} */
-  var uncontrolledPref = {
+  const uncontrolledPref = {
     key: 'test',
     type: chrome.settingsPrivate.PrefType.BOOLEAN,
     value: true
   };
 
   /** @type {!chrome.settingsPrivate.PrefObject} */
-  var extensionControlledPref = Object.assign({
-    controlledBy: chrome.settingsPrivate.ControlledBy.EXTENSION,
-    enforcement: chrome.settingsPrivate.Enforcement.ENFORCED,
-  }, uncontrolledPref);
+  const extensionControlledPref = Object.assign(
+      {
+        controlledBy: chrome.settingsPrivate.ControlledBy.EXTENSION,
+        enforcement: chrome.settingsPrivate.Enforcement.ENFORCED,
+      },
+      uncontrolledPref);
 
   /** @type {!chrome.settingsPrivate.PrefObject} */
-  var policyControlledPref = Object.assign({
-    controlledBy: chrome.settingsPrivate.ControlledBy.USER_POLICY,
-    enforcement: chrome.settingsPrivate.Enforcement.ENFORCED,
-  }, uncontrolledPref);
+  const policyControlledPref = Object.assign(
+      {
+        controlledBy: chrome.settingsPrivate.ControlledBy.USER_POLICY,
+        enforcement: chrome.settingsPrivate.Enforcement.ENFORCED,
+      },
+      uncontrolledPref);
 
   setup(function() {
     PolymerTest.clearBody();
@@ -34,24 +38,44 @@ suite('controlled button', function() {
   });
 
   test('controlled prefs', function() {
-    assertFalse(controlledButton.$$('paper-button').disabled);
+    assertFalse(controlledButton.$$('cr-button').disabled);
     assertFalse(!!controlledButton.$$('cr-policy-pref-indicator'));
 
     controlledButton.pref = extensionControlledPref;
     Polymer.dom.flush();
-    assertTrue(controlledButton.$$('paper-button').disabled);
+    assertTrue(controlledButton.$$('cr-button').disabled);
     assertTrue(!!controlledButton.$$('cr-policy-pref-indicator'));
 
     controlledButton.pref = policyControlledPref;
     Polymer.dom.flush();
-    assertTrue(controlledButton.$$('paper-button').disabled);
-    var indicator = controlledButton.$$('cr-policy-pref-indicator');
+    assertTrue(controlledButton.$$('cr-button').disabled);
+    const indicator = controlledButton.$$('cr-policy-pref-indicator');
     assertTrue(!!indicator);
     assertGT(indicator.clientHeight, 0);
 
     controlledButton.pref = uncontrolledPref;
     Polymer.dom.flush();
-    assertFalse(controlledButton.$$('paper-button').disabled);
+    assertFalse(controlledButton.$$('cr-button').disabled);
     assertFalse(!!controlledButton.$$('cr-policy-pref-indicator'));
+  });
+
+  test('null pref', function() {
+    controlledButton.pref = extensionControlledPref;
+    Polymer.dom.flush();
+    assertTrue(controlledButton.$$('cr-button').disabled);
+    assertTrue(!!controlledButton.$$('cr-policy-pref-indicator'));
+
+    controlledButton.pref = null;
+    Polymer.dom.flush();
+    assertFalse(controlledButton.$$('cr-button').disabled);
+    assertFalse(!!controlledButton.$$('cr-policy-pref-indicator'));
+  });
+
+  test('action-button', function() {
+    assertNotEquals(
+        'action-button', controlledButton.$$('cr-button').className);
+    controlledButton.actionButton = true;
+    Polymer.dom.flush();
+    assertEquals('action-button', controlledButton.$$('cr-button').className);
   });
 });

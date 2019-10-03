@@ -11,7 +11,7 @@
 #include "base/bind_helpers.h"
 #include "base/location.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
+#include "base/task/post_task.h"
 #include "base/time/time.h"
 #include "chrome/browser/profile_resetter/brandcoded_default_settings.h"
 #include "chrome/browser/profiles/profile.h"
@@ -23,6 +23,7 @@
 #include "chrome/browser/ui/browser_dialogs.h"
 #include "chrome/browser/ui/browser_finder.h"
 #include "chrome/browser/ui/browser_window.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 
 namespace safe_browsing {
@@ -70,8 +71,8 @@ void MaybeShowSettingsResetPrompt(
   // displaying the dialog.
   Profile* profile = browser->profile()->GetOriginalProfile();
 
-  auto model = base::MakeUnique<SettingsResetPromptModel>(
-      profile, std::move(config), base::MakeUnique<ProfileResetter>(profile));
+  auto model = std::make_unique<SettingsResetPromptModel>(
+      profile, std::move(config), std::make_unique<ProfileResetter>(profile));
 
   model->ReportUmaMetrics();
 
@@ -104,8 +105,8 @@ void SettingsResetPromptDelegateImpl::ShowSettingsResetPromptWithDelay() const {
     return;
 
   base::TimeDelta delay = config->delay_before_prompt();
-  content::BrowserThread::PostDelayedTask(
-      content::BrowserThread::UI, FROM_HERE,
+  base::PostDelayedTaskWithTraits(
+      FROM_HERE, {content::BrowserThread::UI},
       base::BindOnce(MaybeShowSettingsResetPrompt, base::Passed(&config)),
       delay);
 }

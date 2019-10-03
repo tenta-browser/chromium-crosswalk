@@ -4,6 +4,8 @@
 
 #include "chrome/browser/chromeos/login/session/user_session_manager_test_api.h"
 
+#include "chromeos/login/auth/stub_authenticator_builder.h"
+
 namespace chromeos {
 namespace test {
 
@@ -13,7 +15,13 @@ UserSessionManagerTestApi::UserSessionManagerTestApi(
 
 void UserSessionManagerTestApi::InjectStubUserContext(
     const UserContext& user_context) {
-  session_manager_->InjectStubUserContext(user_context);
+  session_manager_->InjectAuthenticatorBuilder(
+      std::make_unique<StubAuthenticatorBuilder>(user_context));
+}
+
+void UserSessionManagerTestApi::InjectAuthenticatorBuilder(
+    std::unique_ptr<StubAuthenticatorBuilder> builder) {
+  session_manager_->InjectAuthenticatorBuilder(std::move(builder));
 }
 
 void UserSessionManagerTestApi::SetShouldLaunchBrowserInTests(
@@ -24,6 +32,11 @@ void UserSessionManagerTestApi::SetShouldLaunchBrowserInTests(
 void UserSessionManagerTestApi::SetShouldObtainTokenHandleInTests(
     bool should_obtain_handle) {
   session_manager_->SetShouldObtainHandleInTests(should_obtain_handle);
+}
+
+void UserSessionManagerTestApi::SetAttemptRestartClosureInTests(
+    const base::RepeatingClosure& attempt_restart_closure) {
+  session_manager_->SetAttemptRestartClosureInTests(attempt_restart_closure);
 }
 
 }  // namespace test

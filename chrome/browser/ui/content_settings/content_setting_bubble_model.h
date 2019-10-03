@@ -14,14 +14,16 @@
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
+#include "base/scoped_observer.h"
 #include "base/strings/string16.h"
+#include "build/build_config.h"
 #include "chrome/browser/content_settings/tab_specific_content_settings.h"
+#include "chrome/browser/ui/blocked_content/framebust_block_tab_helper.h"
+#include "chrome/browser/ui/blocked_content/url_list_manager.h"
 #include "chrome/common/custom_handlers/protocol_handler.h"
 #include "components/content_settings/core/common/content_settings.h"
 #include "components/content_settings/core/common/content_settings_types.h"
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
-#include "content/public/common/media_stream_request.h"
+#include "third_party/blink/public/common/mediastream/media_stream_request.h"
 #include "ui/gfx/image/image.h"
 #include "url/gurl.h"
 
@@ -39,8 +41,7 @@ class RapporServiceImpl;
 
 // The hierarchy of bubble models:
 //
-// ContentSettingsBubbleModel                  - base class
-//   ContentSettingMediaStreamBubbleModel        - media (camera and mic)
+// ContentSettingBubbleModel                  - base class
 //   ContentSettingSimpleBubbleModel             - single content setting
 //     ContentSettingMixedScriptBubbleModel        - mixed script
 //     ContentSettingRPHBubbleModel                - protocol handlers
@@ -50,18 +51,21 @@ class RapporServiceImpl;
 //     ContentSettingSingleRadioGroup              - radio group
 //       ContentSettingCookiesBubbleModel            - cookies
 //       ContentSettingPopupBubbleModel              - popups
+//       ContentSettingFramebustBlockBubbleModel     - blocked frame busting
+//   ContentSettingMediaStreamBubbleModel        - media (camera and mic)
 //   ContentSettingSubresourceFilterBubbleModel  - filtered subresources
 //   ContentSettingDownloadsBubbleModel          - automatic downloads
 
 // Forward declaration necessary for downcasts.
-class ContentSettingMediaStreamBubbleModel;
 class ContentSettingSimpleBubbleModel;
+class ContentSettingMediaStreamBubbleModel;
 class ContentSettingSubresourceFilterBubbleModel;
 class ContentSettingDownloadsBubbleModel;
+class ContentSettingFramebustBlockBubbleModel;
 
 // This model provides data for ContentSettingBubble, and also controls
 // the action triggered when the allow / block radio buttons are triggered.
-class ContentSettingBubbleModel : public content::NotificationObserver {
+class ContentSettingBubbleModel {
  public:
   typedef ContentSettingBubbleModelDelegate Delegate;
 
@@ -83,6 +87,7 @@ class ContentSettingBubbleModel : public content::NotificationObserver {
    public:
     virtual void OnListItemAdded(const ListItem& item) {}
     virtual void OnListItemRemovedAt(int index) {}
+    virtual int GetSelectedRadioOption() = 0;
 
    protected:
     virtual ~Owner() = default;
@@ -94,9 +99,12 @@ class ContentSettingBubbleModel : public content::NotificationObserver {
     ~RadioGroup();
 
     GURL url;
-    base::string16 title;
     RadioItems radio_items;
     int default_item;
+
+    // Whether the user can control this radio group. False if controlled by
+    // policy, etc.
+    bool user_managed = true;
   };
 
   struct DomainList {
@@ -114,11 +122,11 @@ class ContentSettingBubbleModel : public content::NotificationObserver {
     ~MediaMenu();
 
     base::string16 label;
-    content::MediaStreamDevice default_device;
-    content::MediaStreamDevice selected_device;
+    blink::MediaStreamDevice default_device;
+    blink::MediaStreamDevice selected_device;
     bool disabled;
   };
-  typedef std::map<content::MediaStreamType, MediaMenu> MediaMenuMap;
+  typedef std::map<blink::mojom::MediaStreamType, MediaMenu> MediaMenuMap;
 
   enum class ManageTextStyle {
     // No Manage button or checkbox is displayed.
@@ -137,7 +145,6 @@ class ContentSettingBubbleModel : public content::NotificationObserver {
     base::string16 message;
     ListItems list_items;
     RadioGroup radio_group;
-    bool radio_group_enabled = false;
     std::vector<DomainList> domain_lists;
     base::string16 custom_link;
     bool custom_link_enabled = false;
@@ -151,39 +158,33 @@ class ContentSettingBubbleModel : public content::NotificationObserver {
     DISALLOW_COPY_AND_ASSIGN(BubbleContent);
   };
 
+  static const int kAllowButtonIndex;
+
   // Creates a bubble model for a particular |content_type|. Note that not all
   // bubbles fit this description.
   // TODO(msramek): Move this to ContentSettingSimpleBubbleModel or remove
   // entirely.
-  static ContentSettingBubbleModel* CreateContentSettingBubbleModel(
-      Delegate* delegate,
-      content::WebContents* web_contents,
-      Profile* profile,
-      ContentSettingsType content_type);
+  static std::unique_ptr<ContentSettingBubbleModel>
+  CreateContentSettingBubbleModel(Delegate* delegate,
+                                  content::WebContents* web_contents,
+                                  ContentSettingsType content_type);
 
-  ~ContentSettingBubbleModel() override;
+  virtual ~ContentSettingBubbleModel();
 
   const BubbleContent& bubble_content() const { return bubble_content_; }
 
   void set_owner(Owner* owner) { owner_ = owner; }
 
-  // content::NotificationObserver:
-  void Observe(int type,
-               const content::NotificationSource& source,
-               const content::NotificationDetails& details) override;
-
-  virtual void OnRadioClicked(int radio_index) {}
   virtual void OnListItemClicked(int index, int event_flags) {}
   virtual void OnCustomLinkClicked() {}
   virtual void OnManageButtonClicked() {}
   virtual void OnManageCheckboxChecked(bool is_checked) {}
   virtual void OnLearnMoreClicked() {}
-  virtual void OnMediaMenuClicked(content::MediaStreamType type,
+  virtual void OnMediaMenuClicked(blink::mojom::MediaStreamType type,
                                   const std::string& selected_device_id) {}
 
-  // Called by the view code when the bubble is closed by the user using the
-  // Done button.
-  virtual void OnDoneClicked() {}
+  // Called by the view code when the bubble is closed
+  virtual void CommitChanges() {}
 
   // TODO(msramek): The casting methods below are only necessary because
   // ContentSettingBubbleController in the Cocoa UI needs to know the type of
@@ -203,23 +204,26 @@ class ContentSettingBubbleModel : public content::NotificationObserver {
   // Cast this bubble into ContentSettingDownloadsBubbleModel if possible.
   virtual ContentSettingDownloadsBubbleModel* AsDownloadsBubbleModel();
 
+  // Cast this bubble into ContentSettingFramebustBlockBubbleModel if possible.
+  virtual ContentSettingFramebustBlockBubbleModel*
+  AsFramebustBlockBubbleModel();
+
   // Sets the Rappor service used for testing.
   void SetRapporServiceImplForTesting(
       rappor::RapporServiceImpl* rappor_service) {
     rappor_service_ = rappor_service;
   }
 
-  static const int kAllowButtonIndex;
-
  protected:
-  ContentSettingBubbleModel(
-      Delegate* delegate,
-      content::WebContents* web_contents,
-      Profile* profile);
+  // |web_contents| must outlive this.
+  ContentSettingBubbleModel(Delegate* delegate,
+                            content::WebContents* web_contents);
 
+  // Should always be non-nullptr.
   content::WebContents* web_contents() const { return web_contents_; }
-  Profile* profile() const { return profile_; }
+  Profile* GetProfile() const;
   Delegate* delegate() const { return delegate_; }
+  int selected_item() const { return owner_->GetSelectedRadioOption(); }
 
   void set_title(const base::string16& title) { bubble_content_.title = title; }
   void set_message(const base::string16& message) {
@@ -229,9 +233,6 @@ class ContentSettingBubbleModel : public content::NotificationObserver {
   void RemoveListItem(int index);
   void set_radio_group(const RadioGroup& radio_group) {
     bubble_content_.radio_group = radio_group;
-  }
-  void set_radio_group_enabled(bool enabled) {
-    bubble_content_.radio_group_enabled = enabled;
   }
   void add_domain_list(const DomainList& domain_list) {
     bubble_content_.domain_lists.push_back(domain_list);
@@ -248,10 +249,11 @@ class ContentSettingBubbleModel : public content::NotificationObserver {
   void set_manage_text_style(ManageTextStyle manage_text_style) {
     bubble_content_.manage_text_style = manage_text_style;
   }
-  void add_media_menu(content::MediaStreamType type, const MediaMenu& menu) {
+  void add_media_menu(blink::mojom::MediaStreamType type,
+                      const MediaMenu& menu) {
     bubble_content_.media_menus[type] = menu;
   }
-  void set_selected_device(const content::MediaStreamDevice& device) {
+  void set_selected_device(const blink::MediaStreamDevice& device) {
     bubble_content_.media_menus[device.type].selected_device = device;
   }
   void set_show_learn_more(bool show_learn_more) {
@@ -264,12 +266,9 @@ class ContentSettingBubbleModel : public content::NotificationObserver {
 
  private:
   content::WebContents* web_contents_;
-  Profile* profile_;
   Owner* owner_;
   Delegate* delegate_;
   BubbleContent bubble_content_;
-  // A registrar for listening for WEB_CONTENTS_DESTROYED notifications.
-  content::NotificationRegistrar registrar_;
   // The service used to record Rappor metrics. Can be set for testing.
   rappor::RapporServiceImpl* rappor_service_;
 
@@ -281,7 +280,6 @@ class ContentSettingSimpleBubbleModel : public ContentSettingBubbleModel {
  public:
   ContentSettingSimpleBubbleModel(Delegate* delegate,
                                   content::WebContents* web_contents,
-                                  Profile* profile,
                                   ContentSettingsType content_type);
 
   ContentSettingsType content_type() { return content_type_; }
@@ -290,6 +288,8 @@ class ContentSettingSimpleBubbleModel : public ContentSettingBubbleModel {
   ContentSettingSimpleBubbleModel* AsSimpleBubbleModel() override;
 
  private:
+  FRIEND_TEST_ALL_PREFIXES(FramebustBlockBrowserTest, ManageButtonClicked);
+
   // ContentSettingBubbleModel implementation.
   void SetTitle();
   void SetMessage();
@@ -308,23 +308,19 @@ class ContentSettingRPHBubbleModel : public ContentSettingSimpleBubbleModel {
  public:
   ContentSettingRPHBubbleModel(Delegate* delegate,
                                content::WebContents* web_contents,
-                               Profile* profile,
                                ProtocolHandlerRegistry* registry);
   ~ContentSettingRPHBubbleModel() override;
 
-  void OnRadioClicked(int radio_index) override;
-  void OnDoneClicked() override;
+  // ContentSettingBubbleModel:
+  void CommitChanges() override;
 
  private:
   void RegisterProtocolHandler();
   void UnregisterProtocolHandler();
   void IgnoreProtocolHandler();
   void ClearOrSetPreviousHandler();
+  void PerformActionForSelectedItem();
 
-  int selected_item_;
-  // Initially false, set to true if the user explicitly interacts with the
-  // bubble.
-  bool interacted_;
   ProtocolHandlerRegistry* registry_;
   ProtocolHandler pending_handler_;
   ProtocolHandler previous_handler_;
@@ -332,44 +328,17 @@ class ContentSettingRPHBubbleModel : public ContentSettingSimpleBubbleModel {
   DISALLOW_COPY_AND_ASSIGN(ContentSettingRPHBubbleModel);
 };
 
-// The model for the deceptive content bubble.
-class ContentSettingSubresourceFilterBubbleModel
-    : public ContentSettingBubbleModel {
- public:
-  ContentSettingSubresourceFilterBubbleModel(Delegate* delegate,
-                                             content::WebContents* web_contents,
-                                             Profile* profile);
-
-  ~ContentSettingSubresourceFilterBubbleModel() override;
-
- private:
-  void SetMessage();
-  void SetTitle();
-  void SetManageText();
-
-  // ContentSettingBubbleModel:
-  void OnManageCheckboxChecked(bool is_checked) override;
-  ContentSettingSubresourceFilterBubbleModel* AsSubresourceFilterBubbleModel()
-      override;
-  void OnLearnMoreClicked() override;
-  void OnDoneClicked() override;
-
-  bool is_checked_ = false;
-
-  DISALLOW_COPY_AND_ASSIGN(ContentSettingSubresourceFilterBubbleModel);
-};
-
 // The model of the content settings bubble for media settings.
 class ContentSettingMediaStreamBubbleModel : public ContentSettingBubbleModel {
  public:
   ContentSettingMediaStreamBubbleModel(Delegate* delegate,
-                                       content::WebContents* web_contents,
-                                       Profile* profile);
+                                       content::WebContents* web_contents);
 
   ~ContentSettingMediaStreamBubbleModel() override;
 
   // ContentSettingBubbleModel:
   ContentSettingMediaStreamBubbleModel* AsMediaStreamBubbleModel() override;
+  void CommitChanges() override;
   void OnManageButtonClicked() override;
 
  private:
@@ -399,16 +368,13 @@ class ContentSettingMediaStreamBubbleModel : public ContentSettingBubbleModel {
 
   // Updates the camera and microphone default device with the passed |type|
   // and device.
-  void UpdateDefaultDeviceForType(content::MediaStreamType type,
+  void UpdateDefaultDeviceForType(blink::mojom::MediaStreamType type,
                                   const std::string& device);
 
   // ContentSettingBubbleModel implementation.
-  void OnRadioClicked(int radio_index) override;
-  void OnMediaMenuClicked(content::MediaStreamType type,
+  void OnMediaMenuClicked(blink::mojom::MediaStreamType type,
                           const std::string& selected_device) override;
 
-  // The index of the selected radio item.
-  int selected_item_;
   // The content settings that are associated with the individual radio
   // buttons.
   ContentSetting radio_item_setting_[2];
@@ -418,16 +384,43 @@ class ContentSettingMediaStreamBubbleModel : public ContentSettingBubbleModel {
   DISALLOW_COPY_AND_ASSIGN(ContentSettingMediaStreamBubbleModel);
 };
 
+// The model for the deceptive content bubble.
+class ContentSettingSubresourceFilterBubbleModel
+    : public ContentSettingBubbleModel {
+ public:
+  ContentSettingSubresourceFilterBubbleModel(
+      Delegate* delegate,
+      content::WebContents* web_contents);
+
+  ~ContentSettingSubresourceFilterBubbleModel() override;
+
+ private:
+  void SetMessage();
+  void SetTitle();
+  void SetManageText();
+
+  // ContentSettingBubbleModel:
+  void OnManageCheckboxChecked(bool is_checked) override;
+  ContentSettingSubresourceFilterBubbleModel* AsSubresourceFilterBubbleModel()
+      override;
+  void OnLearnMoreClicked() override;
+  void CommitChanges() override;
+
+  bool is_checked_ = false;
+
+  DISALLOW_COPY_AND_ASSIGN(ContentSettingSubresourceFilterBubbleModel);
+};
+
 // The model for automatic downloads setting.
 class ContentSettingDownloadsBubbleModel : public ContentSettingBubbleModel {
  public:
   ContentSettingDownloadsBubbleModel(Delegate* delegate,
-                                     content::WebContents* web_contents,
-                                     Profile* profile);
+                                     content::WebContents* web_contents);
   ~ContentSettingDownloadsBubbleModel() override;
 
   // ContentSettingBubbleModel overrides:
   ContentSettingDownloadsBubbleModel* AsDownloadsBubbleModel() override;
+  void CommitChanges() override;
 
  private:
   void SetRadioGroup();
@@ -435,12 +428,63 @@ class ContentSettingDownloadsBubbleModel : public ContentSettingBubbleModel {
   void SetManageText();
 
   // ContentSettingBubbleModel overrides:
-  void OnRadioClicked(int radio_index) override;
   void OnManageButtonClicked() override;
-
-  int selected_item_ = 0;
 
   DISALLOW_COPY_AND_ASSIGN(ContentSettingDownloadsBubbleModel);
 };
+
+class ContentSettingSingleRadioGroup : public ContentSettingSimpleBubbleModel {
+ public:
+  ContentSettingSingleRadioGroup(Delegate* delegate,
+                                 content::WebContents* web_contents,
+                                 ContentSettingsType content_type);
+  ~ContentSettingSingleRadioGroup() override;
+
+  // ContentSettingSimpleBubbleModel:
+  void CommitChanges() override;
+
+ protected:
+  bool settings_changed() const;
+
+ private:
+  FRIEND_TEST_ALL_PREFIXES(FramebustBlockBrowserTest, AllowRadioButtonSelected);
+  FRIEND_TEST_ALL_PREFIXES(FramebustBlockBrowserTest,
+                           DisallowRadioButtonSelected);
+
+  void SetRadioGroup();
+  void SetNarrowestContentSetting(ContentSetting setting);
+
+  ContentSetting block_setting_;
+
+  DISALLOW_COPY_AND_ASSIGN(ContentSettingSingleRadioGroup);
+};
+
+#if !defined(OS_ANDROID)
+// The model for the blocked Framebust bubble.
+class ContentSettingFramebustBlockBubbleModel
+    : public ContentSettingSingleRadioGroup,
+      public UrlListManager::Observer {
+ public:
+  ContentSettingFramebustBlockBubbleModel(Delegate* delegate,
+                                          content::WebContents* web_contents);
+
+  ~ContentSettingFramebustBlockBubbleModel() override;
+
+  // ContentSettingBubbleModel:
+  void OnListItemClicked(int index, int event_flags) override;
+  ContentSettingFramebustBlockBubbleModel* AsFramebustBlockBubbleModel()
+      override;
+
+  // UrlListManager::Observer:
+  void BlockedUrlAdded(int32_t id, const GURL& blocked_url) override;
+
+ private:
+  ListItem CreateListItem(const GURL& url);
+
+  ScopedObserver<UrlListManager, UrlListManager::Observer> url_list_observer_;
+
+  DISALLOW_COPY_AND_ASSIGN(ContentSettingFramebustBlockBubbleModel);
+};
+#endif  // !defined(OS_ANDROID)
 
 #endif  // CHROME_BROWSER_UI_CONTENT_SETTINGS_CONTENT_SETTING_BUBBLE_MODEL_H_

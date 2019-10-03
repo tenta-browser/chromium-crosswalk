@@ -6,16 +6,17 @@
 
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
+#include "chrome/android/chrome_jni_headers/AutoSigninFirstRunDialog_jni.h"
 #include "chrome/browser/password_manager/chrome_password_manager_client.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/sync/profile_sync_service_factory.h"
 #include "chrome/browser/ui/passwords/manage_passwords_view_utils.h"
+#include "chrome/grit/chromium_strings.h"
 #include "chrome/grit/generated_resources.h"
-#include "components/browser_sync/profile_sync_service.h"
 #include "components/password_manager/core/browser/password_bubble_experiment.h"
 #include "components/password_manager/core/browser/password_manager_constants.h"
 #include "components/password_manager/core/browser/password_manager_metrics_util.h"
-#include "jni/AutoSigninFirstRunDialog_jni.h"
+#include "components/strings/grit/components_strings.h"
 #include "ui/android/window_android.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/gfx/range/range.h"
@@ -45,16 +46,9 @@ void AutoSigninFirstRunDialogAndroid::ShowDialog() {
   Profile* profile =
       Profile::FromBrowserContext(web_contents_->GetBrowserContext());
 
-  bool is_smartlock_branding_enabled =
-      password_bubble_experiment::IsSmartLockUser(
-          ProfileSyncServiceFactory::GetForProfile(profile));
-  base::string16 explanation;
-  gfx::Range explanation_link_range = gfx::Range();
-  GetBrandedTextAndLinkRange(
-      is_smartlock_branding_enabled,
-      IDS_AUTO_SIGNIN_FIRST_RUN_SMART_LOCK_TEXT,
-      IDS_AUTO_SIGNIN_FIRST_RUN_TEXT, &explanation,
-      &explanation_link_range);
+  base::string16 explanation = l10n_util::GetStringFUTF16(
+      IDS_AUTO_SIGNIN_FIRST_RUN_TEXT,
+      l10n_util::GetStringUTF16(IDS_PASSWORD_MANAGER_TITLE_BRAND));
   gfx::NativeWindow native_window = web_contents_->GetTopLevelNativeWindow();
   base::android::ScopedJavaGlobalRef<jobject> java_dialog_global;
   base::string16 message = l10n_util::GetStringUTF16(
@@ -63,14 +57,12 @@ void AutoSigninFirstRunDialogAndroid::ShowDialog() {
           : IDS_AUTO_SIGNIN_FIRST_RUN_TITLE_LOCAL_DEVICE);
   base::string16 ok_button_text =
       l10n_util::GetStringUTF16(IDS_AUTO_SIGNIN_FIRST_RUN_OK);
-  base::string16 turn_off_button_text =
-      l10n_util::GetStringUTF16(IDS_AUTO_SIGNIN_FIRST_RUN_TURN_OFF);
+  base::string16 turn_off_button_text = l10n_util::GetStringUTF16(IDS_TURN_OFF);
 
   dialog_jobject_.Reset(Java_AutoSigninFirstRunDialog_createAndShowDialog(
       env, native_window->GetJavaObject(), reinterpret_cast<intptr_t>(this),
       base::android::ConvertUTF16ToJavaString(env, message),
-      base::android::ConvertUTF16ToJavaString(env, explanation),
-      explanation_link_range.start(), explanation_link_range.end(),
+      base::android::ConvertUTF16ToJavaString(env, explanation), 0, 0,
       base::android::ConvertUTF16ToJavaString(env, ok_button_text),
       base::android::ConvertUTF16ToJavaString(env, turn_off_button_text)));
 }
@@ -109,9 +101,12 @@ void AutoSigninFirstRunDialogAndroid::WebContentsDestroyed() {
   Java_AutoSigninFirstRunDialog_dismissDialog(env, dialog_jobject_);
 }
 
-void AutoSigninFirstRunDialogAndroid::WasHidden() {
-  // TODO(https://crbug.com/610700): once bug is fixed, this code should be
-  // gone.
-  JNIEnv* env = AttachCurrentThread();
-  Java_AutoSigninFirstRunDialog_dismissDialog(env, dialog_jobject_);
+void AutoSigninFirstRunDialogAndroid::OnVisibilityChanged(
+    content::Visibility visibility) {
+  if (visibility == content::Visibility::HIDDEN) {
+    // TODO(https://crbug.com/610700): once bug is fixed, this code should be
+    // gone.
+    JNIEnv* env = AttachCurrentThread();
+    Java_AutoSigninFirstRunDialog_dismissDialog(env, dialog_jobject_);
+  }
 }

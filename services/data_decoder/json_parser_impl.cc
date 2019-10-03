@@ -8,7 +8,6 @@
 #include <utility>
 
 #include "base/json/json_reader.h"
-#include "base/memory/ptr_util.h"
 #include "base/values.h"
 
 namespace data_decoder {
@@ -22,12 +21,15 @@ JsonParserImpl::~JsonParserImpl() = default;
 void JsonParserImpl::Parse(const std::string& json, ParseCallback callback) {
   int error_code;
   std::string error;
-  std::unique_ptr<base::Value> value = base::JSONReader::ReadAndReturnError(
-      json, base::JSON_PARSE_RFC, &error_code, &error);
+  std::unique_ptr<base::Value> value =
+      base::JSONReader::ReadAndReturnErrorDeprecated(json, base::JSON_PARSE_RFC,
+                                                     &error_code, &error);
   if (value) {
-    std::move(callback).Run(std::move(value), base::nullopt);
+    std::move(callback).Run(base::make_optional(std::move(*value)),
+                            base::nullopt);
   } else {
-    std::move(callback).Run(nullptr, base::make_optional(std::move(error)));
+    std::move(callback).Run(base::nullopt,
+                            base::make_optional(std::move(error)));
   }
 }
 

@@ -6,39 +6,33 @@
 
 #include <assert.h>
 #include <crazy_linker.h>
-#include <dlfcn.h>
 
 #include "crazy_linker_debug.h"
-#include "crazy_linker_library_view.h"
 #include "crazy_linker_globals.h"
+#include "crazy_linker_library_view.h"
+#include "crazy_linker_pointer_set.h"
 #include "crazy_linker_rdebug.h"
 #include "crazy_linker_shared_library.h"
 #include "crazy_linker_system.h"
+#include "crazy_linker_system_linker.h"
 #include "crazy_linker_util.h"
-#include "crazy_linker_zip.h"
+
+#ifdef __ANDROID__
+#include "crazy_linker_system_android.h"
+#endif
 
 namespace crazy {
 
 namespace {
 
-// From android.os.Build.VERSION_CODES.LOLLIPOP.
-static const int SDK_VERSION_CODE_LOLLIPOP = 21;
-
-// Page size for alignment in a zip file.
-const size_t kZipAlignmentPageSize = 4096;
-COMPILE_ASSERT(kZipAlignmentPageSize % PAGE_SIZE == 0,
-               kZipAlignmentPageSize_must_be_a_multiple_of_PAGE_SIZE);
-
 // A helper struct used when looking up symbols in libraries.
 struct SymbolLookupState {
-  void* found_addr;
-  void* weak_addr;
-  int weak_count;
-
-  SymbolLookupState() : found_addr(NULL), weak_addr(NULL), weak_count(0) {}
+  void* found_addr = nullptr;
+  void* weak_addr = nullptr;
+  int weak_count = 0;
 
   // Check a symbol entry.
-  bool CheckSymbol(const char* symbol, SharedLibrary* lib) {
+  bool CheckSymbol(const char* symbol, const SharedLibrary* lib) {
     const ELF::Sym* entry = lib->LookupSymbolEntry(symbol);
     if (!entry)
       return false;
@@ -59,10 +53,43 @@ struct SymbolLookupState {
   }
 };
 
+// Checks that |params| is compatible with a system library load.
+// On success return true. On failure, set |*error| and return false.
+// |lib_name| is either the library name, or nullptr, in which case
+// |params.library_path| will be used for the error message.
+bool CheckSystemLibraryLoadParams(const char* lib_name,
+                                  const LoadParams& params,
+                                  Error* error) {
+  if (!lib_name)
+    lib_name = params.library_path.c_str();
+
+  if (params.library_fd >= 0) {
+    error->Format("Cannot load system library from fd %d: %s",
+                  params.library_fd, lib_name);
+    return false;
+  }
+  if (params.library_offset != 0) {
+    error->Format("Cannot load system library from offset 0x%08lx: %s",
+                  static_cast<unsigned long>(params.library_offset), lib_name);
+    return false;
+  }
+  if (params.wanted_address != 0) {
+    error->Format("Cannot load system library at address 0x%08lx: %s",
+                  static_cast<unsigned long>(params.wanted_address), lib_name);
+    return false;
+  }
+  if (params.reserved_size != 0) {
+    error->Format("Cannot load system library in reserved memory map: %s",
+                  lib_name);
+  }
+  return true;
+}
+
 }  // namespace
 
-LibraryList::LibraryList() : head_(0), has_error_(false) {
-  const int sdk_build_version = *Globals::GetSDKBuildVersion();
+LibraryList::LibraryList() {
+#ifdef __ANDROID__
+  const int sdk_build_version = GetAndroidDeviceApiLevel();
 
   // If SDK version is Lollipop or earlier, we need to load anything
   // listed in LD_PRELOAD explicitly, because dlsym() on the main executable
@@ -81,18 +108,19 @@ LibraryList::LibraryList() : head_(0), has_error_(false) {
   //
   // For more, see:
   //   https://code.google.com/p/android/issues/detail?id=74255
-  if (sdk_build_version <= SDK_VERSION_CODE_LOLLIPOP)
+  if (sdk_build_version <= ANDROID_SDK_VERSION_CODE_LOLLIPOP)
     LoadPreloads();
+#endif  // __ANDROID__
 }
 
 LibraryList::~LibraryList() {
   // Invalidate crazy library list.
-  head_ = NULL;
+  head_ = nullptr;
 
-  // Destroy all known libraries.
+  // Destroy all known libraries in reverse order.
   while (!known_libraries_.IsEmpty()) {
-    LibraryView* wrap = known_libraries_.PopLast();
-    delete wrap;
+    LibraryView* view = known_libraries_.PopLast();
+    delete view;
   }
 }
 
@@ -101,10 +129,7 @@ void LibraryList::LoadPreloads() {
   if (!ld_preload)
     return;
 
-  SearchPathList search_path_list;
-  search_path_list.ResetFromEnv("LD_LIBRARY_PATH");
-
-  LOG("%s: Preloads list is: %s\n", __FUNCTION__, ld_preload);
+  LOG("Preloads list is: %s", ld_preload);
   const char* current = ld_preload;
   const char* end = ld_preload + strlen(ld_preload);
 
@@ -120,21 +145,16 @@ void LibraryList::LoadPreloads() {
     current = item + item_length + 1;
 
     String lib_name(item, item_length);
-    LOG("%s: Attempting to preload %s\n", __FUNCTION__, lib_name.c_str());
+    LOG("Attempting to preload %s", lib_name.c_str());
 
     if (FindKnownLibrary(lib_name.c_str())) {
-      LOG("%s: already loaded %s: ignoring\n", __FUNCTION__, lib_name.c_str());
+      LOG("already loaded %s: ignoring", lib_name.c_str());
       continue;
     }
 
     Error error;
-    LibraryView* preload = LoadLibrary(lib_name.c_str(),
-                                       RTLD_NOW | RTLD_GLOBAL,
-                                       0U /* load address */,
-                                       0U /* file offset */,
-                                       &search_path_list,
-                                       true /* is_dependency_or_preload */,
-                                       &error);
+    LibraryView* preload = LoadLibraryWithSystemLinker(
+        lib_name.c_str(), RTLD_NOW | RTLD_GLOBAL, &error);
     if (!preload) {
       LOG("'%s' cannot be preloaded: ignored\n", lib_name.c_str());
       continue;
@@ -144,10 +164,9 @@ void LibraryList::LoadPreloads() {
   }
 
   if (CRAZY_DEBUG) {
-    LOG("%s: Preloads loaded\n", __FUNCTION__);
-    for (size_t n = 0; n < preloaded_libraries_.GetCount(); ++n)
-      LOG("  ... %p %s\n",
-          preloaded_libraries_[n], preloaded_libraries_[n]->GetName());
+    LOG("Preloads loaded");
+    for (const LibraryView* preload : preloaded_libraries_)
+      LOG("  ... %p %s\n", preload, preload->GetName());
     LOG("    preloads @%p\n", &preloaded_libraries_);
   }
 }
@@ -155,47 +174,45 @@ void LibraryList::LoadPreloads() {
 LibraryView* LibraryList::FindLibraryByName(const char* lib_name) {
   // Sanity check.
   if (!lib_name)
-    return NULL;
+    return nullptr;
 
-  for (size_t n = 0; n < known_libraries_.GetCount(); ++n) {
-    LibraryView* wrap = known_libraries_[n];
-    if (!strcmp(lib_name, wrap->GetName()))
-      return wrap;
+  for (LibraryView* view : known_libraries_) {
+    if (!strcmp(lib_name, view->GetName()))
+      return view;
   }
-  return NULL;
+  return nullptr;
 }
 
-void* LibraryList::FindSymbolFrom(const char* symbol_name, LibraryView* from) {
+void* LibraryList::FindSymbolFrom(const char* symbol_name,
+                                  const LibraryView* from) {
   SymbolLookupState lookup_state;
 
   if (!from)
-    return NULL;
+    return nullptr;
 
   // Use a work-queue and a set to ensure to perform a breadth-first
   // search.
-  Vector<LibraryView*> work_queue;
-  Set<LibraryView*> visited_set;
+  Vector<const LibraryView*> work_queue;
+  PointerSet visited_set;
 
   work_queue.PushBack(from);
 
   while (!work_queue.IsEmpty()) {
-    LibraryView* lib = work_queue.PopFirst();
-    if (lib->IsCrazy()) {
-      if (lookup_state.CheckSymbol(symbol_name, lib->GetCrazy()))
+    const LibraryView* lib = work_queue.PopFirst();
+    const SharedLibrary* crazy_lib = lib->GetCrazy();
+    if (crazy_lib) {
+      if (lookup_state.CheckSymbol(symbol_name, crazy_lib))
         return lookup_state.found_addr;
     } else if (lib->IsSystem()) {
-      // TODO(digit): Support weak symbols in system libraries.
-      // With the current code, all symbols in system libraries
-      // are assumed to be non-weak.
-      void* addr = lib->LookupSymbol(symbol_name);
-      if (addr)
-        return addr;
+      LibraryView::SearchResult sym = lib->LookupSymbol(symbol_name);
+      if (sym.IsValid())
+        return sym.address;
     }
 
     // If this is a crazy library, add non-visited dependencies
     // to the work queue.
-    if (lib->IsCrazy()) {
-      SharedLibrary::DependencyIterator iter(lib->GetCrazy());
+    if (crazy_lib) {
+      SharedLibrary::DependencyIterator iter(crazy_lib);
       while (iter.GetNext()) {
         LibraryView* dependency = FindKnownLibrary(iter.GetName());
         if (dependency && !visited_set.Has(dependency)) {
@@ -213,23 +230,22 @@ void* LibraryList::FindSymbolFrom(const char* symbol_name, LibraryView* from) {
   }
 
   // There was no symbol definition.
-  return NULL;
+  return nullptr;
 }
 
 LibraryView* LibraryList::FindLibraryForAddress(void* address) {
   // Linearly scan all libraries, looking for one that contains
   // a given address. NOTE: This doesn't check that this falls
   // inside one of the mapped library segments.
-  for (size_t n = 0; n < known_libraries_.GetCount(); ++n) {
-    LibraryView* wrap = known_libraries_[n];
+  for (LibraryView* view : known_libraries_) {
     // TODO(digit): Search addresses inside system libraries.
-    if (wrap->IsCrazy()) {
-      SharedLibrary* lib = wrap->GetCrazy();
+    if (view->IsCrazy()) {
+      SharedLibrary* lib = view->GetCrazy();
       if (lib->ContainsAddress(address))
-        return wrap;
+        return view;
     }
   }
-  return NULL;
+  return nullptr;
 }
 
 #ifdef __arm__
@@ -241,7 +257,7 @@ _Unwind_Ptr LibraryList::FindArmExIdx(void* pc, int* count) {
     }
   }
   *count = 0;
-  return NULL;
+  return static_cast<_Unwind_Ptr>(NULL);
 }
 #else  // !__arm__
 int LibraryList::IteratePhdr(PhdrIterationCallback callback, void* data) {
@@ -262,10 +278,7 @@ int LibraryList::IteratePhdr(PhdrIterationCallback callback, void* data) {
 
 void LibraryList::UnloadLibrary(LibraryView* wrap) {
   // Sanity check.
-  LOG("%s: for %s (ref_count=%d)\n",
-      __FUNCTION__,
-      wrap->GetName(),
-      wrap->ref_count());
+  LOG("for %s (ref_count=%d)", wrap->GetName(), wrap->ref_count());
 
   if (!wrap->IsSystem() && !wrap->IsCrazy())
     return;
@@ -274,9 +287,8 @@ void LibraryList::UnloadLibrary(LibraryView* wrap) {
     return;
 
   // If this is a crazy library, perform manual cleanup first.
-  if (wrap->IsCrazy()) {
-    SharedLibrary* lib = wrap->GetCrazy();
-
+  SharedLibrary* lib = wrap->GetCrazy();
+  if (lib) {
     // Remove from internal list of crazy libraries.
     if (lib->list_next_)
       lib->list_next_->list_prev_ = lib->list_prev_;
@@ -286,7 +298,9 @@ void LibraryList::UnloadLibrary(LibraryView* wrap) {
       head_ = lib->list_next_;
 
     // Call JNI_OnUnload, if necessary, then the destructors.
+    LOG("Running JNI_OnUnload() for %s", wrap->GetName());
     lib->CallJniOnUnload();
+    LOG("Running destructors for %s", wrap->GetName());
     lib->CallDestructors();
 
     // Unload the dependencies recursively.
@@ -308,127 +322,142 @@ void LibraryList::UnloadLibrary(LibraryView* wrap) {
   delete wrap;
 }
 
-LibraryView* LibraryList::LoadLibrary(const char* lib_name,
-                                      int dlopen_mode,
-                                      uintptr_t load_address,
-                                      off_t file_offset,
-                                      SearchPathList* search_path_list,
-                                      bool is_dependency_or_preload,
-                                      Error* error) {
-  const char* base_name = GetBaseNamePtr(lib_name);
-
-  LOG("%s: lib_name='%s'\n", __FUNCTION__, lib_name);
-
+LibraryView* LibraryList::LoadLibraryWithSystemLinker(const char* lib_name,
+                                                      int dlopen_mode,
+                                                      Error* error) {
   // First check whether a library with the same base name was
   // already loaded.
-  LibraryView* wrap = FindKnownLibrary(lib_name);
-  if (wrap) {
-    if (load_address) {
+  ASSERT(!FindKnownLibrary(lib_name),
+         "System library already loaded: ", lib_name);
+
+  void* system_lib = SystemLinker::Open(lib_name, dlopen_mode);
+  if (!system_lib) {
+    error->Format("Can't load system library %s: %s", lib_name,
+                  SystemLinker::Error());
+    return nullptr;
+  }
+
+  // Can't really find the DT_SONAME of this library, assume if is its basename.
+  LibraryView* view = new LibraryView(system_lib, GetBaseNamePtr(lib_name));
+  known_libraries_.PushBack(view);
+
+  LOG("System library %s loaded at %p", lib_name, view);
+  return view;
+}
+
+Expected<LibraryView*> LibraryList::FindAndCheckLoadedLibrary(
+    const char* lib_name,
+    const LoadParams& params,
+    Error* error) {
+  // First check whether a library with the same base name was already loaded.
+  LibraryView* view = FindKnownLibrary(lib_name);
+  if (!view)
+    return nullptr;
+
+  if (view->IsSystem()) {
+    if (!CheckSystemLibraryLoadParams(lib_name, params, error))
+      return error;
+  } else {
+    const SharedLibrary* crazy_lib = view->GetCrazy();
+    ASSERT(crazy_lib != nullptr, "Not a crazy library");
+    if (params.wanted_address) {
       // Check that this is a crazy library and that is was loaded at
       // the correct address.
-      if (!wrap->IsCrazy()) {
-        error->Format("System library can't be loaded at fixed address %08x",
-                      load_address);
-        return NULL;
-      }
-      uintptr_t actual_address = wrap->GetCrazy()->load_address();
-      if (actual_address != load_address) {
-        error->Format("Library already loaded at @%08x, can't load it at @%08x",
-                      actual_address,
-                      load_address);
-        return NULL;
+      uintptr_t actual_address = crazy_lib->load_address();
+      if (actual_address != params.wanted_address) {
+        error->Format(
+            "Library already loaded at address 0x%08lx, can't load it at "
+            "0x%08lx: %s",
+            static_cast<unsigned long>(actual_address),
+            static_cast<unsigned long>(params.wanted_address), lib_name);
+        return error;
       }
     }
-    wrap->AddRef();
-    return wrap;
   }
 
-  // If this load is prompted by either dependencies or preloads, open
-  // normally with dlopen() and do not proceed to try and load the library
-  // crazily.
-  if (is_dependency_or_preload) {
-    LOG("%s: Loading system library '%s'\n", __FUNCTION__, lib_name);
-    ::dlerror();
-    void* system_lib = dlopen(lib_name, dlopen_mode);
-    if (!system_lib) {
-      error->Format("Can't load system library %s: %s", lib_name, ::dlerror());
-      return NULL;
-    }
+  view->AddRef();
+  return view;
+}
 
-    LibraryView* wrap = new LibraryView();
-    wrap->SetSystem(system_lib, lib_name);
-    known_libraries_.PushBack(wrap);
+// static
+bool LibraryList::LocateLibraryFile(const char* lib_name,
+                                    const SearchPathList& search_path_list,
+                                    LoadParams* params,
+                                    Error* error) {
+  LOG("Looking through the search path list");
+  SearchPathList::Result probe = search_path_list.FindFile(lib_name);
+  if (!probe.IsValid()) {
+    error->Format("Can't find library file %s", lib_name);
+    return false;
+  }
+  LOG("Found library: path %s @ 0x%x", probe.path.c_str(), probe.offset);
+  params->library_path = std::move(probe.path);
+  params->library_offset = probe.offset;
+  return true;
+}
 
-    LOG("%s: System library %s loaded at %p\n", __FUNCTION__, lib_name, wrap);
-    LOG("  name=%s\n", wrap->GetName());
-    return wrap;
+LibraryView* LibraryList::LoadLibrary(const char* lib_name,
+                                      const LoadParams& params,
+                                      Error* error) {
+  Expected<LibraryView*> found =
+      FindAndCheckLoadedLibrary(lib_name, params, error);
+  if (!found.has_value())
+    return nullptr;
+  if (found.value())
+    return found.value();
+  return LoadLibraryInternal(params, error);
+}
+
+LibraryView* LibraryList::LoadLibraryInternal(const LoadParams& params,
+                                              Error* error) {
+  // Load the library with the system linker if necessary.
+  const char* lib_path = params.library_path.c_str();
+  if (IsSystemLibraryPath(lib_path)) {
+    if (!CheckSystemLibraryLoadParams(lib_path, params, error))
+      return nullptr;
+    return LoadLibraryWithSystemLinker(lib_path, RTLD_NOW, error);
   }
 
+  // Load the library with the crazy linker.
   ScopedPtr<SharedLibrary> lib(new SharedLibrary());
-
-  // Find the full library path.
-  String full_path;
-
-  if (!strchr(lib_name, '/')) {
-    LOG("%s: Looking through the search path list\n", __FUNCTION__);
-    const char* path = search_path_list->FindFile(lib_name);
-    if (!path) {
-      error->Format("Can't find library file %s", lib_name);
-      return NULL;
-    }
-    full_path = path;
-  } else {
-    if (lib_name[0] != '/') {
-      // Need to transform this into a full path.
-      full_path = GetCurrentDirectory();
-      if (full_path.size() && full_path[full_path.size() - 1] != '/')
-        full_path += '/';
-      full_path += lib_name;
-    } else {
-      // Absolute path. Easy.
-      full_path = lib_name;
-    }
-    LOG("%s: Full library path: %s\n", __FUNCTION__, full_path.c_str());
-    if (!PathIsFile(full_path.c_str())) {
-      error->Format("Library file doesn't exist: %s", full_path.c_str());
-      return NULL;
-    }
-  }
-
-  // Load the library
-  if (!lib->Load(full_path.c_str(), load_address, file_offset, error))
-    return NULL;
+  if (!lib->Load(params, error))
+    return nullptr;
 
   // Load all dependendent libraries.
-  LOG("%s: Loading dependencies of %s\n", __FUNCTION__, base_name);
+  const char* base_name = GetBaseNamePtr(lib_path);
+  LOG("Loading dependencies of %s", base_name);
   SharedLibrary::DependencyIterator iter(lib.Get());
   Vector<LibraryView*> dependencies;
   while (iter.GetNext()) {
     Error dep_error;
-    LibraryView* dependency = LoadLibrary(iter.GetName(),
-                                          dlopen_mode,
-                                          0U /* load address */,
-                                          0U /* file offset */,
-                                          search_path_list,
-                                          true /* is_dependency_or_preload */,
-                                          &dep_error);
+    // TODO(digit): Better library dependency loading that isn't limited
+    // to system libraries. This would allow the linker to load anything
+    // without the caller having to load all dependencies before hand in
+    // reverse topological order.
+    const char* dependency_name = iter.GetName();
+    LibraryView* dependency = FindKnownLibrary(dependency_name);
     if (!dependency) {
-      error->Format("When loading %s: %s", base_name, dep_error.c_str());
-      return NULL;
+      dependency =
+          LoadLibraryWithSystemLinker(dependency_name, RTLD_NOW, &dep_error);
+      if (!dependency) {
+        error->Format("When loading %s: %s", base_name, dep_error.c_str());
+        // TODO(digit): Unload all dependencies that were loaded so far.
+        return nullptr;
+      }
     }
     dependencies.PushBack(dependency);
   }
   if (CRAZY_DEBUG) {
-    LOG("%s: Dependencies loaded for %s\n", __FUNCTION__, base_name);
-    for (size_t n = 0; n < dependencies.GetCount(); ++n)
-      LOG("  ... %p %s\n", dependencies[n], dependencies[n]->GetName());
-    LOG("    dependencies @%p\n", &dependencies);
+    LOG("Dependencies loaded for %s", base_name);
+    for (const LibraryView* dep : dependencies)
+      LOG("  ... %p %s", dep, dep->GetName());
+    LOG("    dependencies @%p", &dependencies);
   }
 
   // Relocate the library.
-  LOG("%s: Relocating %s\n", __FUNCTION__, base_name);
+  LOG("Relocating %s", base_name);
   if (!lib->Relocate(this, &preloaded_libraries_, &dependencies, error))
-    return NULL;
+    return nullptr;
 
   // Notify GDB of load.
   lib->link_map_.l_addr = lib->load_bias();
@@ -440,101 +469,31 @@ LibraryView* LibraryList::LoadLibrary(const char* lib_name,
   // libraries. IMPORTANT: Do this _before_ calling the constructors
   // because these could call dlopen().
   lib->list_next_ = head_;
-  lib->list_prev_ = NULL;
+  lib->list_prev_ = nullptr;
   if (head_)
     head_->list_prev_ = lib.Get();
   head_ = lib.Get();
 
   // Then create a new LibraryView for it.
-  wrap = new LibraryView();
-  wrap->SetCrazy(lib.Get(), lib_name);
-  known_libraries_.PushBack(wrap);
+  LibraryView* view = new LibraryView(lib.Release());
+  known_libraries_.PushBack(view);
 
-  LOG("%s: Running constructors for %s\n", __FUNCTION__, base_name);
-
+  LOG("Running constructors for %s", base_name);
   // Now run the constructors.
-  lib->CallConstructors();
+  view->GetCrazy()->CallConstructors();
 
-  LOG("%s: Done loading %s\n", __FUNCTION__, base_name);
-  lib.Release();
-
-  return wrap;
-}
-
-// We identify the abi tag for which the linker is running. This allows
-// us to select the library which matches the abi of the linker.
-
-#if defined(__arm__) && defined(__ARM_ARCH_7A__)
-#define CURRENT_ABI "armeabi-v7a"
-#elif defined(__arm__)
-#define CURRENT_ABI "armeabi"
-#elif defined(__i386__)
-#define CURRENT_ABI "x86"
-#elif defined(__mips__)
-#define CURRENT_ABI "mips"
-#elif defined(__x86_64__)
-#define CURRENT_ABI "x86_64"
-#elif defined(__aarch64__)
-#define CURRENT_ABI "arm64-v8a"
-#else
-#error "Unsupported target abi"
-#endif
-
-String LibraryList::GetLibraryFilePathInZipFile(const char* lib_name) {
-  String path;
-  path.Reserve(kMaxFilePathLengthInZip);
-  path = "lib/";
-  path += CURRENT_ABI;
-  path += "/crazy.";
-  path += lib_name;
-  return path;
-}
-
-int LibraryList::FindMappableLibraryInZipFile(
-    const char* zip_file_path,
-    const char* lib_name,
-    Error* error) {
-  String path = GetLibraryFilePathInZipFile(lib_name);
-  if (path.size() >= kMaxFilePathLengthInZip) {
-    error->Format("Filename too long for a file in a zip file %s\n",
-                  path.c_str());
-    return CRAZY_OFFSET_FAILED;
+  // Then try to call JNI_OnLoad() if necessary.
+  LOG("Running JNI_OnLoad() for %s", base_name);
+  Globals* globals = Globals::Get();
+  if (!view->GetCrazy()->CallJniOnLoad(globals->java_vm(),
+                                       globals->minimum_jni_version(), error)) {
+    LOG("Error on JNI_OnLoad(): %s", error->c_str());
+    UnloadLibrary(view);
+    return nullptr;
   }
 
-  int offset = FindStartOffsetOfFileInZipFile(zip_file_path, path.c_str());
-  if (offset == CRAZY_OFFSET_FAILED) {
-    return CRAZY_OFFSET_FAILED;
-  }
-
-  COMPILE_ASSERT((kZipAlignmentPageSize & (kZipAlignmentPageSize - 1)) == 0,
-                 kZipAlignmentPageSize_must_be_a_power_of_2);
-
-  if ((offset & (kZipAlignmentPageSize - 1)) != 0) {
-    error->Format("Library %s is not page aligned in zipfile %s\n",
-                  lib_name, zip_file_path);
-    return CRAZY_OFFSET_FAILED;
-  }
-
-  assert(offset != CRAZY_OFFSET_FAILED);
-  return offset;
-}
-
-LibraryView* LibraryList::LoadLibraryInZipFile(
-    const char* zip_file_path,
-    const char* lib_name,
-    int dlopen_flags,
-    uintptr_t load_address,
-    SearchPathList* search_path_list,
-    bool is_dependency_or_preload,
-    Error* error) {
-  int offset = FindMappableLibraryInZipFile(zip_file_path, lib_name, error);
-  if (offset == CRAZY_OFFSET_FAILED) {
-    return NULL;
-  }
-
-  return LoadLibrary(
-      zip_file_path, dlopen_flags, load_address, offset,
-      search_path_list, is_dependency_or_preload, error);
+  LOG("Done loading %s", base_name);
+  return view;
 }
 
 void LibraryList::AddLibrary(LibraryView* wrap) {
@@ -543,12 +502,11 @@ void LibraryList::AddLibrary(LibraryView* wrap) {
 
 LibraryView* LibraryList::FindKnownLibrary(const char* name) {
   const char* base_name = GetBaseNamePtr(name);
-  for (size_t n = 0; n < known_libraries_.GetCount(); ++n) {
-    LibraryView* wrap = known_libraries_[n];
-    if (!strcmp(base_name, wrap->GetName()))
-      return wrap;
+  for (LibraryView* view : known_libraries_) {
+    if (!strcmp(base_name, view->GetName()))
+      return view;
   }
-  return NULL;
+  return nullptr;
 }
 
 }  // namespace crazy

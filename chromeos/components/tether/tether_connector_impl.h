@@ -7,6 +7,7 @@
 
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
+#include "base/optional.h"
 #include "chromeos/components/tether/connect_tethering_operation.h"
 #include "chromeos/components/tether/host_connection_metrics_logger.h"
 #include "chromeos/components/tether/tether_connector.h"
@@ -16,10 +17,17 @@ namespace chromeos {
 
 class NetworkStateHandler;
 
+namespace device_sync {
+class DeviceSyncClient;
+}  // namespace device_sync
+
+namespace secure_channel {
+class SecureChannelClient;
+}  // namespace secure_channel
+
 namespace tether {
 
 class ActiveHost;
-class BleConnectionManager;
 class DeviceIdTetherNetworkGuidMap;
 class DisconnectTetheringRequestSender;
 class HostScanCache;
@@ -38,11 +46,12 @@ class TetherConnectorImpl : public TetherConnector,
                             public ConnectTetheringOperation::Observer {
  public:
   TetherConnectorImpl(
+      device_sync::DeviceSyncClient* device_sync_client,
+      secure_channel::SecureChannelClient* secure_channel_client,
       NetworkStateHandler* network_state_handler,
       WifiHotspotConnector* wifi_hotspot_connector,
       ActiveHost* active_host,
       TetherHostFetcher* tether_host_fetcher,
-      BleConnectionManager* connection_manager,
       TetherHostResponseRecorder* tether_host_response_recorder,
       DeviceIdTetherNetworkGuidMap* device_id_tether_network_guid_map,
       HostScanCache* host_scan_cache,
@@ -62,14 +71,14 @@ class TetherConnectorImpl : public TetherConnector,
 
   // ConnectTetheringOperation::Observer:
   void OnConnectTetheringRequestSent(
-      const cryptauth::RemoteDevice& remote_device) override;
+      multidevice::RemoteDeviceRef remote_device) override;
   void OnSuccessfulConnectTetheringResponse(
-      const cryptauth::RemoteDevice& remote_device,
+      multidevice::RemoteDeviceRef remote_device,
       const std::string& ssid,
       const std::string& password) override;
   void OnConnectTetheringFailure(
-      const cryptauth::RemoteDevice& remote_device,
-      ConnectTetheringResponse_ResponseCode error_code) override;
+      multidevice::RemoteDeviceRef remote_device,
+      ConnectTetheringOperation::HostResponseErrorCode error_code) override;
 
  private:
   friend class TetherConnectorImplTest;
@@ -82,20 +91,21 @@ class TetherConnectorImpl : public TetherConnector,
 
   void OnTetherHostToConnectFetched(
       const std::string& device_id,
-      std::unique_ptr<cryptauth::RemoteDevice> tether_host_to_connect);
+      base::Optional<multidevice::RemoteDeviceRef> tether_host_to_connect);
   void OnWifiConnection(const std::string& device_id,
                         const std::string& wifi_network_guid);
   HostConnectionMetricsLogger::ConnectionToHostResult
   GetConnectionToHostResultFromErrorCode(
       const std::string& device_id,
-      ConnectTetheringResponse_ResponseCode error_code);
+      ConnectTetheringOperation::HostResponseErrorCode error_code);
 
+  device_sync::DeviceSyncClient* device_sync_client_;
+  secure_channel::SecureChannelClient* secure_channel_client_;
   NetworkConnectionHandler* network_connection_handler_;
   NetworkStateHandler* network_state_handler_;
   WifiHotspotConnector* wifi_hotspot_connector_;
   ActiveHost* active_host_;
   TetherHostFetcher* tether_host_fetcher_;
-  BleConnectionManager* connection_manager_;
   TetherHostResponseRecorder* tether_host_response_recorder_;
   DeviceIdTetherNetworkGuidMap* device_id_tether_network_guid_map_;
   HostScanCache* host_scan_cache_;
@@ -104,10 +114,12 @@ class TetherConnectorImpl : public TetherConnector,
   DisconnectTetheringRequestSender* disconnect_tethering_request_sender_;
   WifiHotspotDisconnector* wifi_hotspot_disconnector_;
 
+  bool did_send_successful_request_ = false;
   std::string device_id_pending_connection_;
   base::Closure success_callback_;
   network_handler::StringResultCallback error_callback_;
   std::unique_ptr<ConnectTetheringOperation> connect_tethering_operation_;
+  base::Time connect_to_host_start_time_;
   base::WeakPtrFactory<TetherConnectorImpl> weak_ptr_factory_;
 
   DISALLOW_COPY_AND_ASSIGN(TetherConnectorImpl);

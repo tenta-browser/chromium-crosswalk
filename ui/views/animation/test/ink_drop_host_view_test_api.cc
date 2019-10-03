@@ -10,7 +10,7 @@ namespace test {
 InkDropHostViewTestApi::InkDropHostViewTestApi(InkDropHostView* host_view)
     : host_view_(host_view) {}
 
-InkDropHostViewTestApi::~InkDropHostViewTestApi() {}
+InkDropHostViewTestApi::~InkDropHostViewTestApi() = default;
 
 void InkDropHostViewTestApi::SetInkDropMode(InkDropMode ink_drop_mode) {
   host_view_->SetInkDropMode(ink_drop_mode);
@@ -34,10 +34,6 @@ bool InkDropHostViewTestApi::HasInkDrop() const {
 
 InkDrop* InkDropHostViewTestApi::GetInkDrop() {
   return host_view_->GetInkDrop();
-}
-
-bool InkDropHostViewTestApi::HasGestureHandler() const {
-  return host_view_->gesture_handler_ != nullptr;
 }
 
 gfx::Point InkDropHostViewTestApi::GetInkDropCenterBasedOnLastEvent() const {

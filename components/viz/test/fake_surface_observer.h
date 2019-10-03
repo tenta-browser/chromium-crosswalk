@@ -18,7 +18,7 @@ class FakeSurfaceObserver : public SurfaceObserver {
   // If |damage_display| is true, the observer will indicate display damage when
   // a surface is damaged.
   explicit FakeSurfaceObserver(bool damage_display = true);
-  virtual ~FakeSurfaceObserver();
+  ~FakeSurfaceObserver() override;
 
   const BeginFrameAck& last_ack() const { return last_ack_; }
 
@@ -39,12 +39,12 @@ class FakeSurfaceObserver : public SurfaceObserver {
   bool OnSurfaceDamaged(const SurfaceId& surface_id,
                         const BeginFrameAck& ack) override;
   void OnFirstSurfaceActivation(const SurfaceInfo& surface_info) override;
-  void OnSurfaceActivated(const SurfaceId& surface_id) override;
-  void OnSurfaceDiscarded(const SurfaceId& surface_id) override {}
+  void OnSurfaceActivated(const SurfaceId& surface_id,
+                          base::Optional<base::TimeDelta> duration) override;
   void OnSurfaceDestroyed(const SurfaceId& surface_id) override {}
+  void OnSurfaceMarkedForDestruction(const SurfaceId& surface_id) override {}
   void OnSurfaceDamageExpected(const SurfaceId& surface_id,
                                const BeginFrameArgs& args) override {}
-  void OnSurfaceSubtreeDamaged(const SurfaceId& surface_id) override;
 
   bool damage_display_;
   BeginFrameAck last_ack_;

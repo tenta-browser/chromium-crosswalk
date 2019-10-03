@@ -7,18 +7,17 @@
 #include <stddef.h>
 
 #include "base/logging.h"
-#include "base/macros.h"
 #include "base/metrics/histogram_base.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/metrics_hashes.h"
-#include "base/metrics/sparse_histogram.h"
+#include "base/stl_util.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
-#include "base/time/time.h"
+#include "components/language/core/common/language_util.h"
 #include "components/translate/core/common/translate_constants.h"
 #include "components/translate/core/common/translate_metrics.h"
-#include "components/translate/core/common/translate_util.h"
 #include "components/translate/core/language_detection/chinese_script_classifier.h"
 #include "third_party/cld_3/src/src/nnet_language_identifier.h"
 
@@ -40,7 +39,7 @@ const SimilarLanguageCode kSimilarLanguageCodes[] = {
 
 // Checks |kSimilarLanguageCodes| and returns group code.
 int GetSimilarLanguageGroupCode(const std::string& language) {
-  for (size_t i = 0; i < arraysize(kSimilarLanguageCodes); ++i) {
+  for (size_t i = 0; i < base::size(kSimilarLanguageCodes); ++i) {
     if (language.find(kSimilarLanguageCodes[i].code) != 0)
       continue;
     return kSimilarLanguageCodes[i].group;
@@ -49,12 +48,10 @@ int GetSimilarLanguageGroupCode(const std::string& language) {
 }
 
 // Well-known languages which often have wrong server configuration of
-// Content-Language: en. The list must be sorted alphabatically so
-// they can be binary searched.
+// Content-Language: en.
 const char* const kWellKnownCodesOnWrongConfiguration[] = {
-    "ar", "da", "de", "el", "es", "fa", "fr",    "hi",
-    "hu", "id", "it", "ja", "ms", "nl", "pl",    "pt",
-    "ro", "ru", "sv", "th", "tr", "vi", "zh-CN", "zh-TW"};
+    "es",    "pt", "ja", "ru", "de", "zh-CN",
+    "zh-TW", "ar", "id", "fr", "it", "th"};
 
 // Applies a series of language code modification in proper order.
 void ApplyLanguageCodeCorrection(std::string* code) {
@@ -66,16 +63,14 @@ void ApplyLanguageCodeCorrection(std::string* code) {
     return;
   }
 
-  translate::ToTranslateLanguageSynonym(code);
+  language::ToTranslateLanguageSynonym(code);
 }
 
 // Returns the ISO 639 language code of the specified |text|, or 'unknown' if it
 // failed.
 // |is_cld_reliable| will be set as true if CLD says the detection is reliable.
 std::string DetermineTextLanguage(const base::string16& text,
-                                  bool* is_cld_reliable,
-                                  std::string& code,
-                                  std::string& html_lang) {
+                                  bool* is_cld_reliable) {
   std::string language = translate::kUnknownLanguageCode;
   const std::string utf8_text(base::UTF16ToUTF8(text));
 
@@ -90,8 +85,7 @@ std::string DetermineTextLanguage(const base::string16& text,
   const base::HistogramBase::Sample pred_lang_hash =
       static_cast<base::HistogramBase::Sample>(
           base::HashMetricName(predicted_language));
-  UMA_HISTOGRAM_SPARSE_SLOWLY("Translate.CLD3.LanguageDetected",
-                              pred_lang_hash);
+  base::UmaHistogramSparse("Translate.CLD3.LanguageDetected", pred_lang_hash);
   if (predicted_language != chrome_lang_id::NNetLanguageIdentifier::kUnknown) {
     UMA_HISTOGRAM_PERCENTAGE("Translate.CLD3.LanguagePercentage",
                              static_cast<int>(100 * lang_id_result.proportion));
@@ -157,7 +151,6 @@ std::string DeterminePageLanguage(const std::string& code,
                                   const base::string16& contents,
                                   std::string* cld_language_p,
                                   bool* is_cld_reliable_p) {
-  base::TimeTicks begin_time = base::TimeTicks::Now();
   bool is_cld_reliable;
   // Check if html lang attribute is valid.
   std::string modified_html_lang;
@@ -176,15 +169,13 @@ std::string DeterminePageLanguage(const std::string& code,
     translate::ReportContentLanguage(code, modified_code);
   }
 
-  std::string cld_language = DetermineTextLanguage(
-      contents, &is_cld_reliable, modified_code, modified_html_lang);
-  translate::ReportLanguageDetectionTime(begin_time, base::TimeTicks::Now());
+  std::string cld_language = DetermineTextLanguage(contents, &is_cld_reliable);
 
   if (cld_language_p != nullptr)
     *cld_language_p = cld_language;
   if (is_cld_reliable_p != nullptr)
     *is_cld_reliable_p = is_cld_reliable;
-  translate::ToTranslateLanguageSynonym(&cld_language);
+  language::ToTranslateLanguageSynonym(&cld_language);
 
   // Adopt |modified_html_lang| if it is valid. Otherwise, adopt
   // |modified_code|.
@@ -332,9 +323,11 @@ bool IsSameOrSimilarLanguages(const std::string& page_language,
 }
 
 bool IsServerWrongConfigurationLanguage(const std::string& language_code) {
-  return binary_search(kWellKnownCodesOnWrongConfiguration,
-                       std::end(kWellKnownCodesOnWrongConfiguration),
-                       language_code);
+  for (size_t i = 0; i < base::size(kWellKnownCodesOnWrongConfiguration); ++i) {
+    if (language_code == kWellKnownCodesOnWrongConfiguration[i])
+      return true;
+  }
+  return false;
 }
 
 bool MaybeServerWrongConfiguration(const std::string& page_language,

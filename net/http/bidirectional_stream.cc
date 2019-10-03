@@ -24,36 +24,36 @@
 #include "net/log/net_log_capture_mode.h"
 #include "net/log/net_log_event_type.h"
 #include "net/log/net_log_source_type.h"
-#include "net/spdy/chromium/spdy_http_utils.h"
-#include "net/spdy/chromium/spdy_log_util.h"
-#include "net/spdy/core/spdy_header_block.h"
+#include "net/log/net_log_values.h"
+#include "net/spdy/spdy_http_utils.h"
+#include "net/spdy/spdy_log_util.h"
 #include "net/ssl/ssl_cert_request_info.h"
 #include "net/ssl/ssl_config.h"
+#include "net/third_party/quiche/src/spdy/core/spdy_header_block.h"
+#include "net/traffic_annotation/network_traffic_annotation.h"
 #include "url/gurl.h"
 
 namespace net {
 
 namespace {
 
-std::unique_ptr<base::Value> NetLogHeadersCallback(
-    const SpdyHeaderBlock* headers,
-    NetLogCaptureMode capture_mode) {
-  auto dict = std::make_unique<base::DictionaryValue>();
-  dict->Set("headers", ElideSpdyHeaderBlockForNetLog(*headers, capture_mode));
+base::Value NetLogHeadersParams(const spdy::SpdyHeaderBlock* headers,
+                                NetLogCaptureMode capture_mode) {
+  base::DictionaryValue dict;
+  dict.SetKey("headers", ElideSpdyHeaderBlockForNetLog(*headers, capture_mode));
   return std::move(dict);
 }
 
-std::unique_ptr<base::Value> NetLogCallback(const GURL* url,
-                                            const std::string* method,
-                                            const HttpRequestHeaders* headers,
-                                            NetLogCaptureMode capture_mode) {
-  auto dict = std::make_unique<base::DictionaryValue>();
-  dict->SetString("url", url->possibly_invalid_spec());
-  dict->SetString("method", *method);
+base::Value NetLogParams(const GURL& url,
+                         const std::string& method,
+                         const HttpRequestHeaders* headers,
+                         NetLogCaptureMode capture_mode) {
+  base::DictionaryValue dict;
+  dict.SetString("url", url.possibly_invalid_spec());
+  dict.SetString("method", method);
   std::string empty;
-  std::unique_ptr<base::Value> headers_param(
-      headers->NetLogCallback(&empty, capture_mode));
-  dict->Set("headers", std::move(headers_param));
+  base::Value headers_param(headers->NetLogParams(empty, capture_mode));
+  dict.SetKey("headers", std::move(headers_param));
   return std::move(dict);
 }
 
@@ -72,14 +72,14 @@ BidirectionalStream::BidirectionalStream(
                           session,
                           send_request_headers_automatically,
                           delegate,
-                          std::make_unique<base::Timer>(false, false)) {}
+                          std::make_unique<base::OneShotTimer>()) {}
 
 BidirectionalStream::BidirectionalStream(
     std::unique_ptr<BidirectionalStreamRequestInfo> request_info,
     HttpNetworkSession* session,
     bool send_request_headers_automatically,
     Delegate* delegate,
-    std::unique_ptr<base::Timer> timer)
+    std::unique_ptr<base::OneShotTimer> timer)
     : request_info_(std::move(request_info)),
       net_log_(NetLogWithSource::Make(session->net_log(),
                                       NetLogSourceType::BIDIRECTIONAL_STREAM)),
@@ -87,8 +87,7 @@ BidirectionalStream::BidirectionalStream(
       send_request_headers_automatically_(send_request_headers_automatically),
       request_headers_sent_(false),
       delegate_(delegate),
-      timer_(std::move(timer)),
-      weak_factory_(this) {
+      timer_(std::move(timer)) {
   DCHECK(delegate_);
   DCHECK(request_info_);
 
@@ -97,39 +96,27 @@ BidirectionalStream::BidirectionalStream(
   load_timing_info_.request_start = base::TimeTicks::Now();
 
   if (net_log_.IsCapturing()) {
-    net_log_.BeginEvent(
-        NetLogEventType::BIDIRECTIONAL_STREAM_ALIVE,
-        base::Bind(&NetLogCallback, &request_info_->url, &request_info_->method,
-                   base::Unretained(&request_info_->extra_headers)));
+    net_log_.BeginEvent(NetLogEventType::BIDIRECTIONAL_STREAM_ALIVE,
+                        [&](NetLogCaptureMode capture_mode) {
+                          return NetLogParams(
+                              request_info_->url, request_info_->method,
+                              &request_info_->extra_headers, capture_mode);
+                        });
   }
-
-  SSLConfig server_ssl_config;
-  session->ssl_config_service()->GetSSLConfig(&server_ssl_config);
-  session->GetAlpnProtos(&server_ssl_config.alpn_protos);
 
   if (!request_info_->url.SchemeIs(url::kHttpsScheme)) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::Bind(&BidirectionalStream::NotifyFailed,
-                   weak_factory_.GetWeakPtr(), ERR_DISALLOWED_URL_SCHEME));
+        base::BindOnce(&BidirectionalStream::NotifyFailed,
+                       weak_factory_.GetWeakPtr(), ERR_DISALLOWED_URL_SCHEME));
     return;
   }
 
-  HttpRequestInfo http_request_info;
-  http_request_info.url = request_info_->url;
-  http_request_info.method = request_info_->method;
-  http_request_info.extra_headers = request_info_->extra_headers;
-  stream_request_ =
-      session->http_stream_factory()->RequestBidirectionalStreamImpl(
-          http_request_info, request_info_->priority, server_ssl_config,
-          server_ssl_config, this,
-          /* enable_ip_based_pooling = */ true,
-          /* enable_alternative_services = */ true, net_log_);
-  // Check that this call cannot fail to set a non-NULL |stream_request_|.
-  DCHECK(stream_request_);
-  // Check that HttpStreamFactory does not invoke OnBidirectionalStreamImplReady
-  // synchronously.
-  DCHECK(!stream_impl_);
+  SSLConfig ssl_config;
+  session->ssl_config_service()->GetSSLConfig(&ssl_config);
+  session->GetAlpnProtos(&ssl_config.alpn_protos);
+
+  StartRequest(ssl_config);
 }
 
 BidirectionalStream::~BidirectionalStream() {
@@ -160,8 +147,8 @@ int BidirectionalStream::ReadData(IOBuffer* buf, int buf_len) {
     // Bytes will be logged in OnDataRead().
   }
   if (net_log_.IsCapturing()) {
-    net_log_.AddEvent(NetLogEventType::BIDIRECTIONAL_STREAM_READ_DATA,
-                      NetLog::IntCallback("rv", rv));
+    net_log_.AddEventWithIntParams(
+        NetLogEventType::BIDIRECTIONAL_STREAM_READ_DATA, "rv", rv);
   }
   return rv;
 }
@@ -176,8 +163,9 @@ void BidirectionalStream::SendvData(
   DCHECK(write_buffer_len_list_.empty());
 
   if (net_log_.IsCapturing()) {
-    net_log_.AddEvent(NetLogEventType::BIDIRECTIONAL_STREAM_SENDV_DATA,
-                      NetLog::IntCallback("num_buffers", buffers.size()));
+    net_log_.AddEventWithIntParams(
+        NetLogEventType::BIDIRECTIONAL_STREAM_SENDV_DATA, "num_buffers",
+        buffers.size());
   }
   stream_impl_->SendvData(buffers, lengths, end_stream);
   for (size_t i = 0; i < buffers.size(); ++i) {
@@ -218,12 +206,32 @@ void BidirectionalStream::PopulateNetErrorDetails(NetErrorDetails* details) {
     stream_impl_->PopulateNetErrorDetails(details);
 }
 
+void BidirectionalStream::StartRequest(const SSLConfig& ssl_config) {
+  DCHECK(!stream_request_);
+  HttpRequestInfo http_request_info;
+  http_request_info.url = request_info_->url;
+  http_request_info.method = request_info_->method;
+  http_request_info.extra_headers = request_info_->extra_headers;
+  http_request_info.socket_tag = request_info_->socket_tag;
+  stream_request_ =
+      session_->http_stream_factory()->RequestBidirectionalStreamImpl(
+          http_request_info, request_info_->priority, ssl_config, ssl_config,
+          this,
+          /* enable_ip_based_pooling = */ true,
+          /* enable_alternative_services = */ true, net_log_);
+  // Check that this call does not fail.
+  DCHECK(stream_request_);
+  // Check that HttpStreamFactory does not invoke OnBidirectionalStreamImplReady
+  // synchronously.
+  DCHECK(!stream_impl_);
+}
+
 void BidirectionalStream::OnStreamReady(bool request_headers_sent) {
   request_headers_sent_ = request_headers_sent;
   if (net_log_.IsCapturing()) {
-    net_log_.AddEvent(
-        NetLogEventType::BIDIRECTIONAL_STREAM_READY,
-        NetLog::BoolCallback("request_headers_sent", request_headers_sent));
+    net_log_.AddEntryWithBoolParams(
+        NetLogEventType::BIDIRECTIONAL_STREAM_READY, NetLogEventPhase::NONE,
+        "request_headers_sent", request_headers_sent);
   }
   load_timing_info_.send_start = base::TimeTicks::Now();
   load_timing_info_.send_end = load_timing_info_.send_start;
@@ -231,7 +239,7 @@ void BidirectionalStream::OnStreamReady(bool request_headers_sent) {
 }
 
 void BidirectionalStream::OnHeadersReceived(
-    const SpdyHeaderBlock& response_headers) {
+    const spdy::SpdyHeaderBlock& response_headers) {
   HttpResponseInfo response_info;
   if (!SpdyHeadersToHttpResponse(response_headers, &response_info)) {
     DLOG(WARNING) << "Invalid headers";
@@ -240,7 +248,10 @@ void BidirectionalStream::OnHeadersReceived(
   }
   if (net_log_.IsCapturing()) {
     net_log_.AddEvent(NetLogEventType::BIDIRECTIONAL_STREAM_RECV_HEADERS,
-                      base::Bind(&NetLogHeadersCallback, &response_headers));
+                      [&](NetLogCaptureMode capture_mode) {
+                        return NetLogHeadersParams(&response_headers,
+                                                   capture_mode);
+                      });
   }
   // Impl should only provide |connect_timing| and |socket_reused| info,
   // so use a copy to get these information only.
@@ -279,9 +290,10 @@ void BidirectionalStream::OnDataSent() {
   if (net_log_.IsCapturing()) {
     if (write_buffer_list_.size() > 1) {
       net_log_.BeginEvent(
-          NetLogEventType::BIDIRECTIONAL_STREAM_BYTES_SENT_COALESCED,
-          NetLog::IntCallback("num_buffers_coalesced",
-                              write_buffer_list_.size()));
+          NetLogEventType::BIDIRECTIONAL_STREAM_BYTES_SENT_COALESCED, [&] {
+            return NetLogParamsWithInt("num_buffers_coalesced",
+                                       write_buffer_list_.size());
+          });
     }
     for (size_t i = 0; i < write_buffer_list_.size(); ++i) {
       net_log_.AddByteTransferEvent(
@@ -299,10 +311,13 @@ void BidirectionalStream::OnDataSent() {
   delegate_->OnDataSent();
 }
 
-void BidirectionalStream::OnTrailersReceived(const SpdyHeaderBlock& trailers) {
+void BidirectionalStream::OnTrailersReceived(
+    const spdy::SpdyHeaderBlock& trailers) {
   if (net_log_.IsCapturing()) {
     net_log_.AddEvent(NetLogEventType::BIDIRECTIONAL_STREAM_RECV_TRAILERS,
-                      base::Bind(&NetLogHeadersCallback, &trailers));
+                      [&](NetLogCaptureMode capture_mode) {
+                        return NetLogHeadersParams(&trailers, capture_mode);
+                      });
   }
   read_end_time_ = base::TimeTicks::Now();
   delegate_->OnTrailersReceived(trailers);
@@ -310,8 +325,8 @@ void BidirectionalStream::OnTrailersReceived(const SpdyHeaderBlock& trailers) {
 
 void BidirectionalStream::OnFailed(int status) {
   if (net_log_.IsCapturing()) {
-    net_log_.AddEvent(NetLogEventType::BIDIRECTIONAL_STREAM_FAILED,
-                      NetLog::IntCallback("net_error", status));
+    net_log_.AddEventWithIntParams(NetLogEventType::BIDIRECTIONAL_STREAM_FAILED,
+                                   "net_error", status);
   }
   NotifyFailed(status);
 }
@@ -328,11 +343,34 @@ void BidirectionalStream::OnBidirectionalStreamImplReady(
     std::unique_ptr<BidirectionalStreamImpl> stream) {
   DCHECK(!stream_impl_);
 
+  net::NetworkTrafficAnnotationTag traffic_annotation =
+      net::DefineNetworkTrafficAnnotation("bidirectional_stream", R"(
+        semantics {
+          sender: "Bidirectional Stream"
+          description:
+            "Bidirectional stream is used to exchange data with a server on "
+            "behalf of an RPC API."
+          trigger:
+            "When an application makes an RPC to the server."
+          data:
+            "Any arbitrary data."
+          destination: OTHER
+          destination_other:
+            "Any destination that the application chooses."
+        }
+        policy {
+          cookies_allowed: NO
+          setting: "This feature is not used in Chrome."
+          policy_exception_justification:
+            "This feature is not used in Chrome."
+        }
+    )");
+
   stream_request_.reset();
   stream_impl_ = std::move(stream);
   stream_impl_->Start(request_info_.get(), net_log_,
                       send_request_headers_automatically_, this,
-                      std::move(timer_));
+                      std::move(timer_), traffic_annotation);
 }
 
 void BidirectionalStream::OnWebSocketHandshakeStreamReady(
@@ -345,7 +383,8 @@ void BidirectionalStream::OnWebSocketHandshakeStreamReady(
 void BidirectionalStream::OnStreamFailed(
     int result,
     const NetErrorDetails& net_error_details,
-    const SSLConfig& used_ssl_config) {
+    const SSLConfig& used_ssl_config,
+    const ProxyInfo& used_proxy_info) {
   DCHECK_LT(result, 0);
   DCHECK_NE(result, ERR_IO_PENDING);
   DCHECK(stream_request_);
@@ -377,17 +416,16 @@ void BidirectionalStream::OnNeedsClientAuth(const SSLConfig& used_ssl_config,
                                             SSLCertRequestInfo* cert_info) {
   DCHECK(stream_request_);
 
-  NotifyFailed(ERR_SSL_CLIENT_AUTH_CERT_NEEDED);
-}
-
-void BidirectionalStream::OnHttpsProxyTunnelResponse(
-    const HttpResponseInfo& response_info,
-    const SSLConfig& used_ssl_config,
-    const ProxyInfo& used_proxy_info,
-    std::unique_ptr<HttpStream> stream) {
-  DCHECK(stream_request_);
-
-  NotifyFailed(ERR_HTTPS_PROXY_TUNNEL_RESPONSE);
+  // BidirectionalStream doesn't support client auth. It ignores client auth
+  // requests with null client cert and key.
+  SSLConfig ssl_config = used_ssl_config;
+  ssl_config.send_client_cert = true;
+  ssl_config.client_cert = nullptr;
+  ssl_config.client_private_key = nullptr;
+  session_->ssl_client_auth_cache()->Add(cert_info->host_and_port, nullptr,
+                                         nullptr);
+  stream_request_ = nullptr;
+  StartRequest(ssl_config);
 }
 
 void BidirectionalStream::OnQuicBroken() {}

@@ -8,18 +8,22 @@
 #include <utility>
 
 #include "ash/shell.h"
+#include "base/bind.h"
+#include "base/location.h"
 #include "base/logging.h"
 #include "base/memory/singleton.h"
 #include "chromeos/dbus/dbus_thread_manager.h"
-#include "chromeos/dbus/power_policy_controller.h"
-#include "components/arc/arc_bridge_service.h"
+#include "chromeos/dbus/power/power_policy_controller.h"
+#include "chromeos/dbus/power_manager/backlight.pb.h"
 #include "components/arc/arc_browser_context_keyed_service_factory_base.h"
 #include "components/arc/arc_service_manager.h"
-#include "content/public/common/service_manager_connection.h"
-#include "services/device/public/interfaces/constants.mojom.h"
-#include "services/device/public/interfaces/wake_lock.mojom.h"
-#include "services/device/public/interfaces/wake_lock_provider.mojom.h"
+#include "components/arc/session/arc_bridge_service.h"
+#include "content/public/browser/system_connector.h"
+#include "services/device/public/mojom/constants.mojom.h"
+#include "services/device/public/mojom/wake_lock.mojom.h"
+#include "services/device/public/mojom/wake_lock_provider.mojom.h"
 #include "services/service_manager/public/cpp/connector.h"
+#include "ui/display/manager/display_configurator.h"
 
 namespace arc {
 namespace {
@@ -123,8 +127,7 @@ ArcPowerBridge* ArcPowerBridge::GetForBrowserContext(
 
 ArcPowerBridge::ArcPowerBridge(content::BrowserContext* context,
                                ArcBridgeService* bridge_service)
-    : arc_bridge_service_(bridge_service),
-      weak_ptr_factory_(this) {
+    : arc_bridge_service_(bridge_service), weak_ptr_factory_(this) {
   arc_bridge_service_->power()->SetHost(this);
   arc_bridge_service_->power()->AddObserver(this);
 }
@@ -137,7 +140,7 @@ ArcPowerBridge::~ArcPowerBridge() {
 bool ArcPowerBridge::TriggerNotifyBrightnessTimerForTesting() {
   if (!notify_brightness_timer_.IsRunning())
     return false;
-  notify_brightness_timer_.user_task().Run();
+  notify_brightness_timer_.FireNow();
   return true;
 }
 
@@ -150,21 +153,17 @@ void ArcPowerBridge::OnConnectionReady() {
   // TODO(mash): Support this functionality without ash::Shell access in Chrome.
   if (ash::Shell::HasInstance())
     ash::Shell::Get()->display_configurator()->AddObserver(this);
-  chromeos::DBusThreadManager::Get()->GetPowerManagerClient()->
-      AddObserver(this);
-  chromeos::DBusThreadManager::Get()
-      ->GetPowerManagerClient()
-      ->GetScreenBrightnessPercent(
-          base::BindOnce(&ArcPowerBridge::OnGetScreenBrightnessPercent,
-                         weak_ptr_factory_.GetWeakPtr()));
+  chromeos::PowerManagerClient::Get()->AddObserver(this);
+  chromeos::PowerManagerClient::Get()->GetScreenBrightnessPercent(
+      base::BindOnce(&ArcPowerBridge::OnGetScreenBrightnessPercent,
+                     weak_ptr_factory_.GetWeakPtr()));
 }
 
 void ArcPowerBridge::OnConnectionClosed() {
   // TODO(mash): Support this functionality without ash::Shell access in Chrome.
   if (ash::Shell::HasInstance())
     ash::Shell::Get()->display_configurator()->RemoveObserver(this);
-  chromeos::DBusThreadManager::Get()->GetPowerManagerClient()->
-      RemoveObserver(this);
+  chromeos::PowerManagerClient::Get()->RemoveObserver(this);
   wake_lock_requestors_.clear();
 }
 
@@ -175,9 +174,13 @@ void ArcPowerBridge::SuspendImminent(
   if (!power_instance)
     return;
 
-  power_instance->Suspend(
-      chromeos::DBusThreadManager::Get()->GetPowerManagerClient()->
-        GetSuspendReadinessCallback());
+  auto token = base::UnguessableToken::Create();
+  chromeos::PowerManagerClient::Get()->BlockSuspend(token, "ArcPowerBridge");
+  power_instance->Suspend(base::BindOnce(
+      [](base::UnguessableToken token) {
+        chromeos::PowerManagerClient::Get()->UnblockSuspend(token);
+      },
+      token));
 }
 
 void ArcPowerBridge::SuspendDone(const base::TimeDelta& sleep_duration) {
@@ -189,20 +192,30 @@ void ArcPowerBridge::SuspendDone(const base::TimeDelta& sleep_duration) {
   power_instance->Resume();
 }
 
-void ArcPowerBridge::BrightnessChanged(int level, bool user_initiated) {
-  double percent = static_cast<double>(level);
+void ArcPowerBridge::ScreenBrightnessChanged(
+    const power_manager::BacklightBrightnessChange& change) {
   const base::TimeTicks now = base::TimeTicks::Now();
   if (last_brightness_changed_time_.is_null() ||
       (now - last_brightness_changed_time_) >= kNotifyBrightnessDelay) {
-    UpdateAndroidScreenBrightness(percent);
+    UpdateAndroidScreenBrightness(change.percent());
     notify_brightness_timer_.Stop();
   } else {
     notify_brightness_timer_.Start(
         FROM_HERE, kNotifyBrightnessDelay,
-        base::Bind(&ArcPowerBridge::UpdateAndroidScreenBrightness,
-                   weak_ptr_factory_.GetWeakPtr(), percent));
+        base::BindOnce(&ArcPowerBridge::UpdateAndroidScreenBrightness,
+                       weak_ptr_factory_.GetWeakPtr(), change.percent()));
   }
   last_brightness_changed_time_ = now;
+}
+
+void ArcPowerBridge::PowerChanged(
+    const power_manager::PowerSupplyProperties& proto) {
+  mojom::PowerInstance* power_instance = ARC_GET_INSTANCE_FOR_METHOD(
+      arc_bridge_service_->power(), PowerSupplyInfoChanged);
+  if (!power_instance)
+    return;
+
+  power_instance->PowerSupplyInfoChanged();
 }
 
 void ArcPowerBridge::OnPowerStateChanged(
@@ -261,9 +274,13 @@ void ArcPowerBridge::IsDisplayOn(IsDisplayOnCallback callback) {
 }
 
 void ArcPowerBridge::OnScreenBrightnessUpdateRequest(double percent) {
-  chromeos::DBusThreadManager::Get()
-      ->GetPowerManagerClient()
-      ->SetScreenBrightnessPercent(percent, true);
+  power_manager::SetBacklightBrightnessRequest request;
+  request.set_percent(percent);
+  request.set_transition(
+      power_manager::SetBacklightBrightnessRequest_Transition_FAST);
+  request.set_cause(
+      power_manager::SetBacklightBrightnessRequest_Cause_USER_REQUEST);
+  chromeos::PowerManagerClient::Get()->SetScreenBrightness(request);
 }
 
 ArcPowerBridge::WakeLockRequestor* ArcPowerBridge::GetWakeLockRequestor(
@@ -273,9 +290,7 @@ ArcPowerBridge::WakeLockRequestor* ArcPowerBridge::GetWakeLockRequestor(
     return it->second.get();
 
   service_manager::Connector* connector =
-      connector_for_test_
-          ? connector_for_test_
-          : content::ServiceManagerConnection::GetForProcess()->GetConnector();
+      connector_for_test_ ? connector_for_test_ : content::GetSystemConnector();
   DCHECK(connector);
 
   it = wake_lock_requestors_

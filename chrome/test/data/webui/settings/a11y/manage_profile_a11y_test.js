@@ -4,10 +4,8 @@
 
 /**
  * @fileoverview Define accessibility tests for the MANAGE_PROFILE route.
+ * Non-Chrome OS only.
  */
-
-// The MANAGE_PROFILE route is non-Chrome OS only.
-GEN('#if !defined(OS_CHROMEOS)');
 
 // SettingsAccessibilityTest fixture.
 GEN_INCLUDE([
@@ -27,20 +25,17 @@ AccessibilityTest.define('SettingsAccessibilityTest', {
   /** @override */
   tests: {'Accessible with No Changes': function() {}},
   /** @override */
-  violationFilter: {
-    'aria-valid-attr': function(nodeResult) {
-      return nodeResult.element.hasAttribute('aria-active-attribute');
-    },
-    // Excuse Polymer paper-input elements.
-    'aria-valid-attr-value': function(nodeResult) {
-      var describerId = nodeResult.element.getAttribute('aria-describedby');
-      return describerId === '' && nodeResult.element.id === 'input';
-    },
-    'button-name': function(nodeResult) {
-      var node = nodeResult.element;
-      return node.classList.contains('icon-expand-more');
-    },
-  },
+  violationFilter:
+      Object.assign({}, SettingsAccessibilityTest.violationFilter, {
+        // Excuse custom input elements.
+        'aria-valid-attr-value': function(nodeResult) {
+          const describerId =
+              nodeResult.element.getAttribute('aria-describedby');
+          return describerId === '' && nodeResult.element.tagName == 'INPUT';
+        },
+        'tabindex': function(nodeResult) {
+          // TODO(crbug.com/808276): remove this exception when bug is fixed.
+          return nodeResult.element.getAttribute('tabindex') == '0';
+        },
+      }),
 });
-
-GEN('#endif  // !defined(OS_CHROMEOS)');

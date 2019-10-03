@@ -7,12 +7,14 @@
 #include <algorithm>
 
 #include "base/auto_reset.h"
+#include "base/bind.h"
 #include "base/logging.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/metrics/user_metrics.h"
 #include "chrome/browser/browser_process.h"
-#include "chrome/browser/browser_shutdown.h"
 #include "chrome/browser/chrome_notification_types.h"
 #include "chrome/browser/lifetime/application_lifetime.h"
+#include "chrome/browser/lifetime/browser_shutdown.h"
 #include "chrome/browser/lifetime/termination_notification.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/browser.h"
@@ -36,10 +38,19 @@ BrowserList::BrowserVector GetBrowsersToClose(Profile* profile) {
   return browsers_to_close;
 }
 
+BrowserList::BrowserVector GetIncognitoBrowsersToClose(Profile* profile) {
+  BrowserList::BrowserVector browsers_to_close;
+  for (auto* browser : *BrowserList::GetInstance()) {
+    if (browser->profile() == profile)
+      browsers_to_close.push_back(browser);
+  }
+  return browsers_to_close;
+}
+
 }  // namespace
 
 // static
-base::LazyInstance<base::ObserverList<chrome::BrowserListObserver>>::Leaky
+base::LazyInstance<base::ObserverList<BrowserListObserver>::Unchecked>::Leaky
     BrowserList::observers_ = LAZY_INSTANCE_INITIALIZER;
 
 // static
@@ -56,8 +67,7 @@ Browser* BrowserList::GetLastActive() const {
 
 // static
 BrowserList* BrowserList::GetInstance() {
-  BrowserList** list = NULL;
-  list = &instance_;
+  BrowserList** list = &instance_;
   if (!*list)
     *list = new BrowserList;
   return *list;
@@ -66,17 +76,31 @@ BrowserList* BrowserList::GetInstance() {
 // static
 void BrowserList::AddBrowser(Browser* browser) {
   DCHECK(browser);
+  DCHECK(browser->window()) << "Browser should not be added to BrowserList "
+                               "until it is fully constructed.";
   GetInstance()->browsers_.push_back(browser);
 
   browser->RegisterKeepAlive();
 
   content::NotificationService::current()->Notify(
-      chrome::NOTIFICATION_BROWSER_OPENED,
-      content::Source<Browser>(browser),
+      chrome::NOTIFICATION_BROWSER_OPENED, content::Source<Browser>(browser),
       content::NotificationService::NoDetails());
 
-  for (chrome::BrowserListObserver& observer : observers_.Get())
+  for (BrowserListObserver& observer : observers_.Get())
     observer.OnBrowserAdded(browser);
+
+  if (browser->window()->IsActive())
+    SetLastActive(browser);
+
+  if (browser->profile()->IsGuestSession()) {
+    base::UmaHistogramCounts100(
+        "Browser.WindowCount.Guest",
+        GetIncognitoSessionsActiveForProfile(browser->profile()));
+  } else if (browser->profile()->IsIncognitoProfile()) {
+    base::UmaHistogramCounts100(
+        "Browser.WindowCount.Incognito",
+        GetIncognitoSessionsActiveForProfile(browser->profile()));
+  }
 }
 
 // static
@@ -86,14 +110,9 @@ void BrowserList::RemoveBrowser(Browser* browser) {
   RemoveBrowserFrom(browser, &browser_list->last_active_browsers_);
   browser_list->currently_closing_browsers_.erase(browser);
 
-  content::NotificationService::current()->Notify(
-      chrome::NOTIFICATION_BROWSER_CLOSED,
-      content::Source<Browser>(browser),
-      content::NotificationService::NoDetails());
-
   RemoveBrowserFrom(browser, &browser_list->browsers_);
 
-  for (chrome::BrowserListObserver& observer : observers_.Get())
+  for (BrowserListObserver& observer : observers_.Get())
     observer.OnBrowserRemoved(browser);
 
   browser->UnregisterKeepAlive();
@@ -114,12 +133,12 @@ void BrowserList::RemoveBrowser(Browser* browser) {
 }
 
 // static
-void BrowserList::AddObserver(chrome::BrowserListObserver* observer) {
+void BrowserList::AddObserver(BrowserListObserver* observer) {
   observers_.Get().AddObserver(observer);
 }
 
 // static
-void BrowserList::RemoveObserver(chrome::BrowserListObserver* observer) {
+void BrowserList::RemoveObserver(BrowserListObserver* observer) {
   observers_.Get().RemoveObserver(observer);
 }
 
@@ -150,13 +169,25 @@ void BrowserList::CloseAllBrowsersWithProfile(
 }
 
 // static
+void BrowserList::CloseAllBrowsersWithIncognitoProfile(
+    Profile* profile,
+    const CloseCallback& on_close_success,
+    const CloseCallback& on_close_aborted,
+    bool skip_beforeunload) {
+  DCHECK(profile->IsOffTheRecord());
+  TryToCloseBrowserList(GetIncognitoBrowsersToClose(profile), on_close_success,
+                        on_close_aborted, profile->GetPath(),
+                        skip_beforeunload);
+}
+
+// static
 void BrowserList::TryToCloseBrowserList(const BrowserVector& browsers_to_close,
                                         const CloseCallback& on_close_success,
                                         const CloseCallback& on_close_aborted,
                                         const base::FilePath& profile_path,
                                         const bool skip_beforeunload) {
-  for (BrowserVector::const_iterator it = browsers_to_close.begin();
-       it != browsers_to_close.end(); ++it) {
+  for (auto it = browsers_to_close.begin(); it != browsers_to_close.end();
+       ++it) {
     if ((*it)->TryToCloseWindow(
             skip_beforeunload,
             base::Bind(&BrowserList::PostTryToCloseBrowserWindow,
@@ -195,8 +226,8 @@ void BrowserList::PostTryToCloseBrowserWindow(
                           profile_path, skip_beforeunload);
   } else if (!resetting_handlers) {
     base::AutoReset<bool> resetting_handlers_scoper(&resetting_handlers, true);
-    for (BrowserVector::const_iterator it = browsers_to_close.begin();
-         it != browsers_to_close.end(); ++it) {
+    for (auto it = browsers_to_close.begin(); it != browsers_to_close.end();
+         ++it) {
       (*it)->ResetTryToCloseWindow();
     }
     if (on_close_aborted)
@@ -230,25 +261,41 @@ void BrowserList::MoveBrowsersInWorkspaceToFront(
 
   Browser* new_last_active = instance->GetLastActive();
   if (old_last_active != new_last_active) {
-    for (chrome::BrowserListObserver& observer : observers_.Get())
+    for (BrowserListObserver& observer : observers_.Get())
       observer.OnBrowserSetLastActive(new_last_active);
   }
 }
 
 // static
 void BrowserList::SetLastActive(Browser* browser) {
+  BrowserList* instance = GetInstance();
+  DCHECK(std::find(instance->begin(), instance->end(), browser) !=
+         instance->end())
+      << "SetLastActive called for a browser before the browser was added to "
+         "the BrowserList.";
+  DCHECK(browser->window() != nullptr)
+      << "SetLastActive called for a browser with no window set.";
+
   base::RecordAction(UserMetricsAction("ActiveBrowserChanged"));
 
-  RemoveBrowserFrom(browser, &GetInstance()->last_active_browsers_);
-  GetInstance()->last_active_browsers_.push_back(browser);
+  RemoveBrowserFrom(browser, &instance->last_active_browsers_);
+  instance->last_active_browsers_.push_back(browser);
 
-  for (chrome::BrowserListObserver& observer : observers_.Get())
+  for (BrowserListObserver& observer : observers_.Get())
     observer.OnBrowserSetLastActive(browser);
 }
 
 // static
 void BrowserList::NotifyBrowserNoLongerActive(Browser* browser) {
-  for (chrome::BrowserListObserver& observer : observers_.Get())
+  BrowserList* instance = GetInstance();
+  DCHECK(std::find(instance->begin(), instance->end(), browser) !=
+         instance->end())
+      << "NotifyBrowserNoLongerActive called for a browser before the browser "
+         "was added to the BrowserList.";
+  DCHECK(browser->window() != nullptr)
+      << "NotifyBrowserNoLongerActive called for a browser with no window set.";
+
+  for (BrowserListObserver& observer : observers_.Get())
     observer.OnBrowserNoLongerActive(browser);
 }
 
@@ -256,7 +303,7 @@ void BrowserList::NotifyBrowserNoLongerActive(Browser* browser) {
 void BrowserList::NotifyBrowserCloseStarted(Browser* browser) {
   GetInstance()->currently_closing_browsers_.insert(browser);
 
-  for (chrome::BrowserListObserver& observer : observers_.Get())
+  for (BrowserListObserver& observer : observers_.Get())
     observer.OnBrowserClosing(browser);
 }
 
@@ -270,29 +317,34 @@ bool BrowserList::IsIncognitoSessionActive() {
 }
 
 // static
-bool BrowserList::IsIncognitoSessionActiveForProfile(Profile* profile) {
-  for (auto* browser : *BrowserList::GetInstance()) {
-    if (browser->profile()->IsSameProfile(profile) &&
-        browser->profile()->IsOffTheRecord()) {
-      return true;
-    }
-  }
-  return false;
+int BrowserList::GetIncognitoSessionsActiveForProfile(Profile* profile) {
+  BrowserList* list = BrowserList::GetInstance();
+  return std::count_if(list->begin(), list->end(), [profile](Browser* browser) {
+    return browser->profile()->IsSameProfile(profile) &&
+           browser->profile()->IsOffTheRecord() && !browser->is_devtools();
+  });
+}
+
+// static
+bool BrowserList::IsIncognitoSessionInUse(Profile* profile) {
+  BrowserList* list = BrowserList::GetInstance();
+  return std::any_of(list->begin(), list->end(), [profile](Browser* browser) {
+    return browser->profile()->IsSameProfile(profile) &&
+           browser->profile()->IsOffTheRecord();
+  });
 }
 
 ////////////////////////////////////////////////////////////////////////////////
 // BrowserList, private:
 
-BrowserList::BrowserList() {
-}
+BrowserList::BrowserList() {}
 
-BrowserList::~BrowserList() {
-}
+BrowserList::~BrowserList() {}
 
 // static
 void BrowserList::RemoveBrowserFrom(Browser* browser,
                                     BrowserVector* browser_list) {
-  BrowserVector::iterator remove_browser =
+  auto remove_browser =
       std::find(browser_list->begin(), browser_list->end(), browser);
   if (remove_browser != browser_list->end())
     browser_list->erase(remove_browser);

@@ -5,6 +5,8 @@
 #ifndef UI_VIEWS_TEST_WIDGET_TEST_H_
 #define UI_VIEWS_TEST_WIDGET_TEST_H_
 
+#include <memory>
+
 #include "base/macros.h"
 #include "base/run_loop.h"
 #include "build/build_config.h"
@@ -34,6 +36,14 @@ namespace test {
 
 class WidgetTest : public ViewsTestBase {
  public:
+  // This class can be used as a deleter for std::unique_ptr<Widget>
+  // to call function Widget::CloseNow automatically.
+  struct WidgetCloser {
+    void operator()(Widget* widget) const;
+  };
+
+  using WidgetAutoclosePtr = std::unique_ptr<Widget, WidgetCloser>;
+
   WidgetTest();
   ~WidgetTest() override;
 
@@ -49,11 +59,6 @@ class WidgetTest : public ViewsTestBase {
   Widget* CreateTopLevelNativeWidget();
   Widget* CreateChildNativeWidgetWithParent(Widget* parent);
   Widget* CreateChildNativeWidget();
-
-  // Create a top-level Widget with |native_widget| in InitParams set to an
-  // instance of the "native desktop" type. This is a PlatformNativeWidget on
-  // ChromeOS, and a PlatformDesktopNativeWidget everywhere else.
-  Widget* CreateNativeDesktopWidget();
 
   View* GetMousePressedHandler(internal::RootView* root_view);
 
@@ -90,11 +95,28 @@ class WidgetTest : public ViewsTestBase {
   // Return true if |window| is transparent according to the native platform.
   static bool IsNativeWindowTransparent(gfx::NativeWindow window);
 
+  // Returns whether |widget| has a Window shadow managed in this process. That
+  // is, a shadow that is drawn outside of the Widget bounds, and managed by the
+  // WindowManager.
+  static bool WidgetHasInProcessShadow(Widget* widget);
+
   // Returns the set of all Widgets that currently have a NativeWindow.
   static Widget::Widgets GetAllWidgets();
 
  private:
   DISALLOW_COPY_AND_ASSIGN(WidgetTest);
+};
+
+class DesktopWidgetTest : public WidgetTest {
+ public:
+  DesktopWidgetTest();
+  ~DesktopWidgetTest() override;
+
+  // WidgetTest:
+  void SetUp() override;
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(DesktopWidgetTest);
 };
 
 // A helper WidgetDelegate for tests that require hooks into WidgetDelegate
@@ -103,6 +125,7 @@ class WidgetTest : public ViewsTestBase {
 class TestDesktopWidgetDelegate : public WidgetDelegate {
  public:
   TestDesktopWidgetDelegate();
+  explicit TestDesktopWidgetDelegate(Widget* widget);
   ~TestDesktopWidgetDelegate() override;
 
   // Initialize the Widget, adding some meaningful default InitParams.
@@ -116,9 +139,15 @@ class TestDesktopWidgetDelegate : public WidgetDelegate {
   void set_contents_view(View* contents_view) {
     contents_view_ = contents_view;
   }
+  // Sets the return value for CloseRequested().
+  void set_can_close(bool can_close) { can_close_ = can_close; }
 
   int window_closing_count() const { return window_closing_count_; }
   const gfx::Rect& initial_bounds() { return initial_bounds_; }
+  Widget::ClosedReason last_closed_reason() const {
+    return last_closed_reason_;
+  }
+  bool can_close() const { return can_close_; }
 
   // WidgetDelegate overrides:
   void WindowClosing() override;
@@ -126,12 +155,15 @@ class TestDesktopWidgetDelegate : public WidgetDelegate {
   const Widget* GetWidget() const override;
   View* GetContentsView() override;
   bool ShouldAdvanceFocusToTopLevelWidget() const override;
+  bool OnCloseRequested(Widget::ClosedReason close_reason) override;
 
  private:
   Widget* widget_;
   View* contents_view_ = nullptr;
   int window_closing_count_ = 0;
   gfx::Rect initial_bounds_ = gfx::Rect(100, 100, 200, 200);
+  bool can_close_ = true;
+  Widget::ClosedReason last_closed_reason_ = Widget::ClosedReason::kUnspecified;
 
   DISALLOW_COPY_AND_ASSIGN(TestDesktopWidgetDelegate);
 };
@@ -198,6 +230,26 @@ class WidgetClosingObserver : public WidgetObserver {
   base::RunLoop run_loop_;
 
   DISALLOW_COPY_AND_ASSIGN(WidgetClosingObserver);
+};
+
+// Use in tests to wait for a widget to be destroyed.
+// TODO(https://crrev.com/c/1086509): This is pretty similar to
+// WidgetClosingObserver. Can the two be combined?
+class WidgetDestroyedWaiter : public WidgetObserver {
+ public:
+  explicit WidgetDestroyedWaiter(Widget* widget);
+
+  // Wait for the widget to be destroyed, or return immediately if it was
+  // already destroyed since this object was created.
+  void Wait();
+
+ private:
+  // views::WidgetObserver
+  void OnWidgetDestroyed(Widget* widget) override;
+
+  base::RunLoop run_loop_;
+
+  DISALLOW_COPY_AND_ASSIGN(WidgetDestroyedWaiter);
 };
 
 }  // namespace test

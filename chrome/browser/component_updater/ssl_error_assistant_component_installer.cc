@@ -11,8 +11,11 @@
 #include "base/files/file_util.h"
 #include "base/logging.h"
 #include "base/memory/ref_counted.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/stl_util.h"
+#include "base/task/post_task.h"
+#include "chrome/browser/ssl/ssl_error_assistant.h"
 #include "chrome/browser/ssl/ssl_error_handler.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 
 using component_updater::ComponentUpdateService;
@@ -24,7 +27,7 @@ const base::FilePath::CharType kConfigBinaryPbFileName[] =
 
 // The SHA256 of the SubjectPublicKeyInfo used to sign the extension.
 // The extension id is: giekcmmlnklenlaomppkphknjmnnpneh
-const uint8_t kPublicKeySHA256[32] = {
+const uint8_t kSslErrorAssistantPublicKeySHA256[32] = {
     0x68, 0x4a, 0x2c, 0xcb, 0xda, 0xb4, 0xdb, 0x0e, 0xcf, 0xfa, 0xf7,
     0xad, 0x9c, 0xdd, 0xfd, 0x47, 0x97, 0xe4, 0x73, 0x24, 0x67, 0x93,
     0x9c, 0xb1, 0x14, 0xcd, 0x3f, 0x54, 0x66, 0x25, 0x99, 0x3f};
@@ -45,10 +48,20 @@ void LoadProtoFromDisk(const base::FilePath& pb_path) {
     DVLOG(1) << "Failed parsing proto " << pb_path.value();
     return;
   }
-  content::BrowserThread::GetTaskRunnerForThread(content::BrowserThread::UI)
+
+  // Retrieve the default proto from the resource bundle and keep the most
+  // recent version. This is required since the component updater may still have
+  // an older version.
+  std::unique_ptr<chrome_browser_ssl::SSLErrorAssistantConfig> default_proto =
+      SSLErrorAssistant::GetErrorAssistantProtoFromResourceBundle();
+  if (default_proto && default_proto->version_id() > proto->version_id()) {
+    proto = std::move(default_proto);
+  }
+
+  base::CreateSingleThreadTaskRunnerWithTraits({content::BrowserThread::UI})
       ->PostTask(FROM_HERE,
                  base::BindOnce(&SSLErrorHandler::SetErrorAssistantProto,
-                                base::Passed(std::move(proto))));
+                                std::move(proto)));
 }
 
 }  // namespace
@@ -87,7 +100,7 @@ void SSLErrorAssistantComponentInstallerPolicy::ComponentReady(
            << install_dir.value();
 
   base::PostTaskWithTraits(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
       base::BindOnce(&LoadProtoFromDisk, GetInstalledPath(install_dir)));
 }
 
@@ -107,12 +120,14 @@ SSLErrorAssistantComponentInstallerPolicy::GetRelativeInstallDir() const {
 
 void SSLErrorAssistantComponentInstallerPolicy::GetHash(
     std::vector<uint8_t>* hash) const {
-  hash->assign(kPublicKeySHA256,
-               kPublicKeySHA256 + arraysize(kPublicKeySHA256));
+  hash->assign(kSslErrorAssistantPublicKeySHA256,
+               kSslErrorAssistantPublicKeySHA256 +
+                   base::size(kSslErrorAssistantPublicKeySHA256));
 }
 
 std::string SSLErrorAssistantComponentInstallerPolicy::GetName() const {
-  return "SSL Error Assistant";
+  // This is a user visible string, so using something other than SSL and TLS.
+  return "Certificate Error Assistant";
 }
 
 update_client::InstallerAttributes

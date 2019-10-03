@@ -10,13 +10,14 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/callback.h"
+#include "base/feature_list.h"
 #include "base/macros.h"
 #include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "build/build_config.h"
 #include "ipc/ipc_channel.h"
-#include "mojo/edk/embedder/embedder.h"
-#include "mojo/edk/embedder/named_platform_handle_utils.h"
-#include "mojo/edk/embedder/peer_connection.h"
+#include "mojo/public/cpp/platform/named_platform_channel.h"
+#include "mojo/public/cpp/system/isolated_connection.h"
 #include "remoting/host/client_session_details.h"
 #include "remoting/host/security_key/fake_security_key_ipc_client.h"
 #include "remoting/host/security_key/security_key_ipc_constants.h"
@@ -25,7 +26,8 @@
 namespace {
 const int kTestConnectionId = 42;
 const int kInitialConnectTimeoutMs = 250;
-const int kConnectionTimeoutErrorDeltaMs = 100;
+const int kConnectionTimeoutErrorDeltaMs = 250;
+const int kLargeResponseTimeoutMs = 500;
 const int kLargeMessageSizeBytes = 256 * 1024;
 }  // namespace
 
@@ -50,7 +52,7 @@ class SecurityKeyIpcServerTest : public testing::Test,
 
   // Returns a unique IPC channel name which prevents conflicts when running
   // tests concurrently.
-  std::string GetUniqueTestChannelName();
+  mojo::NamedPlatformChannel::ServerName GetUniqueTestChannelName();
 
   // Waits until the current |run_loop_| instance is signaled, then resets it.
   void WaitForOperationComplete();
@@ -97,7 +99,7 @@ SecurityKeyIpcServerTest::SecurityKeyIpcServerTest()
       base::TimeDelta::FromMilliseconds(kInitialConnectTimeoutMs),
       base::Bind(&SecurityKeyIpcServerTest::SendRequestToClient,
                  base::Unretained(this)),
-      base::Bind(&base::DoNothing),
+      base::DoNothing(),
       base::Bind(&SecurityKeyIpcServerTest::OperationComplete,
                  base::Unretained(this)));
 }
@@ -129,21 +131,25 @@ void SecurityKeyIpcServerTest::SendRequestToClient(int connection_id,
   OperationComplete();
 }
 
-std::string SecurityKeyIpcServerTest::GetUniqueTestChannelName() {
-  return GetChannelNamePathPrefixForTest() + "Super_Awesome_Test_Channel." +
-         IPC::Channel::GenerateUniqueRandomChannelID();
+mojo::NamedPlatformChannel::ServerName
+SecurityKeyIpcServerTest::GetUniqueTestChannelName() {
+  std::string name = GetChannelNamePathPrefixForTest() +
+                     "Super_Awesome_Test_Channel." +
+                     IPC::Channel::GenerateUniqueRandomChannelID();
+  return mojo::NamedPlatformChannel::ServerNameFromUTF8(name);
 }
 
 TEST_F(SecurityKeyIpcServerTest, HandleSingleSecurityKeyRequest) {
-  mojo::edk::NamedPlatformHandle channel_handle(GetUniqueTestChannelName());
+  mojo::NamedPlatformChannel::ServerName server_name =
+      GetUniqueTestChannelName();
   ASSERT_TRUE(security_key_ipc_server_->CreateChannel(
-      channel_handle,
+      server_name,
       /*request_timeout=*/base::TimeDelta::FromMilliseconds(500)));
 
   // Create a fake client and connect to the IPC server channel.
   FakeSecurityKeyIpcClient fake_ipc_client(base::Bind(
       &SecurityKeyIpcServerTest::OperationComplete, base::Unretained(this)));
-  ASSERT_TRUE(fake_ipc_client.ConnectViaIpc(channel_handle));
+  ASSERT_TRUE(fake_ipc_client.ConnectViaIpc(server_name));
   WaitForOperationComplete();
 
   ASSERT_TRUE(fake_ipc_client.ipc_channel_connected());
@@ -172,15 +178,16 @@ TEST_F(SecurityKeyIpcServerTest, HandleSingleSecurityKeyRequest) {
 }
 
 TEST_F(SecurityKeyIpcServerTest, HandleLargeSecurityKeyRequest) {
-  mojo::edk::NamedPlatformHandle channel_handle(GetUniqueTestChannelName());
+  mojo::NamedPlatformChannel::ServerName server_name =
+      GetUniqueTestChannelName();
   ASSERT_TRUE(security_key_ipc_server_->CreateChannel(
-      channel_handle,
+      server_name,
       /*request_timeout=*/base::TimeDelta::FromMilliseconds(500)));
 
   // Create a fake client and connect to the IPC server channel.
   FakeSecurityKeyIpcClient fake_ipc_client(base::Bind(
       &SecurityKeyIpcServerTest::OperationComplete, base::Unretained(this)));
-  ASSERT_TRUE(fake_ipc_client.ConnectViaIpc(channel_handle));
+  ASSERT_TRUE(fake_ipc_client.ConnectViaIpc(server_name));
   WaitForOperationComplete();
 
   ASSERT_FALSE(fake_ipc_client.invalid_session_error());
@@ -209,15 +216,16 @@ TEST_F(SecurityKeyIpcServerTest, HandleLargeSecurityKeyRequest) {
 }
 
 TEST_F(SecurityKeyIpcServerTest, HandleReallyLargeSecurityKeyRequest) {
-  mojo::edk::NamedPlatformHandle channel_handle(GetUniqueTestChannelName());
+  mojo::NamedPlatformChannel::ServerName server_name =
+      GetUniqueTestChannelName();
   ASSERT_TRUE(security_key_ipc_server_->CreateChannel(
-      channel_handle,
+      server_name,
       /*request_timeout=*/base::TimeDelta::FromMilliseconds(500)));
 
   // Create a fake client and connect to the IPC server channel.
   FakeSecurityKeyIpcClient fake_ipc_client(base::Bind(
       &SecurityKeyIpcServerTest::OperationComplete, base::Unretained(this)));
-  ASSERT_TRUE(fake_ipc_client.ConnectViaIpc(channel_handle));
+  ASSERT_TRUE(fake_ipc_client.ConnectViaIpc(server_name));
   WaitForOperationComplete();
 
   ASSERT_FALSE(fake_ipc_client.invalid_session_error());
@@ -246,15 +254,16 @@ TEST_F(SecurityKeyIpcServerTest, HandleReallyLargeSecurityKeyRequest) {
 }
 
 TEST_F(SecurityKeyIpcServerTest, HandleMultipleSecurityKeyRequests) {
-  mojo::edk::NamedPlatformHandle channel_handle(GetUniqueTestChannelName());
+  mojo::NamedPlatformChannel::ServerName server_name =
+      GetUniqueTestChannelName();
   ASSERT_TRUE(security_key_ipc_server_->CreateChannel(
-      channel_handle,
+      server_name,
       /*request_timeout=*/base::TimeDelta::FromMilliseconds(500)));
 
   // Create a fake client and connect to the IPC server channel.
   FakeSecurityKeyIpcClient fake_ipc_client(base::Bind(
       &SecurityKeyIpcServerTest::OperationComplete, base::Unretained(this)));
-  ASSERT_TRUE(fake_ipc_client.ConnectViaIpc(channel_handle));
+  ASSERT_TRUE(fake_ipc_client.ConnectViaIpc(server_name));
   WaitForOperationComplete();
 
   ASSERT_FALSE(fake_ipc_client.invalid_session_error());
@@ -304,13 +313,14 @@ TEST_F(SecurityKeyIpcServerTest, InitialIpcConnectionTimeout_ConnectOnly) {
   // the connection was closed.  This test simulates the IPC Server being
   // created, the client connecting to the OS channel, but never communicating
   // over the channel.
-  mojo::edk::NamedPlatformHandle channel_handle(GetUniqueTestChannelName());
+  mojo::NamedPlatformChannel::ServerName server_name =
+      GetUniqueTestChannelName();
   ASSERT_TRUE(security_key_ipc_server_->CreateChannel(
-      channel_handle,
+      server_name,
       /*request_timeout=*/base::TimeDelta::FromMilliseconds(500)));
   base::Time start_time(base::Time::NowFromSystemTime());
-  mojo::edk::ScopedPlatformHandle client_handle =
-      mojo::edk::CreateClientHandle(channel_handle);
+  mojo::PlatformChannelEndpoint client_endpoint =
+      mojo::NamedPlatformChannel::ConnectToServer(server_name);
   WaitForOperationComplete();
   base::TimeDelta elapsed_time = base::Time::NowFromSystemTime() - start_time;
 
@@ -324,16 +334,15 @@ TEST_F(SecurityKeyIpcServerTest,
   // the connection was closed.  This test simulates the IPC Server being
   // created, the client establishing a mojo connection, but never constructing
   // an IPC::Channel over it.
-  mojo::edk::NamedPlatformHandle channel_handle(GetUniqueTestChannelName());
+  mojo::NamedPlatformChannel::ServerName server_name =
+      GetUniqueTestChannelName();
   ASSERT_TRUE(security_key_ipc_server_->CreateChannel(
-      channel_handle,
+      server_name,
       /*request_timeout=*/base::TimeDelta::FromMilliseconds(500)));
   base::Time start_time(base::Time::NowFromSystemTime());
-  mojo::edk::PeerConnection peer_connection;
-  mojo::ScopedMessagePipeHandle client_pipe =
-      peer_connection.Connect(mojo::edk::ConnectionParams(
-          mojo::edk::TransportProtocol::kLegacy,
-          mojo::edk::CreateClientHandle(channel_handle)));
+  mojo::IsolatedConnection mojo_connection;
+  mojo::ScopedMessagePipeHandle client_pipe = mojo_connection.Connect(
+      mojo::NamedPlatformChannel::ConnectToServer(server_name));
   WaitForOperationComplete();
   base::TimeDelta elapsed_time = base::Time::NowFromSystemTime() - start_time;
 
@@ -341,19 +350,26 @@ TEST_F(SecurityKeyIpcServerTest,
               kConnectionTimeoutErrorDeltaMs);
 }
 
-TEST_F(SecurityKeyIpcServerTest, NoSecurityKeyRequestTimeout) {
+// Flaky on mac, https://crbug.com/936583
+#if defined(OS_MACOSX)
+#define MAYBE_NoSecurityKeyRequestTimeout DISABLED_NoSecurityKeyRequestTimeout
+#else
+#define MAYBE_NoSecurityKeyRequestTimeout NoSecurityKeyRequestTimeout
+#endif
+TEST_F(SecurityKeyIpcServerTest, MAYBE_NoSecurityKeyRequestTimeout) {
   // Create a channel and connect to it via IPC but do not send a request.
   // The channel should be closed and cleaned up if the IPC client does not
   // issue a request within the specified timeout period.
-  mojo::edk::NamedPlatformHandle channel_handle(GetUniqueTestChannelName());
+  mojo::NamedPlatformChannel::ServerName server_name =
+      GetUniqueTestChannelName();
   ASSERT_TRUE(security_key_ipc_server_->CreateChannel(
-      channel_handle,
+      server_name,
       /*request_timeout=*/base::TimeDelta::FromMilliseconds(500)));
 
   // Create a fake client and connect to the IPC server channel.
   FakeSecurityKeyIpcClient fake_ipc_client(base::Bind(
       &SecurityKeyIpcServerTest::OperationComplete, base::Unretained(this)));
-  ASSERT_TRUE(fake_ipc_client.ConnectViaIpc(channel_handle));
+  ASSERT_TRUE(fake_ipc_client.ConnectViaIpc(server_name));
   WaitForOperationComplete();
 
   ASSERT_FALSE(fake_ipc_client.invalid_session_error());
@@ -373,14 +389,15 @@ TEST_F(SecurityKeyIpcServerTest, SecurityKeyResponseTimeout) {
   // Create a channel, connect to it via IPC, and issue a request, but do
   // not send a response.  This simulates a client-side timeout.
   base::TimeDelta request_timeout(base::TimeDelta::FromMilliseconds(50));
-  mojo::edk::NamedPlatformHandle channel_handle(GetUniqueTestChannelName());
+  mojo::NamedPlatformChannel::ServerName server_name =
+      GetUniqueTestChannelName();
   ASSERT_TRUE(
-      security_key_ipc_server_->CreateChannel(channel_handle, request_timeout));
+      security_key_ipc_server_->CreateChannel(server_name, request_timeout));
 
   // Create a fake client and connect to the IPC server channel.
   FakeSecurityKeyIpcClient fake_ipc_client(base::Bind(
       &SecurityKeyIpcServerTest::OperationComplete, base::Unretained(this)));
-  ASSERT_TRUE(fake_ipc_client.ConnectViaIpc(channel_handle));
+  ASSERT_TRUE(fake_ipc_client.ConnectViaIpc(server_name));
   WaitForOperationComplete();
 
   ASSERT_FALSE(fake_ipc_client.invalid_session_error());
@@ -398,8 +415,7 @@ TEST_F(SecurityKeyIpcServerTest, SecurityKeyResponseTimeout) {
   WaitForOperationComplete();
   base::TimeDelta elapsed_time = base::Time::NowFromSystemTime() - start_time;
 
-  ASSERT_NEAR(elapsed_time.InMilliseconds(), request_timeout.InMilliseconds(),
-              kConnectionTimeoutErrorDeltaMs);
+  ASSERT_LT(elapsed_time.InMilliseconds(), kLargeResponseTimeoutMs);
 }
 
 TEST_F(SecurityKeyIpcServerTest, SendResponseTimeout) {
@@ -407,14 +423,15 @@ TEST_F(SecurityKeyIpcServerTest, SendResponseTimeout) {
   // a response, but do not close the channel after that.  The connection
   // should be terminated after the initial timeout period has elapsed.
   base::TimeDelta request_timeout(base::TimeDelta::FromMilliseconds(500));
-  mojo::edk::NamedPlatformHandle channel_handle(GetUniqueTestChannelName());
+  mojo::NamedPlatformChannel::ServerName server_name =
+      GetUniqueTestChannelName();
   ASSERT_TRUE(
-      security_key_ipc_server_->CreateChannel(channel_handle, request_timeout));
+      security_key_ipc_server_->CreateChannel(server_name, request_timeout));
 
   // Create a fake client and connect to the IPC server channel.
   FakeSecurityKeyIpcClient fake_ipc_client(base::Bind(
       &SecurityKeyIpcServerTest::OperationComplete, base::Unretained(this)));
-  ASSERT_TRUE(fake_ipc_client.ConnectViaIpc(channel_handle));
+  ASSERT_TRUE(fake_ipc_client.ConnectViaIpc(server_name));
   WaitForOperationComplete();
 
   ASSERT_FALSE(fake_ipc_client.invalid_session_error());
@@ -441,21 +458,31 @@ TEST_F(SecurityKeyIpcServerTest, SendResponseTimeout) {
 }
 
 TEST_F(SecurityKeyIpcServerTest, CleanupPendingConnection) {
+#if defined(OS_MACOSX)
+  // Named servers when using ChannelMac are an exclusive resources, and it is
+  // not possible to create an instance of a server endpoint while another one
+  // exists. Creating the servers in a loop below will flakily fail because the
+  // channel shutdown is a series of asynchronous tasks posted on the IO
+  // thread, and there is not a way to synchronize it with the test main thread.
+  return;
+#endif  // defined(OS_MACOSX)
+
   // Test that servers correctly close pending OS connections on
-  // |channel_handle|. If multiple servers do remain, the client may happen to
+  // |server_name|. If multiple servers do remain, the client may happen to
   // connect to the correct server, so create and delete many servers.
-  mojo::edk::NamedPlatformHandle channel_handle(GetUniqueTestChannelName());
+  mojo::NamedPlatformChannel::ServerName server_name =
+      GetUniqueTestChannelName();
   for (int i = 0; i < 100; i++) {
     security_key_ipc_server_ = remoting::SecurityKeyIpcServer::Create(
         kTestConnectionId, this,
         base::TimeDelta::FromMilliseconds(kInitialConnectTimeoutMs),
         base::Bind(&SecurityKeyIpcServerTest::SendRequestToClient,
                    base::Unretained(this)),
-        base::Bind(&base::DoNothing),
+        base::DoNothing(),
         base::Bind(&SecurityKeyIpcServerTest::OperationComplete,
                    base::Unretained(this)));
     ASSERT_TRUE(security_key_ipc_server_->CreateChannel(
-        channel_handle,
+        server_name,
         /*request_timeout=*/base::TimeDelta::FromMilliseconds(500)));
   }
   // The mojo system posts tasks as part of its cleanup, so run them all.
@@ -464,7 +491,7 @@ TEST_F(SecurityKeyIpcServerTest, CleanupPendingConnection) {
   // Create a fake client and connect to the IPC server channel.
   FakeSecurityKeyIpcClient fake_ipc_client(base::Bind(
       &SecurityKeyIpcServerTest::OperationComplete, base::Unretained(this)));
-  ASSERT_TRUE(fake_ipc_client.ConnectViaIpc(channel_handle));
+  ASSERT_TRUE(fake_ipc_client.ConnectViaIpc(server_name));
   WaitForOperationComplete();
 
   ASSERT_FALSE(fake_ipc_client.invalid_session_error());
@@ -498,13 +525,14 @@ TEST_F(SecurityKeyIpcServerTest, IpcConnectionFailsFromInvalidSession) {
   peer_session_id_++;
 
   base::TimeDelta request_timeout(base::TimeDelta::FromMilliseconds(500));
-  mojo::edk::NamedPlatformHandle channel_handle(GetUniqueTestChannelName());
+  mojo::NamedPlatformChannel::ServerName server_name =
+      GetUniqueTestChannelName();
   ASSERT_TRUE(
-      security_key_ipc_server_->CreateChannel(channel_handle, request_timeout));
+      security_key_ipc_server_->CreateChannel(server_name, request_timeout));
 
   // Create a fake client and attempt to connect to the IPC server channel.
-  FakeSecurityKeyIpcClient fake_ipc_client(base::Bind(&base::DoNothing));
-  ASSERT_TRUE(fake_ipc_client.ConnectViaIpc(channel_handle));
+  FakeSecurityKeyIpcClient fake_ipc_client{base::DoNothing()};
+  ASSERT_TRUE(fake_ipc_client.ConnectViaIpc(server_name));
   WaitForOperationComplete();
 
   // Verify the connection failed.

@@ -7,19 +7,19 @@
 #include <memory>
 #include <utility>
 
-#include "chrome/browser/ui/browser_finder.h"
-#include "chrome/browser/ui/tabs/tab_strip_model.h"
-#include "chrome/browser/usb/web_usb_permission_provider.h"
+#include "chrome/browser/usb/web_usb_service_impl.h"
+#include "content/public/browser/navigation_handle.h"
 #include "content/public/browser/render_frame_host.h"
 #include "content/public/common/content_features.h"
-#include "device/usb/mojo/device_manager_impl.h"
 #include "mojo/public/cpp/bindings/message.h"
-#include "third_party/WebKit/common/feature_policy/feature_policy_feature.h"
+#include "third_party/blink/public/mojom/feature_policy/feature_policy.mojom.h"
 
 #if defined(OS_ANDROID)
-#include "chrome/browser/android/usb/web_usb_chooser_service_android.h"
+#include "chrome/browser/android/usb/web_usb_chooser_android.h"
 #else
-#include "chrome/browser/usb/web_usb_chooser_service.h"
+#include "chrome/browser/ui/browser_finder.h"
+#include "chrome/browser/ui/tabs/tab_strip_model.h"
+#include "chrome/browser/usb/web_usb_chooser_desktop.h"
 #endif  // defined(OS_ANDROID)
 
 using content::RenderFrameHost;
@@ -34,15 +34,9 @@ const char kFeaturePolicyViolation[] =
 
 }  // namespace
 
-DEFINE_WEB_CONTENTS_USER_DATA_KEY(UsbTabHelper);
-
 struct FrameUsbServices {
-  std::unique_ptr<WebUSBPermissionProvider> permission_provider;
-#if defined(OS_ANDROID)
-  std::unique_ptr<WebUsbChooserServiceAndroid> chooser_service;
-#else
-  std::unique_ptr<WebUsbChooserService> chooser_service;
-#endif  // defined(OS_ANDROID)
+  std::unique_ptr<WebUsbChooser> usb_chooser;
+  std::unique_ptr<WebUsbServiceImpl> web_usb_service;
   int device_connection_count_ = 0;
 };
 
@@ -59,25 +53,20 @@ UsbTabHelper* UsbTabHelper::GetOrCreateForWebContents(
 
 UsbTabHelper::~UsbTabHelper() {}
 
-void UsbTabHelper::CreateDeviceManager(
+void UsbTabHelper::CreateWebUsbService(
     RenderFrameHost* render_frame_host,
-    mojo::InterfaceRequest<device::mojom::UsbDeviceManager> request) {
+    mojo::InterfaceRequest<blink::mojom::WebUsbService> request) {
   if (!AllowedByFeaturePolicy(render_frame_host)) {
     mojo::ReportBadMessage(kFeaturePolicyViolation);
     return;
   }
-  device::usb::DeviceManagerImpl::Create(
-      GetPermissionProvider(render_frame_host), std::move(request));
-}
 
-void UsbTabHelper::CreateChooserService(
-    content::RenderFrameHost* render_frame_host,
-    mojo::InterfaceRequest<device::mojom::UsbChooserService> request) {
-  if (!AllowedByFeaturePolicy(render_frame_host)) {
-    mojo::ReportBadMessage(kFeaturePolicyViolation);
-    return;
+  FrameUsbServices* frame_usb_services = GetFrameUsbService(render_frame_host);
+  if (!frame_usb_services->web_usb_service) {
+    frame_usb_services->web_usb_service.reset(new WebUsbServiceImpl(
+        render_frame_host, GetUsbChooser(render_frame_host)));
   }
-  GetChooserService(render_frame_host, std::move(request));
+  frame_usb_services->web_usb_service->BindRequest(std::move(request));
 }
 
 void UsbTabHelper::IncrementConnectionCount(
@@ -109,12 +98,26 @@ UsbTabHelper::UsbTabHelper(WebContents* web_contents)
     : content::WebContentsObserver(web_contents) {}
 
 void UsbTabHelper::RenderFrameDeleted(RenderFrameHost* render_frame_host) {
-  frame_usb_services_.erase(render_frame_host);
-  NotifyTabStateChanged();
+  // This method handles the simple case of a frame closing.
+  DeleteFrameServices(render_frame_host);
+}
+
+void UsbTabHelper::RenderFrameHostChanged(RenderFrameHost* old_host,
+                                          RenderFrameHost* new_host) {
+  // This method handles the case where a frame swaps its RenderFrameHost for a
+  // new one on navigation.
+  DeleteFrameServices(old_host);
+}
+
+void UsbTabHelper::DidFinishNavigation(content::NavigationHandle* handle) {
+  // This method handles the case where a frame navigates without swapping its
+  // RenderFrameHost for a new one.
+  if (handle->HasCommitted() && !handle->IsSameDocument())
+    DeleteFrameServices(handle->GetRenderFrameHost());
 }
 
 FrameUsbServices* UsbTabHelper::GetFrameUsbService(
-    content::RenderFrameHost* render_frame_host) {
+    RenderFrameHost* render_frame_host) {
   FrameUsbServicesMap::const_iterator it =
       frame_usb_services_.find(render_frame_host);
   if (it == frame_usb_services_.end()) {
@@ -127,29 +130,23 @@ FrameUsbServices* UsbTabHelper::GetFrameUsbService(
   return it->second.get();
 }
 
-base::WeakPtr<device::usb::PermissionProvider>
-UsbTabHelper::GetPermissionProvider(RenderFrameHost* render_frame_host) {
-  FrameUsbServices* frame_usb_services = GetFrameUsbService(render_frame_host);
-  if (!frame_usb_services->permission_provider) {
-    frame_usb_services->permission_provider.reset(
-        new WebUSBPermissionProvider(render_frame_host));
-  }
-  return frame_usb_services->permission_provider->GetWeakPtr();
+void UsbTabHelper::DeleteFrameServices(RenderFrameHost* render_frame_host) {
+  frame_usb_services_.erase(render_frame_host);
+  NotifyTabStateChanged();
 }
 
-void UsbTabHelper::GetChooserService(
-    content::RenderFrameHost* render_frame_host,
-    mojo::InterfaceRequest<device::mojom::UsbChooserService> request) {
+base::WeakPtr<WebUsbChooser> UsbTabHelper::GetUsbChooser(
+    RenderFrameHost* render_frame_host) {
   FrameUsbServices* frame_usb_services = GetFrameUsbService(render_frame_host);
-  if (!frame_usb_services->chooser_service) {
-    frame_usb_services->chooser_service.reset(
+  if (!frame_usb_services->usb_chooser) {
+    frame_usb_services->usb_chooser.reset(
 #if defined(OS_ANDROID)
-        new WebUsbChooserServiceAndroid(render_frame_host));
+        new WebUsbChooserAndroid(render_frame_host));
 #else
-        new WebUsbChooserService(render_frame_host));
+        new WebUsbChooserDesktop(render_frame_host));
 #endif  // defined(OS_ANDROID)
   }
-  frame_usb_services->chooser_service->Bind(std::move(request));
+  return frame_usb_services->usb_chooser->GetWeakPtr();
 }
 
 void UsbTabHelper::NotifyTabStateChanged() const {
@@ -168,9 +165,8 @@ void UsbTabHelper::NotifyTabStateChanged() const {
 bool UsbTabHelper::AllowedByFeaturePolicy(
     RenderFrameHost* render_frame_host) const {
   DCHECK(WebContents::FromRenderFrameHost(render_frame_host) == web_contents());
-  if (base::FeatureList::IsEnabled(features::kFeaturePolicy)) {
-    return render_frame_host->IsFeatureEnabled(
-        blink::FeaturePolicyFeature::kUsb);
-  }
-  return web_contents()->GetMainFrame() == render_frame_host;
+  return render_frame_host->IsFeatureEnabled(
+      blink::mojom::FeaturePolicyFeature::kUsb);
 }
+
+WEB_CONTENTS_USER_DATA_KEY_IMPL(UsbTabHelper)

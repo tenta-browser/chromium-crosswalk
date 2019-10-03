@@ -4,30 +4,26 @@
 
 #include "ash/touch/touch_devices_controller.h"
 
+#include <utility>
+
 #include "ash/public/cpp/ash_pref_names.h"
 #include "ash/root_window_controller.h"
-#include "ash/session/session_controller.h"
+#include "ash/session/session_controller_impl.h"
 #include "ash/shell.h"
 #include "ash/shell_delegate.h"
+#include "base/bind.h"
+#include "base/metrics/histogram_macros.h"
+#include "components/pref_registry/pref_registry_syncable.h"
 #include "components/prefs/pref_change_registrar.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
-#include "services/ui/public/cpp/input_devices/input_device_controller_client.h"
+#include "ui/ozone/public/input_controller.h"
+#include "ui/ozone/public/ozone_platform.h"
+#include "ui/wm/core/cursor_manager.h"
 
 namespace ash {
 
 namespace {
-
-void OnSetTouchpadEnabledDone(bool succeeded) {
-  // Don't log here, |succeeded| is only true if there is a touchpad *and* the
-  // value changed. In other words |succeeded| is false when not on device or
-  // the value was already at the value specified. Neither of these are
-  // interesting failures.
-}
-
-ui::InputDeviceControllerClient* GetInputDeviceControllerClient() {
-  return Shell::Get()->shell_delegate()->GetInputDeviceControllerClient();
-}
 
 PrefService* GetActivePrefService() {
   return Shell::Get()->session_controller()->GetActivePrefService();
@@ -38,12 +34,13 @@ PrefService* GetActivePrefService() {
 // static
 void TouchDevicesController::RegisterProfilePrefs(
     PrefRegistrySimple* registry) {
+  registry->RegisterBooleanPref(
+      prefs::kTapDraggingEnabled, false,
+      user_prefs::PrefRegistrySyncable::SYNCABLE_PRIORITY_PREF |
+          PrefRegistry::PUBLIC);
   registry->RegisterBooleanPref(prefs::kTouchpadEnabled, PrefRegistry::PUBLIC);
   registry->RegisterBooleanPref(prefs::kTouchscreenEnabled,
                                 PrefRegistry::PUBLIC);
-  // Chrome doesn't use this, so it isn't marked PUBLIC. It's also not SYNCABLE
-  // so it isn't observed for changes.
-  registry->RegisterBooleanPref(prefs::kTouchHudProjectionEnabled, false);
 }
 
 TouchDevicesController::TouchDevicesController() {
@@ -62,9 +59,33 @@ void TouchDevicesController::ToggleTouchpad() {
   prefs->SetBoolean(prefs::kTouchpadEnabled, !touchpad_enabled);
 }
 
+bool TouchDevicesController::GetTouchpadEnabled(
+    TouchDeviceEnabledSource source) const {
+  if (source == TouchDeviceEnabledSource::GLOBAL)
+    return global_touchpad_enabled_;
+
+  PrefService* prefs = GetActivePrefService();
+  return prefs && prefs->GetBoolean(prefs::kTouchpadEnabled);
+}
+
+void TouchDevicesController::SetTouchpadEnabled(
+    bool enabled,
+    TouchDeviceEnabledSource source) {
+  if (source == TouchDeviceEnabledSource::GLOBAL) {
+    global_touchpad_enabled_ = enabled;
+    UpdateTouchpadEnabled();
+    return;
+  }
+
+  PrefService* prefs = GetActivePrefService();
+  if (!prefs)
+    return;
+  prefs->SetBoolean(prefs::kTouchpadEnabled, enabled);
+}
+
 bool TouchDevicesController::GetTouchscreenEnabled(
-    TouchscreenEnabledSource source) const {
-  if (source == TouchscreenEnabledSource::GLOBAL)
+    TouchDeviceEnabledSource source) const {
+  if (source == TouchDeviceEnabledSource::GLOBAL)
     return global_touchscreen_enabled_;
 
   PrefService* prefs = GetActivePrefService();
@@ -73,8 +94,8 @@ bool TouchDevicesController::GetTouchscreenEnabled(
 
 void TouchDevicesController::SetTouchscreenEnabled(
     bool enabled,
-    TouchscreenEnabledSource source) {
-  if (source == TouchscreenEnabledSource::GLOBAL) {
+    TouchDeviceEnabledSource source) {
+  if (source == TouchDeviceEnabledSource::GLOBAL) {
     global_touchscreen_enabled_ = enabled;
     // Explicitly call |UpdateTouchscreenEnabled()| to update the actual
     // touchscreen state from multiple sources.
@@ -88,21 +109,11 @@ void TouchDevicesController::SetTouchscreenEnabled(
   prefs->SetBoolean(prefs::kTouchscreenEnabled, enabled);
 }
 
-bool TouchDevicesController::IsTouchHudProjectionEnabled() const {
-  PrefService* prefs = GetActivePrefService();
-  // Touch HUD isn't used before login, when |prefs| would be null.
-  return prefs && prefs->GetBoolean(prefs::kTouchHudProjectionEnabled);
-}
-
-void TouchDevicesController::SetTouchHudProjectionEnabled(bool enabled) {
-  PrefService* prefs = GetActivePrefService();
-  // Touch HUD isn't used before login, when |prefs| would be null.
-  if (!prefs)
-    return;
-  prefs->SetBoolean(prefs::kTouchHudProjectionEnabled, enabled);
-
-  for (RootWindowController* root : Shell::GetAllRootWindowControllers())
-    root->SetTouchHudProjectionEnabled(enabled);
+void TouchDevicesController::OnUserSessionAdded(const AccountId& account_id) {
+  uma_record_callback_ = base::BindOnce([](PrefService* prefs) {
+    UMA_HISTOGRAM_BOOLEAN("Touchpad.TapDragging.Started",
+                          prefs->GetBoolean(prefs::kTapDraggingEnabled));
+  });
 }
 
 void TouchDevicesController::OnSigninScreenPrefServiceInitialized(
@@ -112,8 +123,9 @@ void TouchDevicesController::OnSigninScreenPrefServiceInitialized(
 
 void TouchDevicesController::OnActiveUserPrefServiceChanged(
     PrefService* prefs) {
+  if (uma_record_callback_)
+    std::move(uma_record_callback_).Run(prefs);
   ObservePrefs(prefs);
-  SetTouchHudProjectionEnabled(IsTouchHudProjectionEnabled());
 }
 
 void TouchDevicesController::ObservePrefs(PrefService* prefs) {
@@ -121,39 +133,64 @@ void TouchDevicesController::ObservePrefs(PrefService* prefs) {
   pref_change_registrar_ = std::make_unique<PrefChangeRegistrar>();
   pref_change_registrar_->Init(prefs);
   pref_change_registrar_->Add(
+      prefs::kTapDraggingEnabled,
+      base::BindRepeating(&TouchDevicesController::UpdateTapDraggingEnabled,
+                          base::Unretained(this)));
+  pref_change_registrar_->Add(
       prefs::kTouchpadEnabled,
-      base::Bind(&TouchDevicesController::UpdateTouchpadEnabled,
-                 base::Unretained(this)));
+      base::BindRepeating(&TouchDevicesController::UpdateTouchpadEnabled,
+                          base::Unretained(this)));
   pref_change_registrar_->Add(
       prefs::kTouchscreenEnabled,
-      base::Bind(&TouchDevicesController::UpdateTouchscreenEnabled,
-                 base::Unretained(this)));
+      base::BindRepeating(&TouchDevicesController::UpdateTouchscreenEnabled,
+                          base::Unretained(this)));
   // Load current state.
+  UpdateTapDraggingEnabled();
   UpdateTouchpadEnabled();
   UpdateTouchscreenEnabled();
 }
 
-void TouchDevicesController::UpdateTouchpadEnabled() {
-  if (!GetInputDeviceControllerClient())
-    return;  // Happens in tests.
+void TouchDevicesController::UpdateTapDraggingEnabled() {
+  PrefService* prefs = GetActivePrefService();
+  const bool enabled = prefs->GetBoolean(prefs::kTapDraggingEnabled);
 
-  PrefService* prefs =
-      Shell::Get()->session_controller()->GetActivePrefService();
-  if (!prefs)
+  if (tap_dragging_enabled_ == enabled)
     return;
 
-  GetInputDeviceControllerClient()->SetInternalTouchpadEnabled(
-      prefs->GetBoolean(prefs::kTouchpadEnabled),
-      base::BindOnce(&OnSetTouchpadEnabledDone));
+  tap_dragging_enabled_ = enabled;
+
+  UMA_HISTOGRAM_BOOLEAN("Touchpad.TapDragging.Changed", enabled);
+
+  ui::OzonePlatform::GetInstance()->GetInputController()->SetTapDragging(
+      enabled);
+}
+
+void TouchDevicesController::UpdateTouchpadEnabled() {
+  bool enabled = GetTouchpadEnabled(TouchDeviceEnabledSource::GLOBAL) &&
+                 GetTouchpadEnabled(TouchDeviceEnabledSource::USER_PREF);
+  ui::InputController* input_controller =
+      ui::OzonePlatform::GetInstance()->GetInputController();
+  const bool old_value = input_controller->IsInternalTouchpadEnabled();
+  input_controller->SetInternalTouchpadEnabled(enabled);
+  if (old_value == input_controller->IsInternalTouchpadEnabled())
+    return;  // Value didn't actually change.
+
+  ::wm::CursorManager* cursor_manager = Shell::Get()->cursor_manager();
+  if (!cursor_manager)
+    return;
+
+  if (enabled)
+    cursor_manager->ShowCursor();
+  else
+    cursor_manager->HideCursor();
 }
 
 void TouchDevicesController::UpdateTouchscreenEnabled() {
-  if (!GetInputDeviceControllerClient())
-    return;  // Happens in tests.
-
-  GetInputDeviceControllerClient()->SetTouchscreensEnabled(
-      GetTouchscreenEnabled(TouchscreenEnabledSource::GLOBAL) &&
-      GetTouchscreenEnabled(TouchscreenEnabledSource::USER_PREF));
+  ui::OzonePlatform::GetInstance()
+      ->GetInputController()
+      ->SetTouchscreensEnabled(
+          GetTouchscreenEnabled(TouchDeviceEnabledSource::GLOBAL) &&
+          GetTouchscreenEnabled(TouchDeviceEnabledSource::USER_PREF));
 }
 
 }  // namespace ash

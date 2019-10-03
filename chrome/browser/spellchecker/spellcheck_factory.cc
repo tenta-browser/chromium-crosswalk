@@ -4,7 +4,6 @@
 
 #include "chrome/browser/spellchecker/spellcheck_factory.h"
 
-#include "base/memory/ptr_util.h"
 #include "chrome/browser/profiles/incognito_helpers.h"
 #include "chrome/browser/spellchecker/spellcheck_service.h"
 #include "chrome/grit/locale_settings.h"
@@ -29,8 +28,8 @@ SpellcheckService* SpellcheckServiceFactory::GetForContext(
 SpellcheckService* SpellcheckServiceFactory::GetForRenderer(
     const service_manager::Identity& renderer_identity) {
   content::BrowserContext* context =
-      content::BrowserContext::GetBrowserContextForServiceUserId(
-          renderer_identity.user_id());
+      content::BrowserContext::GetBrowserContextForServiceInstanceGroup(
+          renderer_identity.instance_group());
   if (!context)
     return nullptr;
   return GetForContext(context);
@@ -61,15 +60,18 @@ KeyedService* SpellcheckServiceFactory::BuildServiceInstanceFor(
 
   // Instantiates Metrics object for spellchecking for use.
   spellcheck->StartRecordingMetrics(
-      prefs->GetBoolean(spellcheck::prefs::kEnableSpellcheck));
+      prefs->GetBoolean(spellcheck::prefs::kSpellCheckEnable));
 
   return spellcheck;
 }
 
 void SpellcheckServiceFactory::RegisterProfilePrefs(
     user_prefs::PrefRegistrySyncable* user_prefs) {
-  user_prefs->RegisterListPref(spellcheck::prefs::kSpellCheckDictionaries,
-                               base::MakeUnique<base::ListValue>());
+  user_prefs->RegisterListPref(spellcheck::prefs::kSpellCheckDictionaries);
+  user_prefs->RegisterListPref(
+      spellcheck::prefs::kSpellCheckForcedDictionaries);
+  user_prefs->RegisterListPref(
+      spellcheck::prefs::kSpellCheckBlacklistedDictionaries);
   // Continue registering kSpellCheckDictionary for preference migration.
   // TODO(estade): remove: crbug.com/751275
   user_prefs->RegisterStringPref(
@@ -82,8 +84,8 @@ void SpellcheckServiceFactory::RegisterProfilePrefs(
 #else
   uint32_t flags = user_prefs::PrefRegistrySyncable::SYNCABLE_PREF;
 #endif
-  user_prefs->RegisterBooleanPref(
-      spellcheck::prefs::kEnableSpellcheck, true, flags);
+  user_prefs->RegisterBooleanPref(spellcheck::prefs::kSpellCheckEnable, true,
+                                  flags);
 }
 
 content::BrowserContext* SpellcheckServiceFactory::GetBrowserContextToUse(

@@ -7,11 +7,15 @@
 
 #include <stdint.h>
 
+#include <map>
 #include <string>
 #include <vector>
 
 #include "base/macros.h"
 #include "content/browser/frame_host/render_frame_host_impl.h"
+#include "content/common/frame_messages.h"
+#include "content/common/navigation_client.mojom.h"
+#include "content/common/navigation_params.mojom.h"
 #include "content/public/browser/web_contents_observer.h"
 #include "content/public/test/mock_render_process_host.h"
 #include "content/public/test/test_renderer_host.h"
@@ -19,10 +23,8 @@
 #include "content/test/test_render_widget_host.h"
 #include "ui/base/page_transition_types.h"
 
-struct FrameHostMsg_DidCommitProvisionalLoad_Params;
-
 namespace net {
-class HostPortPair;
+class IPEndPoint;
 }
 
 namespace content {
@@ -45,9 +47,8 @@ class TestRenderFrameHost : public RenderFrameHostImpl,
                             public RenderFrameHostTester {
  public:
   TestRenderFrameHost(SiteInstance* site_instance,
-                      RenderViewHostImpl* render_view_host,
+                      scoped_refptr<RenderViewHostImpl> render_view_host,
                       RenderFrameHostDelegate* delegate,
-                      RenderWidgetHostDelegate* rwh_delegate,
                       FrameTree* frame_tree,
                       FrameTreeNode* frame_tree_node,
                       int32_t routing_id,
@@ -59,8 +60,21 @@ class TestRenderFrameHost : public RenderFrameHostImpl,
   TestRenderViewHost* GetRenderViewHost() override;
   MockRenderProcessHost* GetProcess() override;
   TestRenderWidgetHost* GetRenderWidgetHost() override;
-  void AddMessageToConsole(ConsoleMessageLevel level,
+  void AddMessageToConsole(blink::mojom::ConsoleMessageLevel level,
                            const std::string& message) override;
+  void AddUniqueMessageToConsole(blink::mojom::ConsoleMessageLevel level,
+                                 const std::string& message) override;
+  bool IsTestRenderFrameHost() const override;
+
+  // Public overrides to expose RenderFrameHostImpl's mojo methods to tests.
+  void DidFailProvisionalLoadWithError(
+      const GURL& url,
+      int error_code,
+      const base::string16& error_description,
+      bool showing_repost_interstitial) override;
+  void DidFailLoadWithError(const GURL& url,
+                            int error_code,
+                            const base::string16& error_description) override;
 
   // RenderFrameHostTester implementation.
   void InitializeRenderFrameIfNeeded() override;
@@ -70,43 +84,24 @@ class TestRenderFrameHost : public RenderFrameHostImpl,
   void SendNavigateWithTransition(int nav_entry_id,
                                   bool did_create_new_entry,
                                   const GURL& url,
-                                  ui::PageTransition transition) override;
-  void SetContentsMimeType(const std::string& mime_type) override;
+                                  ui::PageTransition transition);
   void SendBeforeUnloadACK(bool proceed) override;
   void SimulateSwapOutACK() override;
-  // DEPRECATED: Use NavigationSimulator::NavigateAndCommitFromDocument().
-  void NavigateAndCommitRendererInitiated(bool did_create_new_entry,
-                                          const GURL& url) override;
   void SimulateFeaturePolicyHeader(
-      blink::FeaturePolicyFeature feature,
+      blink::mojom::FeaturePolicyFeature feature,
       const std::vector<url::Origin>& whitelist) override;
   const std::vector<std::string>& GetConsoleMessages() override;
-
-  void SendNavigateWithReplacement(int nav_entry_id,
-                                   bool did_create_new_entry,
-                                   const GURL& url);
-
-  using ModificationCallback =
-      base::Callback<void(FrameHostMsg_DidCommitProvisionalLoad_Params*)>;
 
   void SendNavigate(int nav_entry_id,
                     bool did_create_new_entry,
                     const GURL& url);
-  void SendNavigateWithModificationCallback(
-      int nav_entry_id,
-      bool did_create_new_entry,
-      const GURL& url,
-      const ModificationCallback& callback);
   void SendNavigateWithParams(
-      FrameHostMsg_DidCommitProvisionalLoad_Params* params);
-
-  // Simulates a navigation to |url| failing with the error code |error_code|.
-  // DEPRECATED: use NavigationSimulator instead.
-  void SimulateNavigationError(const GURL& url, int error_code);
-
-  // Simulates the commit of an error page following a navigation failure.
-  // DEPRECATED: use NavigationSimulator instead.
-  void SimulateNavigationErrorPageCommit();
+      FrameHostMsg_DidCommitProvisionalLoad_Params* params,
+      bool was_within_same_document);
+  void SendNavigateWithParamsAndInterfaceParams(
+      FrameHostMsg_DidCommitProvisionalLoad_Params* params,
+      mojom::DidCommitProvisionalLoadInterfaceParamsPtr interface_params,
+      bool was_within_same_document);
 
   // With the current navigation logic this method is a no-op.
   // Simulates a renderer-initiated navigation to |url| starting in the
@@ -149,25 +144,26 @@ class TestRenderFrameHost : public RenderFrameHostImpl,
   // Like PrepareForCommit, but with the socket address when needed.
   // TODO(clamy): Have NavigationSimulator make the relevant calls directly and
   // remove this function.
-  void PrepareForCommitWithSocketAddress(
-      const net::HostPortPair& socket_address);
+  void PrepareForCommitDeprecatedForNavigationSimulator(
+      const net::IPEndPoint& remote_endpoint,
+      bool was_fetched_via_cache,
+      bool is_signed_exchange_inner_response,
+      net::HttpResponseInfo::ConnectionInfo connection_info,
+      base::Optional<net::SSLInfo> ssl_info);
 
-  // This method does the same as PrepareForCommit.
-  // PlzNavigate: Beyond doing the same as PrepareForCommit, this method will
-  // also simulate a server redirect to |redirect_url|. If the URL is empty the
-  // redirect step is ignored.
-  void PrepareForCommitWithServerRedirect(const GURL& redirect_url);
-
-  // If we are doing a cross-site navigation, this simulates the current
-  // RenderFrameHost notifying that BeforeUnload has executed so the pending
-  // RenderFrameHost is resumed and can navigate.
-  // PlzNavigate: This simulates a BeforeUnload ACK from the renderer, and the
-  // interaction with the IO thread up until the response is ready to commit.
-  void PrepareForCommitIfNecessary();
-
-  // PlzNavigate
-  void set_pending_commit(bool pending) { pending_commit_ = pending; }
-  bool pending_commit() const { return pending_commit_; }
+  // Used to simulate the commit of a navigation having been processed in the
+  // renderer. If parameters required to commit are not provided, they will be
+  // set to default null values.
+  void SimulateCommitProcessed(
+      NavigationRequest* navigation_request,
+      std::unique_ptr<FrameHostMsg_DidCommitProvisionalLoad_Params> params,
+      service_manager::mojom::InterfaceProviderRequest
+          interface_provider_request,
+      blink::mojom::DocumentInterfaceBrokerRequest
+          document_interface_broker_content_request,
+      blink::mojom::DocumentInterfaceBrokerRequest
+          document_interface_broker_blink_request,
+      bool same_document);
 
   // Send a message with the sandbox flags and feature policy
   void SendFramePolicy(blink::WebSandboxFlags sandbox_flags,
@@ -180,41 +176,90 @@ class TestRenderFrameHost : public RenderFrameHostImpl,
     return last_commit_was_error_page_;
   }
 
+  // Exposes the interface registry to be manipulated for testing.
+  service_manager::BinderRegistry& binder_registry() { return *registry_; }
+
   // Returns a pending InterfaceProvider request that is safe to bind to an
   // implementation, but will never receive any interface requests.
   static service_manager::mojom::InterfaceProviderRequest
   CreateStubInterfaceProviderRequest();
 
- private:
-  class NavigationInterceptor;
+  // Returns a pending DocumentInterfaceBrokerRequest that is safe to bind to an
+  // implementation, but will never receive any interface requests.
+  static blink::mojom::DocumentInterfaceBrokerRequest
+  CreateStubDocumentInterfaceBrokerRequest();
 
+  // This simulates aborting a cross document navigation.
+  // Will abort the navigation with the given |navigation_id|.
+  void AbortCommit(NavigationRequest* navigation_request);
+
+  // Returns the navigations that are trying to commit.
+  const std::map<NavigationRequest*, std::unique_ptr<NavigationRequest>>&
+  navigation_requests() {
+    return navigation_requests_;
+  }
+
+ protected:
+  void SendCommitNavigation(
+      mojom::NavigationClient* navigation_client,
+      NavigationRequest* navigation_request,
+      const content::CommonNavigationParams& common_params,
+      const content::CommitNavigationParams& commit_params,
+      const network::ResourceResponseHead& response_head,
+      mojo::ScopedDataPipeConsumerHandle response_body,
+      network::mojom::URLLoaderClientEndpointsPtr url_loader_client_endpoints,
+      std::unique_ptr<blink::URLLoaderFactoryBundleInfo>
+          subresource_loader_factories,
+      base::Optional<std::vector<::content::mojom::TransferrableURLLoaderPtr>>
+          subresource_overrides,
+      blink::mojom::ControllerServiceWorkerInfoPtr
+          controller_service_worker_info,
+      blink::mojom::ServiceWorkerProviderInfoForClientPtr provider_info,
+      mojo::PendingRemote<network::mojom::URLLoaderFactory>
+          prefetch_loader_factory,
+      const base::UnguessableToken& devtools_navigation_token) override;
+  void SendCommitFailedNavigation(
+      mojom::NavigationClient* navigation_client,
+      NavigationRequest* navigation_request,
+      const content::CommonNavigationParams& common_params,
+      const content::CommitNavigationParams& commit_params,
+      bool has_stale_copy_in_cache,
+      int32_t error_code,
+      const base::Optional<std::string>& error_page_content,
+      std::unique_ptr<blink::URLLoaderFactoryBundleInfo>
+          subresource_loader_factories) override;
+
+ private:
   void SendNavigateWithParameters(int nav_entry_id,
                                   bool did_create_new_entry,
-                                  bool should_replace_entry,
                                   const GURL& url,
                                   ui::PageTransition transition,
-                                  int response_code,
-                                  const ModificationCallback& callback);
+                                  int response_code);
 
-  void PrepareForCommitInternal(const GURL& redirect_url,
-                                const net::HostPortPair& socket_address);
+  void PrepareForCommitInternal(
+      const net::IPEndPoint& remote_endpoint,
+      bool was_fetched_via_cache,
+      bool is_signed_exchange_inner_response,
+      net::HttpResponseInfo::ConnectionInfo connection_info,
+      base::Optional<net::SSLInfo> ssl_info);
 
   // Computes the page ID for a pending navigation in this RenderFrameHost;
   int32_t ComputeNextPageID();
 
-  void SimulateWillStartRequest(ui::PageTransition transition);
+  std::unique_ptr<FrameHostMsg_DidCommitProvisionalLoad_Params>
+  BuildDidCommitParams(int nav_entry_id,
+                       bool did_create_new_entry,
+                       const GURL& url,
+                       ui::PageTransition transition,
+                       int response_code);
 
-  // RenderFrameHostImpl:
-  mojom::FrameNavigationControl* GetNavigationControl() override;
-
-  mojom::FrameNavigationControl* GetInternalNavigationControl();
+  mojom::DidCommitProvisionalLoadInterfaceParamsPtr
+  BuildDidCommitInterfaceParams(bool is_same_document);
 
   // Keeps a running vector of messages sent to AddMessageToConsole.
   std::vector<std::string> console_messages_;
 
   TestRenderFrameHostCreationObserver child_creation_observer_;
-
-  std::string contents_mime_type_;
 
   // See set_simulate_history_list_was_cleared() above.
   bool simulate_history_list_was_cleared_;
@@ -222,8 +267,18 @@ class TestRenderFrameHost : public RenderFrameHostImpl,
   // The last commit was for an error page.
   bool last_commit_was_error_page_;
 
-  // Used to track and forward outgoing navigation requests from the host.
-  std::unique_ptr<NavigationInterceptor> navigation_interceptor_;
+  std::map<NavigationRequest*,
+           mojom::FrameNavigationControl::CommitNavigationCallback>
+      commit_callback_;
+  std::map<NavigationRequest*,
+           mojom::NavigationClient::CommitNavigationCallback>
+      navigation_client_commit_callback_;
+  std::map<NavigationRequest*,
+           mojom::FrameNavigationControl::CommitFailedNavigationCallback>
+      commit_failed_callback_;
+  std::map<NavigationRequest*,
+           mojom::NavigationClient::CommitFailedNavigationCallback>
+      navigation_client_commit_failed_callback_;
 
   DISALLOW_COPY_AND_ASSIGN(TestRenderFrameHost);
 };

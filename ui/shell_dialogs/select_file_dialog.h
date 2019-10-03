@@ -39,6 +39,9 @@ class SHELL_DIALOGS_EXPORT SelectFileDialog
     // specifically for "upload".
     SELECT_UPLOAD_FOLDER,
 
+    // Like SELECT_FOLDER, but folder creation is disabled, if possible.
+    SELECT_EXISTING_FOLDER,
+
     // For saving into a file, allowing a nonexistent file to be selected.
     SELECT_SAVEAS_FILE,
 
@@ -138,7 +141,12 @@ class SHELL_DIALOGS_EXPORT SelectFileDialog
     // NATIVE_PATH, the dialog creates a native replica of the non-native file
     // and returns its path, so that the caller can use it without any
     // difference than when it were local.
-    enum AllowedPaths { ANY_PATH, NATIVE_PATH, NATIVE_OR_DRIVE_PATH };
+    enum AllowedPaths {
+      ANY_PATH,
+      NATIVE_PATH,
+      NATIVE_OR_DRIVE_PATH,
+      ANY_PATH_OR_URL
+    };
     AllowedPaths allowed_paths;
   };
 

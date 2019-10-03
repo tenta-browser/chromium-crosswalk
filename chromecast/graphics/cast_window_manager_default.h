@@ -14,6 +14,7 @@ namespace chromecast {
 
 class CastWindowManagerDefault : public CastWindowManager {
  public:
+  CastWindowManagerDefault();
   ~CastWindowManagerDefault() override;
 
   // CastWindowManager implementation:
@@ -23,12 +24,16 @@ class CastWindowManagerDefault : public CastWindowManager {
   gfx::NativeView GetRootWindow() override;
   void InjectEvent(ui::Event* event) override;
 
+  void AddGestureHandler(CastGestureHandler* handler) override;
+
+  void RemoveGestureHandler(CastGestureHandler* handler) override;
+
+  void SetTouchInputDisabled(bool disabled) override;
+  void AddTouchActivityObserver(CastTouchActivityObserver* observer) override;
+  void RemoveTouchActivityObserver(
+      CastTouchActivityObserver* observer) override;
+
  private:
-  friend class CastWindowManager;
-
-  // This class should only be instantiated by CastWindowManager::Create.
-  CastWindowManagerDefault();
-
   DISALLOW_COPY_AND_ASSIGN(CastWindowManagerDefault);
 };
 

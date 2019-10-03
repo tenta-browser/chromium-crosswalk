@@ -12,11 +12,12 @@
 #include "ash/host/ash_window_tree_host.h"
 #include "ash/shell.h"
 #include "ash/touch/ash_touch_transform_controller.h"
+#include "base/bind.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "ui/aura/window_tree_host.h"
-#include "ui/display/manager/chromeos/touch_device_manager.h"
+#include "ui/display/manager/touch_device_manager.h"
 #include "ui/display/screen.h"
-#include "ui/events/devices/input_device_manager.h"
+#include "ui/events/devices/device_data_manager.h"
 #include "ui/events/event.h"
 #include "ui/events/event_constants.h"
 #include "ui/gfx/geometry/size_conversions.h"
@@ -27,7 +28,7 @@ namespace {
 void InitInternalTouchDeviceIds(std::set<int>& internal_touch_device_ids) {
   internal_touch_device_ids.clear();
   const std::vector<ui::TouchscreenDevice>& device_list =
-      ui::InputDeviceManager::GetInstance()->GetTouchscreenDevices();
+      ui::DeviceDataManager::GetInstance()->GetTouchscreenDevices();
   for (const auto& touchscreen_device : device_list) {
     if (touchscreen_device.type == ui::InputDeviceType::INPUT_DEVICE_INTERNAL)
       internal_touch_device_ids.insert(touchscreen_device.id);
@@ -41,7 +42,7 @@ gfx::Transform CalculateEventTransformer(int touch_device_id) {
   const display::DisplayManager* display_manager =
       Shell::Get()->display_manager();
   const std::vector<ui::TouchscreenDevice>& device_list =
-      ui::InputDeviceManager::GetInstance()->GetTouchscreenDevices();
+      ui::DeviceDataManager::GetInstance()->GetTouchscreenDevices();
 
   auto device_it = std::find_if(
       device_list.begin(), device_list.end(),
@@ -172,7 +173,7 @@ void TouchCalibratorController::CompleteCalibration(
       display::TouchDeviceIdentifier::GetFallbackTouchDeviceIdentifier();
 
   const std::vector<ui::TouchscreenDevice>& device_list =
-      ui::InputDeviceManager::GetInstance()->GetTouchscreenDevices();
+      ui::DeviceDataManager::GetInstance()->GetTouchscreenDevices();
   for (const auto& device : device_list) {
     if (device.id == touch_device_id_) {
       touch_device_identifier =

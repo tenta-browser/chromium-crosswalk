@@ -4,14 +4,15 @@
 
 module ui.ozone.mojom;
 
-import "mojo/common/file.mojom";
-import "mojo/common/file_path.mojom";
-import "ui/display/mojo/display_constants.mojom";
-import "ui/display/mojo/display_mode.mojom";
-import "ui/display/mojo/display_snapshot.mojom";
-import "ui/display/mojo/gamma_ramp_rgb_entry.mojom";
+import "mojo/public/mojom/base/file.mojom";
+import "mojo/public/mojom/base/file_path.mojom";
+import "ui/display/mojom/display_constants.mojom";
+import "ui/display/mojom/display_mode.mojom";
+import "ui/display/mojom/display_snapshot.mojom";
+import "ui/display/mojom/gamma_ramp_rgb_entry.mojom";
 import "ui/gfx/geometry/mojo/geometry.mojom";
 import "ui/gfx/mojo/accelerated_widget.mojom";
+import "ui/ozone/public/interfaces/device_cursor.mojom";
 import "ui/ozone/public/interfaces/overlay_surface_candidate.mojom";
 
 
@@ -20,10 +21,6 @@ import "ui/ozone/public/interfaces/overlay_surface_candidate.mojom";
 // All functions in DrmDevice are implemented by the lower privilege viz
 // process.
 interface DrmDevice {
-  // Starts the DRM service and returns true on success.
-  [Sync]
-  StartDrmDevice() => (bool success);
-
   // Creates scanout capable DRM buffers to back |widget|.
   CreateWindow(gfx.mojom.AcceleratedWidget widget);
 
@@ -46,11 +43,11 @@ interface DrmDevice {
       (array<display.mojom.DisplaySnapshot> display_snapshots);
 
   // Transfers ownership of a DRM device to the GPU process.
-  AddGraphicsDevice(mojo.common.mojom.FilePath path,
-                    mojo.common.mojom.File file);
+  AddGraphicsDevice(mojo_base.mojom.FilePath path,
+                    mojo_base.mojom.File file);
 
   // Instructs the GPU to abandon a DRM device.
-  RemoveGraphicsDevice(mojo.common.mojom.FilePath path);
+  RemoveGraphicsDevice(mojo_base.mojom.FilePath path);
 
   // Instructs the GPU to disable a DRM device.
   DisableNativeDisplay(int64 display_id) => (int64 display_id, bool success);
@@ -68,11 +65,15 @@ interface DrmDevice {
   SetHDCPState(int64 display_id, display.mojom.HDCPState  state) =>
       (int64 display_id, bool success);
 
-  // Sets a color correction gamma table.
-  SetColorCorrection(int64 display_id,
+  // Sets a 3x3 color transform matrix on the display hardware.
+  // TODO: Consider using a different type for the color matrix.
+  // https://crbug.com/846975.
+  SetColorMatrix(int64 display_id, array<float, 9> color_matrix);
+
+  // Sets a color correction gamma lookup table.
+  SetGammaCorrection(int64 display_id,
                      array<display.mojom.GammaRampRGBEntry> degamma_lut,
-                     array<display.mojom.GammaRampRGBEntry> gamma_lut,
-                     array<float> correction_matrix);
+                     array<display.mojom.GammaRampRGBEntry> gamma_lut);
 
   // Verifies if the display controller can successfully scanout the given set
   // of OverlaySurfaceCandidates and return the status associated with each
@@ -82,5 +83,10 @@ interface DrmDevice {
           (gfx.mojom.AcceleratedWidget widget,
           array<ui.ozone.mojom.OverlaySurfaceCandidate> candidates,
           array<ui.ozone.mojom.OverlayStatus> status);
+
+  // Provides a DeviceCursor interface. The provided interface needs to be
+  // associated because the AcceleratedWidgets referenced by its methods are
+  // registered via CreateWindow() in this interface.
+  GetDeviceCursor(associated DeviceCursor& cursor);
 };
 

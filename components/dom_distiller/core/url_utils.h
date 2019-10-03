@@ -25,7 +25,9 @@ const GURL GetDistillerViewUrlFromUrl(const std::string& scheme,
                                       int64_t start_time_ms = 0);
 
 // Returns the original URL from the distilled URL.
-// If the URL is not distilled, it is returned as is.
+// If |distilled_url| is not distilled, it is returned as is.
+// If |distilled_url| looks like distilled, but no original URL can be found,
+// an empty, invalid URL is returned.
 const GURL GetOriginalUrlFromDistillerUrl(const GURL& distilled_url);
 
 // Returns the starting time from the distilled URL.
@@ -47,10 +49,6 @@ bool IsUrlDistillable(const GURL& url);
 
 // Returns whether the given |url| is for a distilled page.
 bool IsDistilledPage(const GURL& url);
-
-// Returns a JavaScript snippet that returns whether or not a page should be
-// used with DomDistillerService and can be executed in a live page.
-base::StringPiece GetIsDistillableJs();
 
 }  // namespace url_utils
 

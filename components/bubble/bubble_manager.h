@@ -42,6 +42,9 @@ class BubbleManager {
     virtual void OnBubbleClosed(BubbleReference bubble,
                                 BubbleCloseReason reason) = 0;
 
+    // Called when a bubble is shown.
+    virtual void OnBubbleShown(BubbleReference bubble) = 0;
+
    private:
     DISALLOW_COPY_AND_ASSIGN(BubbleManagerObserver);
   };
@@ -70,6 +73,9 @@ class BubbleManager {
   // Remove an observer from this BubbleManager.
   void RemoveBubbleManagerObserver(BubbleManagerObserver* observer);
 
+  // Returns the number of bubbles currently being managed.
+  size_t GetBubbleCountForTesting() const;
+
  protected:
   // Will close any open bubbles and prevent new ones from being shown.
   void FinalizePendingRequests();
@@ -95,7 +101,7 @@ class BubbleManager {
                                const content::RenderFrameHost* owner,
                                BubbleCloseReason reason);
 
-  base::ObserverList<BubbleManagerObserver> observers_;
+  base::ObserverList<BubbleManagerObserver>::Unchecked observers_;
 
   // Verify that functions that affect the UI are done on the same thread.
   base::ThreadChecker thread_checker_;

@@ -6,7 +6,6 @@ package org.chromium.chrome.browser.notifications;
 
 import static org.chromium.chrome.browser.util.ViewUtils.dpToPx;
 
-import android.app.Notification;
 import android.content.Context;
 import android.content.res.Resources;
 import android.graphics.Bitmap;
@@ -14,21 +13,18 @@ import android.graphics.BitmapFactory;
 import android.graphics.drawable.BitmapDrawable;
 import android.graphics.drawable.Drawable;
 import android.os.Build;
-import android.os.StrictMode;
-import android.os.SystemClock;
 import android.text.format.DateFormat;
 import android.util.DisplayMetrics;
 import android.view.View;
 import android.widget.RemoteViews;
 
 import org.chromium.base.ApiCompatibilityUtils;
+import org.chromium.base.StrictModeContext;
 import org.chromium.base.VisibleForTesting;
-import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.chrome.R;
 import org.chromium.ui.base.LocalizationUtils;
 
 import java.util.Date;
-import java.util.concurrent.TimeUnit;
 
 /**
  * Builds a notification using the given inputs. Uses RemoteViews to provide a custom layout.
@@ -79,13 +75,13 @@ public class CustomNotificationBuilder extends NotificationBuilderBase {
 
     private final Context mContext;
 
-    public CustomNotificationBuilder(Context context, String channelId) {
-        super(context.getResources(), channelId);
+    public CustomNotificationBuilder(Context context) {
+        super(context.getResources());
         mContext = context;
     }
 
     @Override
-    public Notification build() {
+    public ChromeNotification build(NotificationMetadata metadata) {
         // A note about RemoteViews and updating notifications. When a notification is passed to the
         // {@code NotificationManager} with the same tag and id as a previous notification, an
         // in-place update will be performed. In that case, the actions of all new
@@ -103,17 +99,10 @@ public class CustomNotificationBuilder extends NotificationBuilderBase {
         bigView.setInt(R.id.body, "setMaxLines", calculateMaxBodyLines(fontScale));
         int scaledPadding =
                 calculateScaledPadding(fontScale, mContext.getResources().getDisplayMetrics());
-        String formattedTime = "";
-
-        // Temporarily allowing disk access. TODO: Fix. See http://crbug.com/577185
-        StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskWrites();
-        try {
-            long time = SystemClock.elapsedRealtime();
+        String formattedTime;
+        // TODO(crbug.com/577185): Temporarily allowing disk access until more permanent fix is in.
+        try (StrictModeContext ignored = StrictModeContext.allowDiskWrites()) {
             formattedTime = DateFormat.getTimeFormat(mContext).format(new Date());
-            RecordHistogram.recordTimesHistogram("Android.StrictMode.NotificationUIBuildTime",
-                    SystemClock.elapsedRealtime() - time, TimeUnit.MILLISECONDS);
-        } finally {
-            StrictMode.setThreadPolicy(oldPolicy);
         }
 
         for (RemoteViews view : new RemoteViews[] {compactView, bigView}) {
@@ -128,8 +117,8 @@ public class CustomNotificationBuilder extends NotificationBuilderBase {
 
             int smallIconId = useMaterial() ? R.id.small_icon_overlay : R.id.small_icon_footer;
             view.setViewVisibility(smallIconId, View.VISIBLE);
-            if (mSmallIconBitmap != null) {
-                view.setImageViewBitmap(smallIconId, mSmallIconBitmap);
+            if (mSmallIconBitmapForContent != null) {
+                view.setImageViewBitmap(smallIconId, mSmallIconBitmapForContent);
             } else {
                 view.setImageViewResource(smallIconId, mSmallIconId);
             }
@@ -141,12 +130,12 @@ public class CustomNotificationBuilder extends NotificationBuilderBase {
         // API level of methods you call on the builder.
         // TODO(crbug.com/697104) We should probably use a Compat builder.
         ChromeNotificationBuilder builder =
-                NotificationBuilderFactory.createChromeNotificationBuilder(
-                        false /* preferCompat */, mChannelId);
+                NotificationBuilderFactory.createChromeNotificationBuilder(false /* preferCompat */,
+                        mChannelId, mRemotePackageForBuilderContext, metadata);
         builder.setTicker(mTickerText);
         builder.setContentIntent(mContentIntent);
         builder.setDeleteIntent(mDeleteIntent);
-        builder.setPriority(mPriority);
+        builder.setPriorityBeforeO(mPriority);
         builder.setDefaults(mDefaults);
         if (mVibratePattern != null) builder.setVibrate(mVibratePattern);
         builder.setWhen(mTimestamp);
@@ -160,7 +149,7 @@ public class CustomNotificationBuilder extends NotificationBuilderBase {
         builder.setContentText(mBody);
         builder.setSubText(mOrigin);
         builder.setLargeIcon(getNormalizedLargeIcon());
-        setSmallIconOnBuilder(builder, mSmallIconId, mSmallIconBitmap);
+        setStatusBarIcon(builder, mSmallIconId, mSmallIconBitmapForStatusBar);
         for (Action action : mActions) {
             addActionToBuilder(builder, action);
         }

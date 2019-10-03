@@ -4,19 +4,21 @@
 
 #include "headless/lib/browser/headless_window_tree_host.h"
 
+#include "base/containers/flat_set.h"
 #include "components/viz/common/surfaces/frame_sink_id.h"
 #include "headless/lib/browser/headless_focus_client.h"
 #include "headless/lib/browser/headless_window_parenting_client.h"
 #include "ui/aura/window.h"
+#include "ui/events/keycodes/dom/dom_code.h"
 #include "ui/gfx/icc_profile.h"
 
 namespace headless {
 
 HeadlessWindowTreeHost::HeadlessWindowTreeHost(
     const gfx::Rect& bounds,
-    bool external_begin_frames_enabled)
+    ui::ExternalBeginFrameClient* external_begin_frame_client)
     : bounds_(bounds) {
-  CreateCompositor(viz::FrameSinkId(), false, external_begin_frames_enabled);
+  CreateCompositor(viz::FrameSinkId(), false, external_begin_frame_client);
   OnAcceleratedWidgetAvailable();
 
   focus_client_.reset(new HeadlessFocusClient());
@@ -74,6 +76,23 @@ gfx::Point HeadlessWindowTreeHost::GetLocationOnScreenInPixels() const {
 void HeadlessWindowTreeHost::SetCapture() {}
 
 void HeadlessWindowTreeHost::ReleaseCapture() {}
+
+bool HeadlessWindowTreeHost::CaptureSystemKeyEventsImpl(
+    base::Optional<base::flat_set<ui::DomCode>> codes) {
+  return false;
+}
+
+void HeadlessWindowTreeHost::ReleaseSystemKeyEventCapture() {}
+
+bool HeadlessWindowTreeHost::IsKeyLocked(ui::DomCode dom_code) {
+  return false;
+}
+
+base::flat_map<std::string, std::string>
+HeadlessWindowTreeHost::GetKeyboardLayoutMap() {
+  NOTIMPLEMENTED();
+  return {};
+}
 
 void HeadlessWindowTreeHost::SetCursorNative(gfx::NativeCursor cursor_type) {}
 

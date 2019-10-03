@@ -69,6 +69,9 @@ about:version template page
 <if expr="is_android">
             <span>$i18n{os_version}</span>
 </if>
+<if expr="is_win or is_macosx">
+            <span id="os_version"></span>
+</if>
           </td>
         </tr>
 </if>
@@ -136,7 +139,15 @@ about:version template page
           <td class="label">$i18n{variations_name}</td>
           <td class="version" id="variations-list"></td>
         </tr>
-<if expr="is_win">
+        <tr id="variations-cmd-section" hidden>
+          <td class="label">$i18n{variations_cmd_name}</td>
+          <td class="version-wide" id="variations-cmd"></td>
+        </tr>
+        <tr id="sanitizer-section" hidden>
+          <td class="label">Sanitizer</td>
+          <td class="version" id="sanitizer">$i18n{sanitizer}</td>
+        </tr>
+<if expr="is_ios">
         <tr id="compiler-section">
           <td class="label">Compiler</td>
           <td class="version" id="compiler">$i18n{compiler}</td>
@@ -144,6 +155,5 @@ about:version template page
 </if>
       </table>
     </div>
-    <script src="chrome://resources/js/i18n_template.js"></script>
   </body>
 </html>

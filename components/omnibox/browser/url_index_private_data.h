@@ -142,6 +142,10 @@ class URLIndexPrivateData
   // from the cache or a complete rebuild from the history database.
   void Clear();
 
+  // Estimates dynamic memory usage.
+  // See base/trace_event/memory_usage_estimator.h for more info.
+  size_t EstimateMemoryUsage() const;
+
  private:
   friend class base::RefCountedThreadSafe<URLIndexPrivateData>;
   ~URLIndexPrivateData();
@@ -187,6 +191,10 @@ class URLIndexPrivateData
     SearchTermCacheItem(const SearchTermCacheItem& other);
 
     ~SearchTermCacheItem();
+
+    // Estimates dynamic memory usage.
+    // See base/trace_event/memory_usage_estimator.h for more info.
+    size_t EstimateMemoryUsage() const;
 
     WordIDSet word_id_set_;
     HistoryIDSet history_id_set_;
@@ -240,11 +248,6 @@ class URLIndexPrivateData
   // in each term.  For example, in the term "-foo" the word starts at offset 1.
   static void CalculateWordStartsOffsets(
       const String16Vector& terms,
-      WordStarts* terms_to_word_starts_offsets);
-
-  static void CalculateWordStartsOffsets(
-      const String16Vector& terms,
-      bool force_break_on_underscore,
       WordStarts* terms_to_word_starts_offsets);
 
   // Indexes one URL history item as described by |row|. Returns true if the

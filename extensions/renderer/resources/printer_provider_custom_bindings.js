@@ -2,20 +2,13 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-var binding = apiBridge || require('binding').Binding.create('printerProvider');
-var printerProviderInternal =
-    getInternalApi ?
-        getInternalApi('printerProviderInternal') :
-        require('binding').Binding.create('printerProviderInternal').generate();
-var registerArgumentMassager = bindingUtil ?
-    $Function.bind(bindingUtil.registerEventArgumentMassager, bindingUtil) :
-    require('event_bindings').registerArgumentMassager;
+var printerProviderInternal = getInternalApi('printerProviderInternal');
 var blobNatives = requireNative('blob_natives');
 
 var printerProviderSchema =
     requireNative('schema_registry').GetSchema('printerProvider')
+
 var utils = require('utils');
-var validate = require('schemaUtils').validate;
 
 // Custom bindings for chrome.printerProvider API.
 // The bindings are used to implement callbacks for the API events. Internally
@@ -43,21 +36,17 @@ var validate = require('schemaUtils').validate;
 // |resultreporter|: The function that should be called to report event result.
 //     One of chrome.printerProviderInternal API functions.
 function handleEvent(eventName, prepareArgsForDispatch, resultReporter) {
-  registerArgumentMassager('printerProvider.' + eventName,
-                           function(args, dispatch) {
+  var eventSchema =
+      utils.lookup(printerProviderSchema.events, 'name', eventName);
+  var callbackSchema =
+      utils.lookup(eventSchema.parameters, 'type', 'function').parameters;
+  var fullEventName = 'printerProvider.' + eventName;
+
+  bindingUtil.addCustomSignature(fullEventName, callbackSchema);
+
+  bindingUtil.registerEventArgumentMassager(fullEventName,
+                                            function(args, dispatch) {
     var responded = false;
-
-    // Validates that the result passed by the extension to the event
-    // callback matches the callback schema. Throws an exception in case of
-    // an error.
-    var validateResult = function(result) {
-      var eventSchema =
-          utils.lookup(printerProviderSchema.events, 'name', eventName);
-      var callbackSchema =
-          utils.lookup(eventSchema.parameters, 'type', 'function');
-
-      validate([result], callbackSchema.parameters);
-    };
 
     // Function provided to the extension as the event callback argument.
     // It makes sure that the event result hasn't previously been returned
@@ -69,7 +58,8 @@ function handleEvent(eventName, prepareArgsForDispatch, resultReporter) {
 
       var finalResult = null;
       try {
-        validateResult(result);  // throws on failure
+        // throws on failure
+        bindingUtil.validateCustomSignature(fullEventName, [result]);
         finalResult = result;
       } finally {
         responded = true;
@@ -120,5 +110,3 @@ handleEvent('onPrintRequested',
 handleEvent('onGetUsbPrinterInfoRequested',
             function(args, callback) { callback(true); },
             printerProviderInternal.reportUsbPrinterInfo);
-
-exports.$set('binding', binding.generate());

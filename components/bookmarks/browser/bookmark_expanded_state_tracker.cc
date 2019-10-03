@@ -48,8 +48,7 @@ BookmarkExpandedStateTracker::GetExpandedNodes() {
     return nodes;
 
   bool changed = false;
-  for (base::ListValue::const_iterator i = value->begin();
-       i != value->end(); ++i) {
+  for (auto i = value->begin(); i != value->end(); ++i) {
     std::string value;
     int64_t node_id;
     const BookmarkNode* node;
@@ -86,7 +85,7 @@ void BookmarkExpandedStateTracker::BookmarkModelBeingDeleted(
 void BookmarkExpandedStateTracker::BookmarkNodeRemoved(
     BookmarkModel* model,
     const BookmarkNode* parent,
-    int old_index,
+    size_t old_index,
     const BookmarkNode* node,
     const std::set<GURL>& removed_urls) {
   if (!node->is_folder())
@@ -110,7 +109,7 @@ void BookmarkExpandedStateTracker::UpdatePrefs(const Nodes& nodes) {
   std::vector<base::Value> values;
   values.reserve(nodes.size());
   for (const auto* node : nodes) {
-    values.emplace_back(base::Int64ToString(node->id()));
+    values.emplace_back(base::NumberToString(node->id()));
   }
 
   pref_service_->Set(prefs::kBookmarkEditorExpandedNodes,

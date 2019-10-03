@@ -8,12 +8,11 @@
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/path_service.h"
-#include "jni/ResourceBundle_jni.h"
 #include "ui/base/l10n/l10n_util.h"
 #include "ui/base/resource/data_pack.h"
 #include "ui/base/resource/resource_bundle.h"
+#include "ui/base/ui_base_jni_headers/ResourceBundle_jni.h"
 #include "ui/base/ui_base_paths.h"
 
 namespace ui {
@@ -82,17 +81,18 @@ std::unique_ptr<DataPack> LoadDataPackFromLocalePak(
 
 void ResourceBundle::LoadCommonResources() {
   base::FilePath disk_path;
-  PathService::Get(ui::DIR_RESOURCE_PAKS_ANDROID, &disk_path);
+  base::PathService::Get(ui::DIR_RESOURCE_PAKS_ANDROID, &disk_path);
   disk_path = disk_path.AppendASCII("chrome_100_percent.pak");
-  if (LoadFromApkOrFile("assets/chrome_100_percent.pak",
-                        &disk_path,
-                        &g_chrome_100_percent_fd,
-                        &g_chrome_100_percent_region)) {
-    AddDataPackFromFileRegion(base::File(g_chrome_100_percent_fd),
-                              g_chrome_100_percent_region, SCALE_FACTOR_100P);
-  }
+  bool success =
+      LoadFromApkOrFile("assets/chrome_100_percent.pak", &disk_path,
+                        &g_chrome_100_percent_fd, &g_chrome_100_percent_region);
+  DCHECK(success);
+
+  AddDataPackFromFileRegion(base::File(g_chrome_100_percent_fd),
+                            g_chrome_100_percent_region, SCALE_FACTOR_100P);
 }
 
+// static
 bool ResourceBundle::LocaleDataPakExists(const std::string& locale) {
   if (g_locale_paks_in_apk) {
     return !GetPathForAndroidLocalePakWithinApk(locale).empty();
@@ -209,11 +209,6 @@ std::string GetPathForAndroidLocalePakWithinApk(const std::string& locale) {
     return std::string();
   }
   return base::android::ConvertJavaStringToUTF8(env, ret.obj());
-}
-
-float GetPrimaryDisplayScale() {
-  return Java_ResourceBundle_getPrimaryDisplayScale(
-      base::android::AttachCurrentThread());
 }
 
 }  // namespace ui

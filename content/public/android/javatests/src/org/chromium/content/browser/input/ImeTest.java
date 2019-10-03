@@ -7,7 +7,6 @@ package org.chromium.content.browser.input;
 import android.content.ClipData;
 import android.content.ClipboardManager;
 import android.content.Context;
-import android.content.res.Configuration;
 import android.graphics.Color;
 import android.support.test.filters.MediumTest;
 import android.support.test.filters.SmallTest;
@@ -25,18 +24,19 @@ import org.junit.Assert;
 import org.junit.Before;
 import org.junit.Rule;
 import org.junit.Test;
+import org.junit.rules.ExpectedException;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.UrlUtils;
-import org.chromium.content.browser.test.ContentJUnit4ClassRunner;
-import org.chromium.content.browser.test.util.Criteria;
-import org.chromium.content.browser.test.util.CriteriaHelper;
-import org.chromium.content.browser.test.util.DOMUtils;
-import org.chromium.content.browser.test.util.JavaScriptUtils;
 import org.chromium.content_public.browser.WebContents;
+import org.chromium.content_public.browser.test.ContentJUnit4ClassRunner;
+import org.chromium.content_public.browser.test.util.Criteria;
+import org.chromium.content_public.browser.test.util.CriteriaHelper;
+import org.chromium.content_public.browser.test.util.DOMUtils;
+import org.chromium.content_public.browser.test.util.JavaScriptUtils;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 import org.chromium.ui.base.ime.TextInputType;
 
 import java.util.ArrayList;
@@ -51,10 +51,12 @@ import java.util.concurrent.TimeoutException;
 public class ImeTest {
     @Rule
     public ImeActivityTestRule mRule = new ImeActivityTestRule();
+    @Rule
+    public ExpectedException thrown = ExpectedException.none();
 
     @Before
     public void setUp() throws Exception {
-        mRule.setUp();
+        mRule.setUpForUrl(ImeActivityTestRule.INPUT_FORM_HTML);
     }
 
     @Test
@@ -67,13 +69,12 @@ public class ImeTest {
         mRule.fullyLoadUrl(UrlUtils.getIsolatedTestFileUrl(ImeActivityTestRule.INPUT_FORM_HTML));
         mRule.assertWaitForKeyboardStatus(false);
 
-        DOMUtils.clickNode(mRule.getContentViewCore(), "input_text");
+        DOMUtils.clickNode(mRule.getWebContents(), "input_text");
         mRule.assertWaitForKeyboardStatus(true);
 
         // Hide keyboard when navigating.
         final String code = "document.getElementById(\"link\").click()";
-        JavaScriptUtils.executeJavaScriptAndWaitForResult(
-                mRule.getContentViewCore().getWebContents(), code);
+        JavaScriptUtils.executeJavaScriptAndWaitForResult(mRule.getWebContents(), code);
         mRule.assertWaitForKeyboardStatus(false);
     }
 
@@ -185,7 +186,7 @@ public class ImeTest {
         // There was already one click during test setup; we have to wait out the double-tap
         // timeout or the test will be flaky.
         Thread.sleep(ViewConfiguration.getDoubleTapTimeout());
-        DOMUtils.clickNode(mRule.getContentViewCore(), "textarea2");
+        DOMUtils.clickNode(mRule.getWebContents(), "textarea2");
         mRule.waitAndVerifyUpdateSelection(3, 5, 5, 2, 3);
         // Keyboard app finishes composition. We emulate this in TestInputMethodManagerWrapper.
         mRule.waitAndVerifyUpdateSelection(4, 5, 5, -1, -1);
@@ -428,7 +429,7 @@ public class ImeTest {
         mRule.commitText("hello", 1);
         mRule.waitAndVerifyUpdateSelection(0, 5, 5, -1, -1);
         mRule.restartInput();
-        DOMUtils.clickNode(mRule.getContentViewCore(), "input_text");
+        DOMUtils.clickNode(mRule.getWebContents(), "input_text");
         mRule.assertWaitForKeyboardStatus(true);
 
         Assert.assertEquals(5, mRule.getConnectionFactory().getOutAttrs().initialSelStart);
@@ -547,8 +548,7 @@ public class ImeTest {
                 + "var textarea = document.getElementById('textarea');"
                 + "textarea.focus();"
                 + "})();";
-        JavaScriptUtils.executeJavaScriptAndWaitForResult(
-                mRule.getContentViewCore().getWebContents(), code);
+        JavaScriptUtils.executeJavaScriptAndWaitForResult(mRule.getWebContents(), code);
         mRule.waitAndVerifyUpdateSelection(0, 0, 0, -1, -1);
         mRule.resetUpdateSelectionList();
 
@@ -578,17 +578,17 @@ public class ImeTest {
     @SmallTest
     @Feature({"TextInput"})
     public void testKeyboardNotDismissedAfterCopySelection() throws Exception {
-        mRule.commitText("Sample Text", 1);
+        mRule.commitText("Sample_Text", 1);
         mRule.waitAndVerifyUpdateSelection(0, 11, 11, -1, -1);
 
         // Select 'text' part.
-        DOMUtils.longPressNode(mRule.getContentViewCore(), "input_text");
+        DOMUtils.longPressNode(mRule.getWebContents(), "input_text");
 
         mRule.assertWaitForSelectActionBarStatus(true);
 
         mRule.selectAll();
         mRule.copy();
-        mRule.assertClipboardContents(mRule.getActivity(), "Sample Text");
+        mRule.assertClipboardContents(mRule.getActivity(), "Sample_Text");
         Assert.assertEquals(11, mRule.getInputMethodManagerWrapper().getSelection().end());
         mRule.assertWaitForKeyboardStatus(true);
     }
@@ -597,9 +597,9 @@ public class ImeTest {
     @SmallTest
     @Feature({"TextInput"})
     public void testImeNotDismissedAfterCutSelection() throws Exception {
-        mRule.commitText("Sample Text", 1);
+        mRule.commitText("Sample_Text", 1);
         mRule.waitAndVerifyUpdateSelection(0, 11, 11, -1, -1);
-        DOMUtils.longPressNode(mRule.getContentViewCore(), "input_text");
+        DOMUtils.longPressNode(mRule.getWebContents(), "input_text");
         mRule.assertWaitForSelectActionBarStatus(true);
         mRule.assertWaitForKeyboardStatus(true);
         mRule.cut();
@@ -612,10 +612,10 @@ public class ImeTest {
     @Feature({"TextInput"})
     public void testImeNotShownOnLongPressingEmptyInput() throws Exception {
         DOMUtils.focusNode(mRule.getWebContents(), "input_radio");
-        DOMUtils.longPressNode(mRule.getContentViewCore(), "input_text");
+        DOMUtils.longPressNode(mRule.getWebContents(), "input_text");
         mRule.assertWaitForKeyboardStatus(false);
-        mRule.commitText("Sample Text", 1);
-        DOMUtils.longPressNode(mRule.getContentViewCore(), "input_text");
+        mRule.commitText("Sample_Text", 1);
+        DOMUtils.longPressNode(mRule.getWebContents(), "input_text");
         mRule.assertWaitForKeyboardStatus(true);
     }
 
@@ -623,10 +623,10 @@ public class ImeTest {
     @SmallTest
     @Feature({"TextInput"})
     public void testSelectActionBarShownOnLongPressingInput() throws Exception {
-        DOMUtils.longPressNode(mRule.getContentViewCore(), "input_text");
+        DOMUtils.longPressNode(mRule.getWebContents(), "input_text");
         mRule.assertWaitForSelectActionBarStatus(false);
-        mRule.commitText("Sample Text", 1);
-        DOMUtils.longPressNode(mRule.getContentViewCore(), "input_text");
+        mRule.commitText("Sample_Text", 1);
+        DOMUtils.longPressNode(mRule.getWebContents(), "input_text");
         mRule.assertWaitForSelectActionBarStatus(true);
     }
 
@@ -635,21 +635,21 @@ public class ImeTest {
     @Feature({"TextInput"})
     public void testLongPressInputWhileComposingText() throws Exception {
         mRule.assertWaitForSelectActionBarStatus(false);
-        mRule.setComposingText("Sample Text", 1);
-        mRule.waitAndVerifyUpdateSelection(0, 11, 11, 0, 11);
-        DOMUtils.longPressNode(mRule.getContentViewCore(), "input_text");
+        mRule.setComposingText("SampleTextThatIsVeryLong Test", 1);
+        mRule.waitAndVerifyUpdateSelection(0, 29, 29, 0, 29);
+        DOMUtils.longPressNode(mRule.getWebContents(), "input_text");
 
         mRule.assertWaitForSelectActionBarStatus(true);
 
         // Long press will first change selection region, and then trigger IME app to show up.
         // See RenderFrameImpl::didChangeSelection() and RenderWidget::didHandleGestureEvent().
-        mRule.waitAndVerifyUpdateSelection(1, 7, 11, 0, 11);
+        mRule.waitAndVerifyUpdateSelection(1, 0, 24, 0, 29);
 
         // Now IME app wants to finish composing text because an external selection
         // change has been detected. At least Google Latin IME and Samsung IME
         // behave this way.
         mRule.finishComposingText();
-        mRule.waitAndVerifyUpdateSelection(2, 7, 11, -1, -1);
+        mRule.waitAndVerifyUpdateSelection(2, 0, 24, -1, -1);
     }
 
     @Test
@@ -657,10 +657,10 @@ public class ImeTest {
     @Feature({"TextInput"})
     public void testImeShownWhenLongPressOnAlreadySelectedText() throws Exception {
         mRule.assertWaitForSelectActionBarStatus(false);
-        mRule.commitText("Sample Text", 1);
+        mRule.commitText("Sample_Text", 1);
 
         int showCount = mRule.getInputMethodManagerWrapper().getShowSoftInputCounter();
-        DOMUtils.longPressNode(mRule.getContentViewCore(), "input_text");
+        DOMUtils.longPressNode(mRule.getWebContents(), "input_text");
         mRule.assertWaitForSelectActionBarStatus(true);
         Assert.assertEquals(
                 showCount + 1, mRule.getInputMethodManagerWrapper().getShowSoftInputCounter());
@@ -668,7 +668,7 @@ public class ImeTest {
         // Now long press again. Selection region remains the same, but the logic
         // should trigger IME to show up. Note that Android does not provide show /
         // hide status of IME, so we will just check whether showIme() has been triggered.
-        DOMUtils.longPressNode(mRule.getContentViewCore(), "input_text");
+        DOMUtils.longPressNode(mRule.getWebContents(), "input_text");
         final int newCount = showCount + 2;
         CriteriaHelper.pollUiThread(Criteria.equals(newCount, new Callable<Integer>() {
             @Override
@@ -678,36 +678,9 @@ public class ImeTest {
         }));
     }
 
-    private void attachPhysicalKeyboard() {
-        Configuration hardKeyboardConfig = new Configuration(
-                mRule.getContentViewCore().getContext().getResources().getConfiguration());
-        hardKeyboardConfig.keyboard = Configuration.KEYBOARD_QWERTY;
-        hardKeyboardConfig.keyboardHidden = Configuration.KEYBOARDHIDDEN_YES;
-        hardKeyboardConfig.hardKeyboardHidden = Configuration.HARDKEYBOARDHIDDEN_NO;
-        onConfigurationChanged(hardKeyboardConfig);
-    }
-
-    private void detachPhysicalKeyboard() {
-        Configuration softKeyboardConfig = new Configuration(
-                mRule.getContentViewCore().getContext().getResources().getConfiguration());
-        softKeyboardConfig.keyboard = Configuration.KEYBOARD_NOKEYS;
-        softKeyboardConfig.keyboardHidden = Configuration.KEYBOARDHIDDEN_NO;
-        softKeyboardConfig.hardKeyboardHidden = Configuration.HARDKEYBOARDHIDDEN_YES;
-        onConfigurationChanged(softKeyboardConfig);
-    }
-
-    private void onConfigurationChanged(final Configuration config) {
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                mRule.getContentViewCore().onConfigurationChanged(config);
-            }
-        });
-    }
-
     private void reloadPage() throws Throwable {
         // Reload the page, then focus will be lost and keyboard should be hidden.
-        mRule.fullyLoadUrl(mRule.getContentViewCore().getWebContents().getLastCommittedUrl());
+        mRule.fullyLoadUrl(mRule.getWebContents().getLastCommittedUrl());
     }
 
     @Test
@@ -715,12 +688,12 @@ public class ImeTest {
     @Feature({"TextInput"})
     @SuppressWarnings("TryFailThrowable") // TODO(tedchoc): Remove after fixing timeout.
     public void testPhysicalKeyboard_AttachDetach() throws Throwable {
-        attachPhysicalKeyboard();
+        mRule.attachPhysicalKeyboard();
         // We still call showSoftKeyboard, which will be ignored by physical keyboard.
         mRule.waitForKeyboardStates(1, 0, 1, new Integer[] {TextInputType.TEXT});
         mRule.setComposingText("a", 1);
         mRule.waitForKeyboardStates(1, 0, 1, new Integer[] {TextInputType.TEXT});
-        detachPhysicalKeyboard();
+        mRule.detachPhysicalKeyboard();
         mRule.assertWaitForKeyboardStatus(true);
         // Now we really show soft keyboard. We also call mRule.restartInput when configuration
         // changes.
@@ -733,31 +706,27 @@ public class ImeTest {
         // because render widget gets restarted. But the end result should be the same.
         mRule.assertWaitForKeyboardStatus(false);
 
-        detachPhysicalKeyboard();
+        mRule.detachPhysicalKeyboard();
 
-        try {
-            // We should not show soft keyboard here because focus has been lost.
-            CriteriaHelper.pollUiThread(new Criteria() {
-                @Override
-                public boolean isSatisfied() {
-                    return mRule.getInputMethodManagerWrapper().isShowWithoutHideOutstanding();
-                }
-            });
-            Assert.fail("Keyboard incorrectly showing");
-        } catch (AssertionError e) {
-            // TODO(tedchoc): This is horrible and should never timeout to determine success.
-        }
+        // We should not show soft keyboard here because focus has been lost.
+        thrown.expect(AssertionError.class);
+        CriteriaHelper.pollUiThread(new Criteria() {
+            @Override
+            public boolean isSatisfied() {
+                return mRule.getInputMethodManagerWrapper().isShowWithoutHideOutstanding();
+            }
+        });
     }
 
     @Test
     @SmallTest
     @Feature({"TextInput"})
     public void testSelectActionBarClearedOnTappingInput() throws Exception {
-        mRule.commitText("Sample Text", 1);
-        DOMUtils.longPressNode(mRule.getContentViewCore(), "input_text");
+        mRule.commitText("Sample_Text", 1);
+        DOMUtils.longPressNode(mRule.getWebContents(), "input_text");
         mRule.assertWaitForKeyboardStatus(true);
         mRule.assertWaitForSelectActionBarStatus(true);
-        DOMUtils.clickNode(mRule.getContentViewCore(), "input_text");
+        DOMUtils.clickNode(mRule.getWebContents(), "input_text");
         mRule.assertWaitForSelectActionBarStatus(false);
     }
 
@@ -765,18 +734,18 @@ public class ImeTest {
     @SmallTest
     @Feature({"TextInput"})
     public void testSelectActionBarClearedOnTappingOutsideInput() throws Exception {
-        mRule.commitText("Sample Text", 1);
-        DOMUtils.longPressNode(mRule.getContentViewCore(), "input_text");
+        mRule.commitText("Sample_Text", 1);
+        DOMUtils.longPressNode(mRule.getWebContents(), "input_text");
         mRule.assertWaitForKeyboardStatus(true);
         mRule.assertWaitForSelectActionBarStatus(true);
-        DOMUtils.clickNode(mRule.getContentViewCore(), "plain_text");
+        DOMUtils.clickNode(mRule.getWebContents(), "plain_text");
         mRule.assertWaitForKeyboardStatus(false);
         mRule.assertWaitForSelectActionBarStatus(false);
 
-        DOMUtils.longPressNode(mRule.getContentViewCore(), "input_text");
+        DOMUtils.longPressNode(mRule.getWebContents(), "input_text");
         mRule.assertWaitForKeyboardStatus(true);
         mRule.assertWaitForSelectActionBarStatus(true);
-        DOMUtils.clickNode(mRule.getContentViewCore(), "input_radio");
+        DOMUtils.clickNode(mRule.getWebContents(), "input_radio");
         mRule.assertWaitForKeyboardStatus(false);
         mRule.assertWaitForSelectActionBarStatus(false);
     }
@@ -786,9 +755,9 @@ public class ImeTest {
     @Feature({"TextInput"})
     public void testImeNotShownOnLongPressingDifferentEmptyInputs() throws Exception {
         DOMUtils.focusNode(mRule.getWebContents(), "input_radio");
-        DOMUtils.longPressNode(mRule.getContentViewCore(), "input_text");
+        DOMUtils.longPressNode(mRule.getWebContents(), "input_text");
         mRule.assertWaitForKeyboardStatus(false);
-        DOMUtils.longPressNode(mRule.getContentViewCore(), "textarea");
+        DOMUtils.longPressNode(mRule.getWebContents(), "textarea");
         mRule.assertWaitForKeyboardStatus(false);
     }
 
@@ -799,21 +768,21 @@ public class ImeTest {
         DOMUtils.focusNode(mRule.getWebContents(), "input_text");
         mRule.assertWaitForKeyboardStatus(true);
 
-        mRule.commitText("Sample Text", 1);
+        mRule.commitText("Sample_Text", 1);
         // We should wait to avoid race condition.
         mRule.waitAndVerifyUpdateSelection(0, 11, 11, -1, -1);
 
         DOMUtils.focusNode(mRule.getWebContents(), "textarea");
         mRule.waitAndVerifyUpdateSelection(1, 0, 0, -1, -1);
 
-        mRule.commitText("Sample Text", 1);
+        mRule.commitText("Sample_Text", 1);
         mRule.waitAndVerifyUpdateSelection(2, 11, 11, -1, -1);
 
-        DOMUtils.longPressNode(mRule.getContentViewCore(), "input_text");
+        DOMUtils.longPressNode(mRule.getWebContents(), "input_text");
         mRule.assertWaitForKeyboardStatus(true);
         mRule.assertWaitForSelectActionBarStatus(true);
 
-        DOMUtils.longPressNode(mRule.getContentViewCore(), "textarea");
+        DOMUtils.longPressNode(mRule.getWebContents(), "textarea");
         mRule.assertWaitForKeyboardStatus(true);
     }
 
@@ -837,14 +806,11 @@ public class ImeTest {
     @SmallTest
     @Feature({"TextInput"})
     public void testImePaste() throws Exception {
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                ClipboardManager clipboardManager =
-                        (ClipboardManager) mRule.getActivity().getSystemService(
-                                Context.CLIPBOARD_SERVICE);
-                clipboardManager.setPrimaryClip(ClipData.newPlainText("blarg", "blarg"));
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            ClipboardManager clipboardManager =
+                    (ClipboardManager) mRule.getActivity().getSystemService(
+                            Context.CLIPBOARD_SERVICE);
+            clipboardManager.setPrimaryClip(ClipData.newPlainText("blarg", "blarg"));
         });
 
         mRule.paste();
@@ -883,8 +849,8 @@ public class ImeTest {
     @Test
     @SmallTest
     @Feature({"TextInput", "Main"})
-    public void testShowImeIfNeeded() throws Throwable {
-        // showImeIfNeeded() is now implicitly called by the updated focus
+    public void testShowVirtualKeyboardIfEnabled() throws Throwable {
+        // ShowVirtualKeyboardIfEnabled() is now implicitly called by the updated focus
         // heuristic so no need to call explicitly. http://crbug.com/371927
         DOMUtils.focusNode(mRule.getWebContents(), "input_radio");
         mRule.assertWaitForKeyboardStatus(false);
@@ -933,9 +899,9 @@ public class ImeTest {
         mRule.setComposingText("h", 1);
         Assert.assertEquals("h", mRule.getTextBeforeCursor(9, 0));
 
-        // O
-        mRule.setComposingText("ho", 1);
-        Assert.assertEquals("ho", mRule.getTextBeforeCursor(9, 0));
+        // A
+        mRule.setComposingText("ha", 1);
+        Assert.assertEquals("ha", mRule.getTextBeforeCursor(9, 0));
 
         mRule.setComposingText("h", 1);
         mRule.setComposingRegion(0, 1);
@@ -1029,9 +995,9 @@ public class ImeTest {
         mRule.commitText("h", 1);
         Assert.assertEquals("h", mRule.getTextBeforeCursor(9, 0));
 
-        // O
-        mRule.commitText("o", 1);
-        Assert.assertEquals("ho", mRule.getTextBeforeCursor(9, 0));
+        // A
+        mRule.commitText("a", 1);
+        Assert.assertEquals("ha", mRule.getTextBeforeCursor(9, 0));
 
         // DEL, sent via mRule.dispatchKeyEvent like it is in Android WebView or a physical
         // keyboard.
@@ -1052,9 +1018,9 @@ public class ImeTest {
         mRule.commitText("h", 1);
         Assert.assertEquals("h", mRule.getTextBeforeCursor(9, 0));
 
-        // O
-        mRule.commitText("o", 1);
-        Assert.assertEquals("ho", mRule.getTextBeforeCursor(9, 0));
+        // A
+        mRule.commitText("a", 1);
+        Assert.assertEquals("ha", mRule.getTextBeforeCursor(9, 0));
 
         // Multiple keydowns should each delete one character (this is for physical keyboard
         // key-repeat).
@@ -1329,7 +1295,7 @@ public class ImeTest {
         mRule.waitAndVerifyUpdateSelection(2, 0, 0, -1, -1);
         mRule.assertTextsAroundCursor("", null, "");
 
-        DOMUtils.longPressNode(mRule.getContentViewCore(), "input_text");
+        DOMUtils.longPressNode(mRule.getWebContents(), "input_text");
         CriteriaHelper.pollUiThread(new Criteria() {
             @Override
             public boolean isSatisfied() {
@@ -1352,10 +1318,10 @@ public class ImeTest {
     @SmallTest
     @Feature({"TextInput"})
     public void testSelectionClearedOnKeyEvent() throws Throwable {
-        mRule.commitText("Sample Text", 1);
+        mRule.commitText("Sample_Text", 1);
         mRule.waitAndVerifyUpdateSelection(0, 11, 11, -1, -1);
 
-        DOMUtils.longPressNode(mRule.getContentViewCore(), "input_text");
+        DOMUtils.longPressNode(mRule.getWebContents(), "input_text");
         mRule.assertWaitForSelectActionBarStatus(true);
 
         mRule.setComposingText("h", 1);
@@ -1367,7 +1333,7 @@ public class ImeTest {
     @SmallTest
     @Feature({"TextInput"})
     public void testTextHandlesPreservedWithDpadNavigation() throws Throwable {
-        DOMUtils.longPressNode(mRule.getContentViewCore(), "plain_text");
+        DOMUtils.longPressNode(mRule.getWebContents(), "plain_text");
         mRule.assertWaitForSelectActionBarStatus(true);
         Assert.assertTrue(mRule.getSelectionPopupController().hasSelection());
 
@@ -1410,10 +1376,9 @@ public class ImeTest {
 
         mRule.setComposingText("a", 1);
         mRule.waitAndVerifyUpdateSelection(0, 1, 1, 0, 1);
-        // TODO(changwan): reduce the number of selection changes.
         mRule.waitForEventLogs(
                 "keydown(229),compositionstart(),compositionupdate(a),input(a),keyup(229),"
-                + "selectionchange,selectionchange");
+                + "selectionchange");
         mRule.clearEventLogs();
 
         mRule.finishComposingText();
@@ -1427,9 +1392,8 @@ public class ImeTest {
     public void testInputTextEvents_ComposingText() throws Throwable {
         mRule.setComposingText("a", 1);
         mRule.waitAndVerifyUpdateSelection(0, 1, 1, 0, 1);
-        // TODO(changwan): reduce the number of selection changes.
         mRule.waitForEventLogs("keydown(229),compositionstart(),compositionupdate(a),"
-                + "input(a),keyup(229),selectionchange,selectionchange");
+                + "input(a),keyup(229),selectionchange");
         mRule.clearEventLogs();
 
         mRule.finishComposingText();
@@ -1582,8 +1546,7 @@ public class ImeTest {
                 + "var editor = document.getElementById('input_text');"
                 + "editor.addEventListener('keyup', function(e) { alert('keyup') });"
                 + "})();";
-        JavaScriptUtils.executeJavaScriptAndWaitForResult(
-                mRule.getContentViewCore().getWebContents(), code);
+        JavaScriptUtils.executeJavaScriptAndWaitForResult(mRule.getWebContents(), code);
         mRule.setComposingText("ab", 1);
         mRule.finishComposingText();
         Assert.assertEquals("ab", mRule.getTextBeforeCursor(10, 0));
@@ -1635,16 +1598,13 @@ public class ImeTest {
     @Feature({"TextInput"})
     public void testUiThreadAccess() throws Exception {
         final ChromiumBaseInputConnection connection = mRule.getConnection();
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                // We allow UI thread access for most functions, except for
-                // beginBatchEdit(), endBatchEdit(), and get* methods().
-                Assert.assertTrue(connection.commitText("a", 1));
-                Assert.assertTrue(connection.setComposingText("b", 1));
-                Assert.assertTrue(connection.setComposingText("bc", 1));
-                Assert.assertTrue(connection.finishComposingText());
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            // We allow UI thread access for most functions, except for
+            // beginBatchEdit(), endBatchEdit(), and get* methods().
+            Assert.assertTrue(connection.commitText("a", 1));
+            Assert.assertTrue(connection.setComposingText("b", 1));
+            Assert.assertTrue(connection.setComposingText("bc", 1));
+            Assert.assertTrue(connection.finishComposingText());
         });
         Assert.assertEquals("abc", mRule.runBlockingOnImeThread(new Callable<CharSequence>() {
             @Override
@@ -1660,7 +1620,7 @@ public class ImeTest {
     public void testBackgroundAndUnderlineSpans() throws Throwable {
         mRule.fullyLoadUrl("data:text/html, <div contenteditable id=\"div\" />");
 
-        WebContents webContents = mRule.getContentViewCore().getWebContents();
+        WebContents webContents = mRule.getWebContents();
         DOMUtils.focusNode(webContents, "div");
 
         SpannableString textToCommit = new SpannableString("hello world");
@@ -1706,14 +1666,14 @@ public class ImeTest {
                                         + "  document.getElementById('div').firstChild, "
                                         + "  'composition', 1)")));
 
-        Assert.assertEquals(0x0000000L,
+        Assert.assertEquals(0x00000000L,
                 (long) Double.parseDouble(
                         JavaScriptUtils.executeJavaScriptAndWaitForResult(webContents,
                                 "internals.markerUnderlineColorForNode("
                                         + "  document.getElementById('div').firstChild, "
                                         + "  'composition', 0)")));
 
-        Assert.assertEquals(0xFF000000L,
+        Assert.assertEquals(0x00000000L,
                 (long) Double.parseDouble(
                         JavaScriptUtils.executeJavaScriptAndWaitForResult(webContents,
                                 "internals.markerUnderlineColorForNode("

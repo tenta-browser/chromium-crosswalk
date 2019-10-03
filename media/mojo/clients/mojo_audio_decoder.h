@@ -32,17 +32,24 @@ class MojoAudioDecoder : public AudioDecoder, public mojom::AudioDecoderClient {
 
   // AudioDecoder implementation.
   std::string GetDisplayName() const final;
+  bool IsPlatformDecoder() const final;
   void Initialize(const AudioDecoderConfig& config,
                   CdmContext* cdm_context,
-                  const InitCB& init_cb,
-                  const OutputCB& output_cb) final;
-  void Decode(const scoped_refptr<DecoderBuffer>& buffer,
+                  InitCB init_cb,
+                  const OutputCB& output_cb,
+                  const WaitingCB& waiting_cb) final;
+  void Decode(scoped_refptr<DecoderBuffer> buffer,
               const DecodeCB& decode_cb) final;
-  void Reset(const base::Closure& closure) final;
+  void Reset(base::OnceClosure closure) final;
   bool NeedsBitstreamConversion() const final;
 
   // AudioDecoderClient implementation.
   void OnBufferDecoded(mojom::AudioBufferPtr buffer) final;
+  void OnWaiting(WaitingReason reason) final;
+
+  void set_writer_capacity_for_testing(uint32_t capacity) {
+    writer_capacity_ = capacity;
+  }
 
   void set_writer_capacity_for_testing(uint32_t capacity) {
     writer_capacity_ = capacity;
@@ -80,13 +87,13 @@ class MojoAudioDecoder : public AudioDecoder, public mojom::AudioDecoderClient {
   // Binding for AudioDecoderClient, bound to the |task_runner_|.
   mojo::AssociatedBinding<AudioDecoderClient> client_binding_;
 
-  // We call the following callbacks to pass the information to the pipeline.
-  // |output_cb_| is permanent while other three are called only once,
-  // |decode_cb_| and |reset_cb_| are replaced by every by Decode() and Reset().
   InitCB init_cb_;
   OutputCB output_cb_;
+  WaitingCB waiting_cb_;
+
+  // |decode_cb_| and |reset_cb_| are replaced by every by Decode() and Reset().
   DecodeCB decode_cb_;
-  base::Closure reset_cb_;
+  base::OnceClosure reset_cb_;
 
   // Flag telling whether this decoder requires bitstream conversion.
   // Passed from |remote_decoder_| as a result of its initialization.

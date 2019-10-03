@@ -14,6 +14,8 @@
 #include "base/callback_forward.h"
 #include "base/memory/ref_counted.h"
 #include "base/supports_user_data.h"
+#include "build/build_config.h"
+#include "net/base/ip_endpoint.h"
 #include "net/base/net_export.h"
 #include "net/traffic_annotation/network_traffic_annotation.h"
 #include "net/url_request/url_request.h"
@@ -32,13 +34,17 @@ class Origin;
 }
 
 namespace net {
-class HostPortPair;
 class HttpResponseHeaders;
 class URLFetcherDelegate;
 class URLFetcherResponseWriter;
 class URLRequestContextGetter;
 class URLRequestStatus;
 
+// NOTE:  This class should not be used by content embedders, as it requires an
+// in-process network stack. Content embedders should use
+// network::SimpleURLLoader instead, which works with both in-process and
+// out-of-process network stacks.
+//
 // To use this class, create an instance with the desired URL and a pointer to
 // the object to be notified when the URL has been loaded:
 //   std::unique_ptr<URLFetcher> fetcher =
@@ -104,6 +110,10 @@ class NET_EXPORT URLFetcher {
 
   virtual ~URLFetcher();
 
+  // The unannotated Create() methods are not available on desktop Linux +
+  // Windows. They are available on other platforms, since we only audit network
+  // annotations on Linux & Windows.
+#if (!defined(OS_WIN) && !defined(OS_LINUX)) || defined(OS_CHROMEOS)
   // |url| is the URL to send the request to. It must be valid.
   // |request_type| is the type of request to make.
   // |d| the object that will receive the callback on fetch completion.
@@ -124,6 +134,7 @@ class NET_EXPORT URLFetcher {
       const GURL& url,
       URLFetcher::RequestType request_type,
       URLFetcherDelegate* d);
+#endif
 
   // |url| is the URL to send the request to. It must be valid.
   // |request_type| is the type of request to make.
@@ -214,6 +225,10 @@ class NET_EXPORT URLFetcher {
   // Set one or more load flags as defined in net/base/load_flags.h.  Must be
   // called before the request is started.
   virtual void SetLoadFlags(int load_flags) = 0;
+
+  // Set whether credentials should be included on the request. Must be called
+  // before the request is started.
+  virtual void SetAllowCredentials(bool allow_credentials) = 0;
 
   // Returns the current load flags.
   virtual int GetLoadFlags() const = 0;
@@ -312,17 +327,12 @@ class NET_EXPORT URLFetcher {
   // Retrieve the remote socket address from the request.  Must only
   // be called after the OnURLFetchComplete callback has run and if
   // the request has not failed.
-  virtual HostPortPair GetSocketAddress() const = 0;
+  virtual IPEndPoint GetSocketAddress() const = 0;
 
   // Returns the proxy server that proxied the request. Must only be called
   // after the OnURLFetchComplete callback has run and the request has not
   // failed.
   virtual const ProxyServer& ProxyServerUsed() const = 0;
-
-  // Returns true if the request was delivered through a proxy.  Must only
-  // be called after the OnURLFetchComplete callback has run and the request
-  // has not failed.
-  virtual bool WasFetchedViaProxy() const = 0;
 
   // Returns true if the response body was served from the cache. This includes
   // responses for which revalidation was required.

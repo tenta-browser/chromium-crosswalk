@@ -64,9 +64,27 @@ class CopyOutputScalingPixelTest
   // The scene is drawn, which also causes the copy request to execute. Then,
   // the resulting bitmap is compared against an expected bitmap.
   void RunTest() {
-    constexpr gfx::Size viewport_size = gfx::Size(24, 10);
-    constexpr int x_block = 4;
-    constexpr int y_block = 2;
+    const char* result_format_as_str = "<unknown>";
+    if (result_format_ == CopyOutputResult::Format::RGBA_BITMAP)
+      result_format_as_str = "RGBA_BITMAP";
+    else if (result_format_ == CopyOutputResult::Format::I420_PLANES)
+      result_format_as_str = "I420_PLANES";
+    else
+      NOTIMPLEMENTED();
+    SCOPED_TRACE(testing::Message()
+                 << "scale_from=" << scale_from_.ToString()
+                 << ", scale_to=" << scale_to_.ToString()
+                 << ", result_format=" << result_format_as_str);
+
+    // These need to be large enough to prevent odd-valued coordinates when
+    // testing I420_PLANES requests. The requests would still work with
+    // odd-valued coordinates, but the pixel comparisons at the end of the test
+    // will fail due to off-by-one chroma reconstruction. That behavior is WAI,
+    // though, since clients making CopyOutputRequests should always align to
+    // even-valued coordinates!
+    constexpr gfx::Size viewport_size = gfx::Size(48, 20);
+    constexpr int x_block = 8;
+    constexpr int y_block = 4;
     constexpr SkColor smaller_pass_colors[4] = {SK_ColorRED, SK_ColorGREEN,
                                                 SK_ColorBLUE, SK_ColorYELLOW};
     constexpr SkColor root_pass_color = SK_ColorWHITE;
@@ -108,20 +126,47 @@ class CopyOutputScalingPixelTest
     std::unique_ptr<CopyOutputResult> result;
     {
       base::RunLoop loop;
-      std::unique_ptr<CopyOutputRequest> request(new CopyOutputRequest(
+
+      // Add a dummy copy request to be executed when the RED RenderPass is
+      // drawn (before the root RenderPass). This is a regression test to
+      // confirm GLRenderer state is consistent with the GL context after each
+      // copy request executes, and before the next RenderPass is drawn.
+      // http://crbug.com/792734
+      bool dummy_ran = false;
+      auto request = std::make_unique<CopyOutputRequest>(
           result_format_,
           base::BindOnce(
-              [](std::unique_ptr<CopyOutputResult>* test_result,
-                 const base::Closure& quit_closure,
+              [](bool* dummy_ran, std::unique_ptr<CopyOutputResult> result) {
+                EXPECT_TRUE(!result->IsEmpty());
+                EXPECT_FALSE(*dummy_ran);
+                *dummy_ran = true;
+              },
+              &dummy_ran));
+      // Set a 10X zoom, which should be more than sufficient to disturb the
+      // results of the main copy request (below) if the GL state is not
+      // properly restored.
+      request->SetUniformScaleRatio(1, 10);
+      list.front()->copy_requests.push_back(std::move(request));
+
+      // Add a copy request to the root RenderPass, to capture the results of
+      // drawing all passes for this frame.
+      request = std::make_unique<CopyOutputRequest>(
+          result_format_,
+          base::BindOnce(
+              [](bool* dummy_ran,
+                 std::unique_ptr<CopyOutputResult>* test_result,
+                 const base::RepeatingClosure& quit_closure,
                  std::unique_ptr<CopyOutputResult> result_from_renderer) {
+                EXPECT_TRUE(*dummy_ran);
                 *test_result = std::move(result_from_renderer);
                 quit_closure.Run();
               },
-              &result, loop.QuitClosure())));
+              &dummy_ran, &result, loop.QuitClosure()));
       request->set_result_selection(
           copy_output::ComputeResultRect(copy_rect, scale_from_, scale_to_));
       request->SetScaleRatio(scale_from_, scale_to_);
       list.back()->copy_requests.push_back(std::move(request));
+
       renderer()->DrawFrame(&list, 1.0f, viewport_size);
       loop.Run();
     }
@@ -223,7 +268,7 @@ class CopyOutputScalingPixelTest
                                          kPremul_SkAlphaType));
     const int error_code = libyuv::I420ToARGB(
         y_data.get(), y_stride, u_data.get(), u_stride, v_data.get(), v_stride,
-        static_cast<uint8*>(bitmap.getPixels()), bitmap.rowBytes(),
+        static_cast<uint8_t*>(bitmap.getPixels()), bitmap.rowBytes(),
         result_width, result_height);
     CHECK_EQ(0, error_code);
 
@@ -252,14 +297,21 @@ using GLCopyOutputScalingPixelTest = CopyOutputScalingPixelTest<GLRenderer>;
 TEST_P(GLCopyOutputScalingPixelTest, ScaledCopyOfDrawnFrame) {
   RunTest();
 }
-INSTANTIATE_TEST_CASE_P(, GLCopyOutputScalingPixelTest, kParameters);
+INSTANTIATE_TEST_SUITE_P(, GLCopyOutputScalingPixelTest, kParameters);
+
+// TODO(crbug.com/939442): Enable this test for SkiaRenderer.
+using SkiaCopyOutputScalingPixelTest = CopyOutputScalingPixelTest<SkiaRenderer>;
+TEST_P(SkiaCopyOutputScalingPixelTest, DISABLED_ScaledCopyOfDrawnFrame) {
+  RunTest();
+}
+INSTANTIATE_TEST_SUITE_P(, SkiaCopyOutputScalingPixelTest, kParameters);
 
 using SoftwareCopyOutputScalingPixelTest =
     CopyOutputScalingPixelTest<SoftwareRenderer>;
 TEST_P(SoftwareCopyOutputScalingPixelTest, ScaledCopyOfDrawnFrame) {
   RunTest();
 }
-INSTANTIATE_TEST_CASE_P(, SoftwareCopyOutputScalingPixelTest, kParameters);
+INSTANTIATE_TEST_SUITE_P(, SoftwareCopyOutputScalingPixelTest, kParameters);
 
 }  // namespace
 }  // namespace viz

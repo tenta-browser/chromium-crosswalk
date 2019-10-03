@@ -16,9 +16,12 @@ const char kSwitchValueTrue[] = "true";
 const char kSwitchValueFalse[] = "false";
 
 // Server url to upload crash data to.
-// Default is "http://clients2.google.com/cr/report" for prod devices.
-// Default is "http://clients2.google.com/cr/staging_report" for non prod.
+// Default is "https://clients2.google.com/cr/report" for prod devices.
+// Default is "https://clients2.google.com/cr/staging_report" for non prod.
 const char kCrashServerUrl[] = "crash-server-url";
+
+// Switch to disable Crash reporting
+const char kDisableCrashReporter[] = "disable-crash-reporter";
 
 // Enable file accesses. It should not be enabled for most Cast devices.
 const char kEnableLocalFileAccesses[] = "enable-local-file-accesses";
@@ -29,8 +32,8 @@ const char kOverrideMetricsUploadUrl[] = "override-metrics-upload-url";
 // Disable features that require WiFi management.
 const char kNoWifi[] = "no-wifi";
 
-// Allows media playback for hidden WebContents
-const char kAllowHiddenMediaPlayback[] = "allow-hidden-media-playback";
+// Only connect to WLAN interfaces.
+const char kRequireWlan[] = "require-wlan";
 
 // Pass the app id information to the renderer process, to be used for logging.
 // last-launched-app should be the app that just launched and is spawning the
@@ -45,6 +48,37 @@ const char kPreviousApp[] = "previous-app";
 // This flag implies --alsa-check-close-timeout=0.
 const char kAcceptResourceProvider[] = "accept-resource-provider";
 
+// Name of the device the amp mixer should be opened on. If this flag is not
+// specified it will default to the same device as kAlsaVolumeDeviceName.
+const char kAlsaAmpDeviceName[] = "alsa-amp-device-name";
+
+// Name of the simple mixer control element that the ALSA-based media library
+// should use to toggle powersave mode on the system.
+const char kAlsaAmpElementName[] = "alsa-amp-element-name";
+
+// Time in ms to wait before closing the PCM handle when no more mixer inputs
+// remain. Assumed to be 0 if --accept-resource-provider is present.
+const char kAlsaCheckCloseTimeout[] = "alsa-check-close-timeout";
+
+// Flag that enables resampling audio with sample rate below 32kHz up to 48kHz.
+// Should be set to true for internal audio products.
+const char kAlsaEnableUpsampling[] = "alsa-enable-upsampling";
+
+// Optional flag to set a fixed sample rate for the alsa device.
+// Deprecated: Use --audio-output-sample-rate instead.
+const char kAlsaFixedOutputSampleRate[] = "alsa-fixed-output-sample-rate";
+
+// Name of the device the mute mixer should be opened on. If this flag is not
+// specified it will default to the same device as kAlsaVolumeDeviceName.
+const char kAlsaMuteDeviceName[] = "alsa-mute-device-name";
+
+// Name of the simple mixer control element that the ALSA-based media library
+// should use to mute the system.
+const char kAlsaMuteElementName[] = "alsa-mute-element-name";
+
+// Minimum number of available frames for scheduling a transfer.
+const char kAlsaOutputAvailMin[] = "alsa-output-avail-min";
+
 // Size of the ALSA output buffer in frames. This directly sets the latency of
 // the output device. Latency can be calculated by multiplying the sample rate
 // by the output buffer size.
@@ -57,44 +91,39 @@ const char kAlsaOutputPeriodSize[] = "alsa-output-period-size";
 // How many frames need to be in the output buffer before output starts.
 const char kAlsaOutputStartThreshold[] = "alsa-output-start-threshold";
 
-// Minimum number of available frames for scheduling a transfer.
-const char kAlsaOutputAvailMin[] = "alsa-output-avail-min";
-
-// Time in ms to wait before closing the PCM handle when no more mixer inputs
-// remain. Assumed to be 0 if --accept-resource-provider is present.
-const char kAlsaCheckCloseTimeout[] = "alsa-check-close-timeout";
-
-// Flag that enables resampling audio with sample rate below 32kHz up to 48kHz.
-// Should be set to true for internal audio products.
-const char kAlsaEnableUpsampling[] = "alsa-enable-upsampling";
-
-// Optional flag to set a fixed sample rate for the alsa device.
-const char kAlsaFixedOutputSampleRate[] = "alsa-fixed-output-sample-rate";
-
-// Name of the simple mixer control element that the ALSA-based media library
-// should use to control the volume.
-const char kAlsaVolumeElementName[] = "alsa-volume-element-name";
-
 // Name of the device the volume control mixer should be opened on. Will use the
 // same device as kAlsaOutputDevice and fall back to "default" if
 // kAlsaOutputDevice is not supplied.
 const char kAlsaVolumeDeviceName[] = "alsa-volume-device-name";
 
 // Name of the simple mixer control element that the ALSA-based media library
-// should use to mute the system.
-const char kAlsaMuteElementName[] = "alsa-mute-element-name";
-
-// Name of the device the mute mixer should be opened on. If this flag is not
-// specified it will default to the same device as kAlsaVolumeDeviceName.
-const char kAlsaMuteDeviceName[] = "alsa-mute-device-name";
-
-// Calibrated max output volume dBa for voice content at 1 meter, if known.
-const char kMaxOutputVolumeDba1m[] = "max-output-volume-dba1m";
+// should use to control the volume.
+const char kAlsaVolumeElementName[] = "alsa-volume-element-name";
 
 // Number of audio output channels. This will be used to send audio buffer with
 // specific number of channels to ALSA and generate loopback audio. Default
 // value is 2.
 const char kAudioOutputChannels[] = "audio-output-channels";
+
+// Specify fixed sample rate for audio output stream. If this flag is not
+// specified the StreamMixer will choose sample rate based on the sample rate of
+// the media stream.
+const char kAudioOutputSampleRate[] = "audio-output-sample-rate";
+
+// Calibrated max output volume dBa for voice content at 1 meter, if known.
+const char kMaxOutputVolumeDba1m[] = "max-output-volume-dba1m";
+
+// Specify the start threshold frames for audio output when using our mixer.
+// This is mostly used to override the default value to a larger value, for
+// platforms that can't handle the default start threshold without running into
+// audio underruns.
+const char kMixerSourceAudioReadyThresholdMs[] =
+    "mixer-source-audio-ready-threshold-ms";
+
+// Specify the buffer size for audio output when using our mixer. This is mostly
+// used to override the default value to a larger value, for platforms that
+// can't handle an audio buffer so small without running into audio underruns.
+const char kMixerSourceInputQueueMs[] = "mixer-source-input-queue-ms";
 
 // Some platforms typically have very little 'free' memory, but plenty is
 // available in buffers+cached.  For such platforms, configure this amount
@@ -109,12 +138,62 @@ const char kCastInitialScreenWidth[] = "cast-initial-screen-width";
 const char kCastInitialScreenHeight[] = "cast-initial-screen-height";
 const char kGraphicsBufferCount[] = "graphics-buffer-count";
 
+// Overrides the vsync interval used by the GPU process to refresh the display.
+const char kVSyncInterval[] = "vsync-interval";
+
 // When present, desktop cast_shell will create 1080p window (provided display
 // resolution is high enough).  Otherwise, cast_shell defaults to 720p.
 const char kDesktopWindow1080p[] = "desktop-window-1080p";
 
+// When present overrides the screen resolution used by CanDisplayType API,
+// instead of using the values obtained from avsettings.
+const char kForceMediaResolutionHeight[] = "force-media-resolution-height";
+const char kForceMediaResolutionWidth[] = "force-media-resolution-width";
+
 // Enables input event handling by the window manager.
 const char kEnableInput[] = "enable-input";
+
+// Background color used when Chromium hasn't rendered anything yet.
+const char kCastAppBackgroundColor[] = "cast-app-background-color";
+
+// The number of pixels from the very left or right of the screen to consider as
+// a valid origin for the left or right swipe gesture.  Overrides the default
+// value in cast_system_gesture_handler.cc.
+const char kSystemGestureStartWidth[] = "system-gesture-start-width";
+
+// The number of pixels from the very top or bottom of the screen to consider as
+// a valid origin for the top or bottom swipe gesture. Overrides the default
+// value in cast_system_gesture_handler.cc.
+const char kSystemGestureStartHeight[] = "system-gesture-start-height";
+
+// The number of pixels up from the bottom of the screen to consider as a valid
+// origin for a bottom swipe gesture. If set, overrides the value of both the
+// above system-gesture-start-height flag and the default value in
+// cast_system_gesture_handler.cc.
+const char kBottomSystemGestureStartHeight[] = "bottom-gesture-start-height";
+
+// The number of pixels from the start of a left swipe gesture to consider as a
+// 'back' gesture.
+const char kBackGestureHorizontalThreshold[] =
+    "back-gesture-horizontal-threshold";
+
+// Whether to enable detection and dispatch of a 'drag from the top' gesture.
+const char kEnableTopDragGesture[] = "enable-top-drag-gesture";
+
+// Endpoint that the mixer service listens on. On Linux/Android, this is a
+// path for a UNIX domain socket (default is /tmp/mixer-service). On other
+// platforms, this is a TCP port to listen on (on localhost) (default 12854).
+const char kMixerServiceEndpoint[] = "mixer-service-endpoint";
+
+extern const char kCastMemoryPressureCriticalFraction[] =
+    "memory-pressure-critical-fraction";
+extern const char kCastMemoryPressureModerateFraction[] =
+    "memory-pressure-moderate-fraction";
+
+// Rather than use the renderer hosted remotely in the media service, fall back
+// to the default renderer within content_renderer. Does not change the behavior
+// of the media service.
+const char kDisableMojoRenderer[] = "disable-mojo-renderer";
 
 }  // namespace switches
 
@@ -168,6 +247,43 @@ int GetSwitchValueNonNegativeInt(const std::string& switch_name,
     return default_value;
   }
   return value;
+}
+
+double GetSwitchValueDouble(const std::string& switch_name,
+                            const double default_value) {
+  const base::CommandLine* command_line =
+      base::CommandLine::ForCurrentProcess();
+  if (!command_line->HasSwitch(switch_name)) {
+    return default_value;
+  }
+
+  double arg_value;
+  if (!base::StringToDouble(command_line->GetSwitchValueASCII(switch_name),
+                            &arg_value)) {
+    LOG(DFATAL) << "--" << switch_name << " only accepts numbers as arguments";
+    return default_value;
+  }
+  return arg_value;
+}
+
+uint32_t GetSwitchValueColor(const std::string& switch_name,
+                             const uint32_t default_value) {
+  const base::CommandLine* command_line =
+      base::CommandLine::ForCurrentProcess();
+  if (!command_line->HasSwitch(switch_name)) {
+    return default_value;
+  }
+
+  uint32_t arg_value = 0;
+  if (!base::HexStringToUInt(
+          command_line->GetSwitchValueASCII(switch_name).substr(1),
+          &arg_value)) {
+    LOG(ERROR) << "Invalid value for " << switch_name << " ("
+               << command_line->GetSwitchValueASCII(switch_name)
+               << "), using default.";
+    return default_value;
+  }
+  return arg_value;
 }
 
 }  // namespace chromecast

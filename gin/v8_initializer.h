@@ -20,8 +20,7 @@ namespace gin {
 class GIN_EXPORT V8Initializer {
  public:
   // This should be called by IsolateHolder::Initialize().
-  static void Initialize(IsolateHolder::ScriptMode mode,
-                         IsolateHolder::V8ExtrasMode v8_extras_mode);
+  static void Initialize(IsolateHolder::ScriptMode mode);
 
   // Get address and size information for currently loaded snapshot.
   // If no snapshot is loaded, the return values are null for addresses
@@ -33,42 +32,43 @@ class GIN_EXPORT V8Initializer {
                                         const char** snapshot_data_out,
                                         int* snapshot_size_out);
 
-  // Get address and size information for currently loaded V8 context snapshot.
-  // If no snapshot is loaded, the return values are nullptr and 0.
-  static void GetV8ContextSnapshotData(v8::StartupData* snapshot);
-
 #if defined(V8_USE_EXTERNAL_STARTUP_DATA)
+  // Indicates which file to load as a snapshot blob image.
+  enum class V8SnapshotFileType {
+    kDefault,
+
+    // Snapshot augmented with customized contexts, which can be deserialized
+    // using v8::Context::FromSnapshot.
+    kWithAdditionalContext,
+  };
 
   // Load V8 snapshot from default resources, if they are available.
-  static void LoadV8Snapshot();
+  static void LoadV8Snapshot(
+      V8SnapshotFileType snapshot_file_type = V8SnapshotFileType::kDefault);
   // Load V8 natives source from default resources. Contains asserts
   // so that it will not return if natives cannot be loaded.
   static void LoadV8Natives();
-  // Load V8 context snapshot from default resources, if they are available.
-  static void LoadV8ContextSnapshot();
 
-  // Load V8 snapshot from user provided platform file descriptors.
-  // The offset and size arguments, if non-zero, specify the portions
-  // of the files to be loaded. Since the VM can boot with or without
+  // Load V8 snapshot from user provided file.
+  // The region argument, if non-zero, specifies the portions
+  // of the files to be mapped. Since the VM can boot with or without
   // the snapshot, this function does not return a status.
-  static void LoadV8SnapshotFromFD(base::PlatformFile snapshot_fd,
-                                   int64_t snapshot_offset,
-                                   int64_t snapshot_size);
-  // Similar to LoadV8SnapshotFromFD, but for the source of the natives.
+  static void LoadV8SnapshotFromFile(
+      base::File snapshot_file,
+      base::MemoryMappedFile::Region* snapshot_file_region,
+      V8SnapshotFileType snapshot_file_type);
+  // Similar to LoadV8SnapshotFromFile, but for the source of the natives.
   // Without the natives we cannot continue, so this function contains
   // release mode asserts and won't return if it fails.
-  static void LoadV8NativesFromFD(base::PlatformFile natives_fd,
-                                  int64_t natives_offset,
-                                  int64_t natives_size);
-  // Load V8 context snapshot from user provided platform file descriptors.
-  // Other details are same with LoadV8SnapshotFromFD.
-  static void LoadV8ContextSnapshotFromFD(base::PlatformFile snapshot_fd,
-                                          int64_t snapshot_offset,
-                                          int64_t snapshot_size);
+  static void LoadV8NativesFromFile(
+      base::File natives_file,
+      base::MemoryMappedFile::Region* natives_file_region);
 
 #if defined(OS_ANDROID)
   static base::FilePath GetNativesFilePath();
-  static base::FilePath GetSnapshotFilePath(bool abi_32_bit);
+  static base::FilePath GetSnapshotFilePath(
+      bool abi_32_bit,
+      V8SnapshotFileType snapshot_file_type);
 #endif
 
 #endif  // V8_USE_EXTERNAL_STARTUP_DATA

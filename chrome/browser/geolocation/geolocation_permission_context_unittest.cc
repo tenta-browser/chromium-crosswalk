@@ -21,7 +21,8 @@
 #include "base/run_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/synchronization/waitable_event.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
+#include "base/test/scoped_feature_list.h"
 #include "base/test/simple_test_clock.h"
 #include "base/time/clock.h"
 #include "chrome/browser/chrome_notification_types.h"
@@ -33,6 +34,7 @@
 #include "chrome/browser/permissions/permission_request_id.h"
 #include "chrome/browser/permissions/permission_request_manager.h"
 #include "chrome/browser/ui/permission_bubble/mock_permission_prompt_factory.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/chrome_switches.h"
 #include "chrome/test/base/chrome_render_view_host_test_harness.h"
 #include "chrome/test/base/testing_profile.h"
@@ -50,7 +52,7 @@
 #include "content/public/test/test_renderer_host.h"
 #include "content/public/test/test_utils.h"
 #include "content/public/test/web_contents_tester.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(OS_ANDROID)
@@ -60,7 +62,7 @@
 #include "components/location/android/location_settings_dialog_outcome.h"
 #include "components/prefs/pref_service.h"
 #include "content/public/browser/permission_type.h"
-#include "third_party/WebKit/public/platform/modules/permissions/permission_status.mojom.h"
+#include "third_party/blink/public/mojom/permissions/permission_status.mojom.h"
 #endif
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
@@ -81,9 +83,16 @@ class TestSearchEngineDelegate
     return url::Origin::Create(GURL(kDSETestUrl));
   }
 
-  void SetDSEChangedCallback(const base::Closure& callback) override {}
+  void SetDSEChangedCallback(const base::Closure& callback) override {
+    dse_changed_callback_ = callback;
+  }
+
+  void UpdateDSEOrigin() { dse_changed_callback_.Run(); }
 
   static const char kDSETestUrl[];
+
+ private:
+  base::Closure dse_changed_callback_;
 };
 
 const char TestSearchEngineDelegate::kDSETestUrl[] = "https://www.dsetest.com";
@@ -105,9 +114,6 @@ class GeolocationPermissionContextTests
                                     const PermissionRequestID& id,
                                     const GURL& requesting_frame,
                                     bool user_gesture);
-
-  void CancelGeolocationPermission(content::WebContents* web_contents,
-                                   const PermissionRequestID& id);
 
   void PermissionResponse(const PermissionRequestID& id,
                           ContentSetting content_setting);
@@ -178,13 +184,6 @@ void GeolocationPermissionContextTests::RequestGeolocationPermission(
   content::RunAllTasksUntilIdle();
 }
 
-void GeolocationPermissionContextTests::CancelGeolocationPermission(
-    content::WebContents* web_contents,
-    const PermissionRequestID& id) {
-  geolocation_permission_context_->CancelPermissionRequest(web_contents, id);
-  content::RunAllTasksUntilIdle();
-}
-
 void GeolocationPermissionContextTests::PermissionResponse(
     const PermissionRequestID& id,
     ContentSetting content_setting) {
@@ -219,17 +218,18 @@ void GeolocationPermissionContextTests::CheckPermissionMessageSentInternal(
 }
 
 void GeolocationPermissionContextTests::AddNewTab(const GURL& url) {
-  content::WebContents* new_tab = CreateTestWebContents();
-  content::NavigationSimulator::NavigateAndCommitFromBrowser(new_tab, url);
+  std::unique_ptr<content::WebContents> new_tab = CreateTestWebContents();
+  content::NavigationSimulator::NavigateAndCommitFromBrowser(new_tab.get(),
+                                                             url);
 
   // Set up required helpers, and make this be as "tabby" as the code requires.
 #if BUILDFLAG(ENABLE_EXTENSIONS)
-  extensions::SetViewType(new_tab, extensions::VIEW_TYPE_TAB_CONTENTS);
+  extensions::SetViewType(new_tab.get(), extensions::VIEW_TYPE_TAB_CONTENTS);
 #endif
 
-  SetupRequestManager(new_tab);
+  SetupRequestManager(new_tab.get());
 
-  extra_tabs_.push_back(base::WrapUnique(new_tab));
+  extra_tabs_.push_back(std::move(new_tab));
 }
 
 void GeolocationPermissionContextTests::CheckTabContentsState(
@@ -241,8 +241,7 @@ void GeolocationPermissionContextTests::CheckTabContentsState(
       content_settings->geolocation_usages_state().state_map();
   EXPECT_EQ(1U, state_map.count(requesting_frame.GetOrigin()));
   EXPECT_EQ(0U, state_map.count(requesting_frame));
-  ContentSettingsUsagesState::StateMap::const_iterator settings =
-      state_map.find(requesting_frame.GetOrigin());
+  auto settings = state_map.find(requesting_frame.GetOrigin());
   ASSERT_FALSE(settings == state_map.end())
       << "geolocation state not found " << requesting_frame;
   EXPECT_EQ(expected_content_setting, settings->second);
@@ -289,7 +288,7 @@ void GeolocationPermissionContextTests::SetupRequestManager(
 
   // Create a MockPermissionPromptFactory for the PermissionRequestManager.
   mock_permission_prompt_factories_.push_back(
-      base::MakeUnique<MockPermissionPromptFactory>(
+      std::make_unique<MockPermissionPromptFactory>(
           permission_request_manager));
 }
 
@@ -823,41 +822,20 @@ TEST_F(GeolocationPermissionContextTests, LSDBackOffAcceptLSDResetsBackOff) {
   EXPECT_TRUE(RequestPermissionIsLSDShown(requesting_frame));
 }
 
-TEST_F(GeolocationPermissionContextTests, CancelWithLSDOpen) {
-  GURL requesting_frame("https://www.example.com/geolocation");
-  NavigateAndCommit(requesting_frame);
-  RequestManagerDocumentLoadCompleted();
-  MockLocationSettings::SetLocationStatus(true /* android */,
-                                          false /* system */);
-  MockLocationSettings::SetLocationSettingsDialogStatus(true /* enabled */,
-                                                        GRANTED);
-  MockLocationSettings::SetAsyncLocationSettingsDialog();
-  EXPECT_FALSE(HasActivePrompt());
-  RequestGeolocationPermission(web_contents(), RequestID(0), requesting_frame,
-                               true);
-  ASSERT_TRUE(HasActivePrompt());
-  AcceptPrompt();
-
-  EXPECT_TRUE(MockLocationSettings::HasShownLocationSettingsDialog());
-
-  CancelGeolocationPermission(web_contents(), RequestID(0));
-  ASSERT_TRUE(responses_.empty());
-
-  MockLocationSettings::ResolveAsyncLocationSettingsDialog();
-  ASSERT_TRUE(responses_.empty());
-}
-
 #endif
 
 TEST_F(GeolocationPermissionContextTests, QueuedPermission) {
+  // With permission delegation enabled, there can't be multiple permission
+  // requests on the same page. This test can be deleted once the feature is
+  // enabled by default.
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndDisableFeature(features::kPermissionDelegation);
   GURL requesting_frame_0("https://www.example.com/geolocation");
   GURL requesting_frame_1("https://www.example-2.com/geolocation");
-  EXPECT_EQ(
-      CONTENT_SETTING_ASK,
-      GetGeolocationContentSetting(requesting_frame_0, requesting_frame_1));
-  EXPECT_EQ(
-      CONTENT_SETTING_ASK,
-      GetGeolocationContentSetting(requesting_frame_1, requesting_frame_1));
+  EXPECT_EQ(CONTENT_SETTING_ASK, GetGeolocationContentSetting(
+                                     requesting_frame_0, requesting_frame_1));
+  EXPECT_EQ(CONTENT_SETTING_ASK, GetGeolocationContentSetting(
+                                     requesting_frame_1, requesting_frame_1));
 
   NavigateAndCommit(requesting_frame_0);
   RequestManagerDocumentLoadCompleted();
@@ -866,10 +844,10 @@ TEST_F(GeolocationPermissionContextTests, QueuedPermission) {
   EXPECT_FALSE(HasActivePrompt());
 
   // Request permission for two frames.
-  RequestGeolocationPermission(
-      web_contents(), RequestID(0), requesting_frame_0, true);
-  RequestGeolocationPermission(
-      web_contents(), RequestID(1), requesting_frame_1, true);
+  RequestGeolocationPermission(web_contents(), RequestID(0), requesting_frame_0,
+                               true);
+  RequestGeolocationPermission(web_contents(), RequestID(1), requesting_frame_1,
+                               true);
   // Ensure only one prompt is created.
   ASSERT_TRUE(HasActivePrompt());
   base::string16 text_0 = GetPromptText();
@@ -951,24 +929,17 @@ TEST_F(GeolocationPermissionContextTests, DISABLED_PermissionForFileScheme) {
 
 TEST_F(GeolocationPermissionContextTests, CancelGeolocationPermissionRequest) {
   GURL frame_0("https://www.example.com/geolocation");
-  GURL frame_1("https://www.example-2.com/geolocation");
   EXPECT_EQ(
       CONTENT_SETTING_ASK, GetGeolocationContentSetting(frame_0, frame_0));
-  EXPECT_EQ(
-      CONTENT_SETTING_ASK, GetGeolocationContentSetting(frame_1, frame_0));
 
   NavigateAndCommit(frame_0);
   RequestManagerDocumentLoadCompleted();
 
   ASSERT_FALSE(HasActivePrompt());
 
-  // Request permission for two frames.
   RequestGeolocationPermission(
       web_contents(), RequestID(0), frame_0, true);
-  RequestGeolocationPermission(
-      web_contents(), RequestID(1), frame_1, true);
 
-  // Get the first permission request text.
   ASSERT_TRUE(HasActivePrompt());
   base::string16 text_0 = GetPromptText();
   ASSERT_FALSE(text_0.empty());
@@ -976,20 +947,9 @@ TEST_F(GeolocationPermissionContextTests, CancelGeolocationPermissionRequest) {
   // Simulate the frame going away; the request should be removed.
   ClosePrompt();
 
-  // Check that the next pending request is created correctly.
-  base::string16 text_1 = GetPromptText();
-  EXPECT_NE(text_0, text_1);
-
-  // Allow this frame and check that it worked.
-  AcceptPrompt();
-  CheckTabContentsState(frame_1, CONTENT_SETTING_ALLOW);
-  CheckPermissionMessageSent(1, true);
-
-  // Ensure the persisted permissions are ok.
+  // Ensure permission isn't persisted.
   EXPECT_EQ(
       CONTENT_SETTING_ASK, GetGeolocationContentSetting(frame_0, frame_0));
-  EXPECT_EQ(
-      CONTENT_SETTING_ALLOW, GetGeolocationContentSetting(frame_1, frame_0));
 }
 
 TEST_F(GeolocationPermissionContextTests, InvalidURL) {
@@ -1040,6 +1000,11 @@ TEST_F(GeolocationPermissionContextTests, SameOriginMultipleTabs) {
 }
 
 TEST_F(GeolocationPermissionContextTests, QueuedOriginMultipleTabs) {
+  // With permission delegation enabled, there can't be multiple permission
+  // requests on the same page. This test can be deleted once the feature is
+  // enabled by default.
+  base::test::ScopedFeatureList scoped_feature_list;
+  scoped_feature_list.InitAndDisableFeature(features::kPermissionDelegation);
   GURL url_a("https://www.example.com/geolocation");
   GURL url_b("https://www.example-2.com/geolocation");
   NavigateAndCommit(url_a);  // Tab A0.
@@ -1049,12 +1014,11 @@ TEST_F(GeolocationPermissionContextTests, QueuedOriginMultipleTabs) {
 
   // Request permission in both tabs; the extra tab will have two permission
   // requests from two origins.
-  RequestGeolocationPermission(
-      web_contents(), RequestID(0), url_a, true);
-  RequestGeolocationPermission(
-      extra_tabs_[0].get(), RequestIDForTab(0, 0), url_a, true);
-  RequestGeolocationPermission(
-      extra_tabs_[0].get(), RequestIDForTab(0, 1), url_b, true);
+  RequestGeolocationPermission(web_contents(), RequestID(0), url_a, true);
+  RequestGeolocationPermission(extra_tabs_[0].get(), RequestIDForTab(0, 0),
+                               url_a, true);
+  RequestGeolocationPermission(extra_tabs_[0].get(), RequestIDForTab(0, 1),
+                               url_b, true);
 
   ASSERT_TRUE(HasActivePrompt());
   ASSERT_TRUE(HasActivePrompt(extra_tabs_[0].get()));
@@ -1077,59 +1041,45 @@ TEST_F(GeolocationPermissionContextTests, QueuedOriginMultipleTabs) {
 }
 
 TEST_F(GeolocationPermissionContextTests, TabDestroyed) {
-  GURL requesting_frame_0("https://www.example.com/geolocation");
-  GURL requesting_frame_1("https://www.example-2.com/geolocation");
-  EXPECT_EQ(
-      CONTENT_SETTING_ASK,
-      GetGeolocationContentSetting(requesting_frame_0, requesting_frame_0));
-  EXPECT_EQ(
-      CONTENT_SETTING_ASK,
-      GetGeolocationContentSetting(requesting_frame_1, requesting_frame_0));
+  GURL requesting_frame("https://www.example.com/geolocation");
+  EXPECT_EQ(CONTENT_SETTING_ASK,
+            GetGeolocationContentSetting(requesting_frame, requesting_frame));
 
-  NavigateAndCommit(requesting_frame_0);
+  NavigateAndCommit(requesting_frame);
   RequestManagerDocumentLoadCompleted();
 
   // Request permission for two frames.
-  RequestGeolocationPermission(
-      web_contents(), RequestID(0), requesting_frame_0, false);
-  RequestGeolocationPermission(
-      web_contents(), RequestID(1), requesting_frame_1, false);
+  RequestGeolocationPermission(web_contents(), RequestID(0), requesting_frame,
+                               false);
 
-  // Ensure only one prompt is created.
   ASSERT_TRUE(HasActivePrompt());
-
-  // The content settings should not have changed.
-  EXPECT_EQ(
-      CONTENT_SETTING_ASK,
-      GetGeolocationContentSetting(requesting_frame_0, requesting_frame_0));
-  EXPECT_EQ(
-      CONTENT_SETTING_ASK,
-      GetGeolocationContentSetting(requesting_frame_1, requesting_frame_0));
+  EXPECT_EQ(CONTENT_SETTING_ASK,
+            GetGeolocationContentSetting(requesting_frame, requesting_frame));
 }
 
 #if defined(OS_ANDROID)
 TEST_F(GeolocationPermissionContextTests, SearchGeolocationInIncognito) {
   GURL requesting_frame(TestSearchEngineDelegate::kDSETestUrl);
-  // The DSE Geolocation setting should be used in incognito if it is BLOCK,
-  // but not if it is ALLOW.
-  SearchPermissionsService* geo_service =
+
+  SearchPermissionsService* service =
       SearchPermissionsService::Factory::GetForBrowserContext(profile());
-  geo_service->SetSearchEngineDelegateForTest(
-      base::MakeUnique<TestSearchEngineDelegate>());
+  std::unique_ptr<TestSearchEngineDelegate> delegate =
+      std::make_unique<TestSearchEngineDelegate>();
+  TestSearchEngineDelegate* delegate_ptr = delegate.get();
+  service->SetSearchEngineDelegateForTest(std::move(delegate));
+  delegate_ptr->UpdateDSEOrigin();
 
-  Profile* otr_profile = profile()->GetOffTheRecordProfile();
-
-  // A DSE setting of ALLOW should not flow through to incognito.
-  geo_service->SetDSEGeolocationSetting(true);
-  ASSERT_EQ(CONTENT_SETTING_ASK,
-            PermissionManager::Get(otr_profile)
+  // The DSE should be auto-granted geolocation.
+  ASSERT_EQ(CONTENT_SETTING_ALLOW,
+            PermissionManager::Get(profile())
                 ->GetPermissionStatus(CONTENT_SETTINGS_TYPE_GEOLOCATION,
                                       requesting_frame, requesting_frame)
                 .content_setting);
 
-  // Changing the setting to BLOCK should flow through to incognito.
-  geo_service->SetDSEGeolocationSetting(false);
-  ASSERT_EQ(CONTENT_SETTING_BLOCK,
+  Profile* otr_profile = profile()->GetOffTheRecordProfile();
+
+  // A DSE setting of ALLOW should not flow through to incognito.
+  ASSERT_EQ(CONTENT_SETTING_ASK,
             PermissionManager::Get(otr_profile)
                 ->GetPermissionStatus(CONTENT_SETTINGS_TYPE_GEOLOCATION,
                                       requesting_frame, requesting_frame)

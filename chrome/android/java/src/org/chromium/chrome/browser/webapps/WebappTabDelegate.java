@@ -4,6 +4,8 @@
 package org.chromium.chrome.browser.webapps;
 
 import android.content.Intent;
+import android.content.pm.PackageManager;
+import android.content.pm.ResolveInfo;
 import android.net.Uri;
 import android.os.StrictMode;
 import android.provider.Browser;
@@ -13,15 +15,17 @@ import org.chromium.base.ContextUtils;
 import org.chromium.base.Log;
 import org.chromium.chrome.browser.IntentHandler;
 import org.chromium.chrome.browser.customtabs.CustomTabIntentDataProvider;
+import org.chromium.chrome.browser.customtabs.CustomTabIntentDataProvider.LaunchSourceType;
 import org.chromium.chrome.browser.externalnav.ExternalNavigationDelegateImpl;
 import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.browser.tab.TabIdManager;
 import org.chromium.chrome.browser.tabmodel.AsyncTabParamsManager;
-import org.chromium.chrome.browser.tabmodel.TabModel.TabLaunchType;
+import org.chromium.chrome.browser.tabmodel.TabLaunchType;
 import org.chromium.chrome.browser.tabmodel.document.AsyncTabCreationParams;
 import org.chromium.chrome.browser.tabmodel.document.TabDelegate;
 
 import java.net.URISyntaxException;
+import java.util.List;
 
 /**
  * Asynchronously creates Tabs for navigation originating from an installed PWA.
@@ -31,22 +35,21 @@ import java.net.URISyntaxException;
  */
 public class WebappTabDelegate extends TabDelegate {
     private static final String TAG = "WebappTabDelegate";
-    private @WebappActivity.ActivityType int mActivityType;
     private String mApkPackageName;
+    private @LaunchSourceType int mLaunchSourceType;
 
-    public WebappTabDelegate(
-            boolean incognito, @WebappActivity.ActivityType int activityType, String packageName) {
+    public WebappTabDelegate(boolean incognito, WebappInfo webappInfo) {
         super(incognito);
-        mActivityType = activityType;
-        mApkPackageName = packageName;
+        mApkPackageName = webappInfo.webApkPackageName();
+        mLaunchSourceType =
+                webappInfo.isForWebApk() ? LaunchSourceType.WEBAPK : LaunchSourceType.WEBAPP;
     }
 
     @Override
-    public void createNewTab(AsyncTabCreationParams asyncParams, TabLaunchType type, int parentId) {
+    public void createNewTab(
+            AsyncTabCreationParams asyncParams, @TabLaunchType int type, int parentId) {
         String url = asyncParams.getLoadUrlParams().getUrl();
-        if (maybeStartExternalActivity(url)) {
-            return;
-        }
+        if (maybeStartExternalActivity(url)) return;
 
         int assignedTabId = TabIdManager.getInstance().generateValidId(Tab.INVALID_TAB_ID);
         AsyncTabParamsManager.add(assignedTabId, asyncParams);
@@ -55,7 +58,8 @@ public class WebappTabDelegate extends TabDelegate {
         intent.setData(Uri.parse(url));
         intent.putExtra(CustomTabIntentDataProvider.EXTRA_SEND_TO_EXTERNAL_DEFAULT_HANDLER, true);
         intent.putExtra(CustomTabIntentDataProvider.EXTRA_IS_OPENED_BY_CHROME, true);
-        intent.putExtra(CustomTabIntentDataProvider.EXTRA_BROWSER_LAUNCH_SOURCE, mActivityType);
+        intent.putExtra(CustomTabIntentDataProvider.EXTRA_IS_OPENED_BY_WEBAPK, true);
+        intent.putExtra(CustomTabIntentDataProvider.EXTRA_BROWSER_LAUNCH_SOURCE, mLaunchSourceType);
         intent.putExtra(Browser.EXTRA_APPLICATION_ID, mApkPackageName);
         addAsyncTabExtras(asyncParams, parentId, false /* isChromeUI */, assignedTabId, intent);
 
@@ -74,8 +78,25 @@ public class WebappTabDelegate extends TabDelegate {
         // See http://crbug.com/613977 for more context.
         StrictMode.ThreadPolicy oldPolicy = StrictMode.allowThreadDiskWrites();
         try {
+            List<ResolveInfo> handlers =
+                    ContextUtils.getApplicationContext().getPackageManager().queryIntentActivities(
+                            intent, PackageManager.GET_RESOLVED_FILTER);
+
+            boolean foundSpecializedHandler = false;
+
+            for (String result : ExternalNavigationDelegateImpl.getSpecializedHandlersWithFilter(
+                         handlers, null)) {
+                if (result.equals(mApkPackageName)) {
+                    // Current WebAPK matches and this is a HTTP(s) link. Don't intercept so that we
+                    // can launch a CCT. See http://crbug.com/831806 for more context.
+                    return false;
+                } else {
+                    foundSpecializedHandler = true;
+                }
+            }
+
             // Launch a native app iff there is a specialized handler for a given URL.
-            if (ExternalNavigationDelegateImpl.isPackageSpecializedHandler(null, intent)) {
+            if (foundSpecializedHandler) {
                 intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK);
                 ContextUtils.getApplicationContext().startActivity(intent);
                 return true;

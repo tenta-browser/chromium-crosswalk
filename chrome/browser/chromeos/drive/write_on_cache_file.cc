@@ -5,11 +5,10 @@
 #include "chrome/browser/chromeos/drive/write_on_cache_file.h"
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/callback.h"
-#include "base/task_scheduler/post_task.h"
-#include "base/threading/sequenced_worker_pool.h"
+#include "base/task/post_task.h"
 #include "components/drive/chromeos/file_system_interface.h"
-#include "components/drive/file_system_core_util.h"
 #include "content/public/browser/browser_thread.h"
 
 using content::BrowserThread;
@@ -24,7 +23,7 @@ void RunCloseCallbackAndReplyTask(const base::Closure& close_callback,
                                   FileError error) {
   if (!close_callback.is_null())
     close_callback.Run();
-  DCHECK(!reply.is_null());
+  DCHECK(reply);
   reply.Run(error);
 }
 
@@ -53,7 +52,7 @@ void WriteOnCacheFile(FileSystemInterface* file_system,
                       const std::string& mime_type,
                       const WriteOnCacheFileCallback& callback) {
   WriteOnCacheFileAndReply(file_system, path, mime_type, callback,
-                           base::Bind(&util::EmptyFileOperationCallback));
+                           base::DoNothing());
 }
 
 void WriteOnCacheFileAndReply(FileSystemInterface* file_system,
@@ -63,8 +62,8 @@ void WriteOnCacheFileAndReply(FileSystemInterface* file_system,
                               const FileOperationCallback& reply) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
   DCHECK(file_system);
-  DCHECK(!callback.is_null());
-  DCHECK(!reply.is_null());
+  DCHECK(callback);
+  DCHECK(reply);
 
   file_system->OpenFile(
       path,

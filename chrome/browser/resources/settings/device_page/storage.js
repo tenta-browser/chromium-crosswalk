@@ -43,11 +43,22 @@ Polymer({
       value: false,
     },
 
+    androidEnabled: Boolean,
+
     /** @private */
-    androidEnabled_: {
+    androidRunning_: {
       type: Boolean,
       value: false,
     },
+
+    /** @private */
+    showCrostiniStorage_: {
+      type: Boolean,
+      value: false,
+    },
+
+    /** @private */
+    showCrostini: Boolean,
 
     /** @private */
     isGuest_: {
@@ -67,6 +78,8 @@ Polymer({
     sizeStat_: Object,
   },
 
+  observers: ['handleCrostiniEnabledChanged_(prefs.crostini.enabled.value)'],
+
   /**
    * Timer ID for periodic update.
    * @private {number}
@@ -74,32 +87,35 @@ Polymer({
   updateTimerId_: -1,
 
   /** @override */
-  ready: function() {
-    cr.addWebUIListener(
+  attached: function() {
+    this.addWebUIListener(
         'storage-size-stat-changed', this.handleSizeStatChanged_.bind(this));
-    cr.addWebUIListener(
+    this.addWebUIListener(
         'storage-downloads-size-changed',
         this.handleDownloadsSizeChanged_.bind(this));
-    cr.addWebUIListener(
+    this.addWebUIListener(
         'storage-drive-cache-size-changed',
         this.handleDriveCacheSizeChanged_.bind(this));
-    cr.addWebUIListener(
+    this.addWebUIListener(
         'storage-browsing-data-size-changed',
         this.handleBrowsingDataSizeChanged_.bind(this));
-    cr.addWebUIListener(
+    this.addWebUIListener(
         'storage-android-size-changed',
         this.handleAndroidSizeChanged_.bind(this));
+    this.addWebUIListener(
+        'storage-crostini-size-changed',
+        this.handleCrostiniSizeChanged_.bind(this));
     if (!this.isGuest_) {
-      cr.addWebUIListener(
+      this.addWebUIListener(
           'storage-other-users-size-changed',
           this.handleOtherUsersSizeChanged_.bind(this));
     }
-    cr.addWebUIListener(
+    this.addWebUIListener(
         'storage-drive-enabled-changed',
         this.handleDriveEnabledChanged_.bind(this));
-    cr.addWebUIListener(
-        'storage-android-enabled-changed',
-        this.handleAndroidEnabledChanged_.bind(this));
+    this.addWebUIListener(
+        'storage-android-running-changed',
+        this.handleAndroidRunningChanged_.bind(this));
   },
 
   /**
@@ -107,8 +123,9 @@ Polymer({
    * @protected
    */
   currentRouteChanged: function() {
-    if (settings.getCurrentRoute() == settings.routes.STORAGE)
+    if (settings.getCurrentRoute() == settings.routes.STORAGE) {
       this.onPageShown_();
+    }
   },
 
   /** @private */
@@ -135,8 +152,9 @@ Polymer({
    */
   onDriveCacheTap_: function(e) {
     e.preventDefault();
-    if (this.hasDriveCache_)
+    if (this.hasDriveCache_) {
       this.$.storageDriveCache.open();
+    }
   },
 
   /**
@@ -144,7 +162,9 @@ Polymer({
    * @private
    */
   onBrowsingDataTap_: function() {
-    settings.navigateTo(settings.routes.CLEAR_BROWSER_DATA);
+    settings.navigateTo(
+        settings.routes.CLEAR_BROWSER_DATA,
+        /* dynamicParams */ null, /* removeSearch */ true);
   },
 
   /**
@@ -156,11 +176,31 @@ Polymer({
   },
 
   /**
+   * Handler for tapping the "Linux storage" item.
+   * @private
+   */
+  onCrostiniTap_: function() {
+    settings.navigateTo(
+        settings.routes.CROSTINI_DETAILS, /* dynamicParams */ null,
+        /* removeSearch */ true);
+  },
+
+  /**
    * Handler for tapping the "Other users" item.
    * @private
    */
   onOtherUsersTap_: function() {
-    settings.navigateTo(settings.routes.ACCOUNTS);
+    settings.navigateTo(
+        settings.routes.ACCOUNTS,
+        /* dynamicParams */ null, /* removeSearch */ true);
+  },
+
+  /**
+   * Handler for tapping the "External storage preferences" item.
+   * @private
+   */
+  onExternalStoragePreferencesTap_: function() {
+    settings.navigateTo(settings.routes.EXTERNAL_STORAGE_PREFERENCES);
   },
 
   /**
@@ -179,7 +219,7 @@ Polymer({
    * @private
    */
   handleDownloadsSizeChanged_: function(size) {
-    this.$.downloadsSize.textContent = size;
+    this.$.downloadsSize.subLabel = size;
   },
 
   /**
@@ -201,7 +241,7 @@ Polymer({
    * @private
    */
   handleBrowsingDataSizeChanged_: function(size) {
-    this.$.browsingDataSize.textContent = size;
+    this.$.browsingDataSize.subLabel = size;
   },
 
   /**
@@ -210,8 +250,20 @@ Polymer({
    * @private
    */
   handleAndroidSizeChanged_: function(size) {
-    if (this.androidEnabled_)
-      this.$$('#androidSize').textContent = size;
+    if (this.androidRunning_) {
+      this.$$('#androidSize').subLabel = size;
+    }
+  },
+
+  /**
+   * @param {string} size Formatted string representing the size of Crostini
+   *     storage.
+   * @private
+   */
+  handleCrostiniSizeChanged_: function(size) {
+    if (this.showCrostiniStorage_) {
+      this.$$('#crostiniSize').subLabel = size;
+    }
   },
 
   /**
@@ -219,8 +271,9 @@ Polymer({
    * @private
    */
   handleOtherUsersSizeChanged_: function(size) {
-    if (!this.isGuest_)
-      this.$$('#otherUsersSize').textContent = size;
+    if (!this.isGuest_) {
+      this.$$('#otherUsersSize').subLabel = size;
+    }
   },
 
   /**
@@ -232,11 +285,19 @@ Polymer({
   },
 
   /**
-   * @param {boolean} enabled True if Android Play Store is enabled.
+   * @param {boolean} running True if Android (ARC) is running.
    * @private
    */
-  handleAndroidEnabledChanged_: function(enabled) {
-    this.androidEnabled_ = enabled;
+  handleAndroidRunningChanged_: function(running) {
+    this.androidRunning_ = running;
+  },
+
+  /**
+   * @param {boolean} enabled True if Crostini is enabled.
+   * @private
+   */
+  handleCrostiniEnabledChanged_: function(enabled) {
+    this.showCrostiniStorage_ = enabled && this.showCrostini;
   },
 
   /**

@@ -1,13 +1,18 @@
 include_rules = [
   "-content",
   "+content/public",
+  "+components/discardable_memory/service",
+  "+components/download/public/common",
   "+components/viz/common",
+  "+components/viz/host",
   "+components/viz/service",
-  "+device/geolocation/android/geolocation_jni_registrar.h",
-  "+mojo/android/system/mojo_jni_registrar.h",
-  "+services/network/public/cpp",
-  "+services/resource_coordinator",
+  "+components/viz/test",
+  "+services/audio/public/mojom",
+  "+services/network",
   "+services/service_manager",
+  "+testing/android/native_test/native_browser_test_support.h",
+  "+ui/ozone/public",
+  "+ui/views/test",
   "+v8/include/v8.h",
 ]
 
@@ -17,6 +22,7 @@ specific_include_rules = {
     # Testing utilities can access anything in content/
     "+content",
     "+gin/v8_initializer.h",
+    "+services/network/network_context.h",
     "+third_party/iaccessible2",
     "+ui/base/resource/resource_bundle.h",
   ],

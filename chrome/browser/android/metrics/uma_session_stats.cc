@@ -6,12 +6,17 @@
 
 #include "base/android/jni_array.h"
 #include "base/android/jni_string.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics.h"
 #include "base/strings/string_number_conversions.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "base/time/time.h"
+#include "build/build_config.h"
+#include "chrome/android/chrome_jni_headers/UmaSessionStats_jni.h"
+#include "chrome/browser/android/chrome_feature_list.h"
+#include "chrome/browser/android/metrics/android_profile_session_durations_service.h"
+#include "chrome/browser/android/metrics/android_profile_session_durations_service_factory.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/metrics/chrome_metrics_service_accessor.h"
 #include "chrome/common/chrome_switches.h"
@@ -22,10 +27,9 @@
 #include "components/metrics_services_manager/metrics_services_manager.h"
 #include "components/prefs/pref_service.h"
 #include "components/ukm/ukm_service.h"
-#include "components/variations/metrics_util.h"
+#include "components/variations/hashing.h"
 #include "components/variations/variations_associated_data.h"
 #include "content/public/browser/browser_thread.h"
-#include "jni/UmaSessionStats_jni.h"
 
 using base::android::ConvertJavaStringToUTF8;
 using base::android::JavaParamRef;
@@ -33,6 +37,10 @@ using base::UserMetricsAction;
 
 namespace {
 UmaSessionStats* g_uma_session_stats = NULL;
+
+// Used to keep the state of whether we should consider metric consent enabled.
+// This is used/read only within the ChromeMetricsServiceAccessor methods.
+bool g_metrics_consent_for_testing = false;
 }  // namespace
 
 UmaSessionStats::UmaSessionStats()
@@ -57,6 +65,11 @@ void UmaSessionStats::UmaResumeSession(JNIEnv* env,
         g_browser_process->GetMetricsServicesManager()->GetUkmService();
     if (ukm_service)
       ukm_service->OnAppEnterForeground();
+
+    AndroidProfileSessionDurationsService* psd_service =
+        AndroidProfileSessionDurationsServiceFactory::GetForActiveUserProfile();
+    if (psd_service)
+      psd_service->OnAppEnterForeground(session_start_time_);
   }
   ++active_session_count_;
 }
@@ -72,16 +85,27 @@ void UmaSessionStats::UmaEndSession(JNIEnv* env,
     // Note: This metric is recorded separately on desktop in
     // DesktopSessionDurationTracker::EndSession.
     UMA_HISTOGRAM_LONG_TIMES("Session.TotalDuration", duration);
+    UMA_HISTOGRAM_CUSTOM_TIMES("Session.TotalDurationMax1Day", duration,
+                               base::TimeDelta::FromMilliseconds(1),
+                               base::TimeDelta::FromHours(24), 50);
 
     DCHECK(g_browser_process);
     // Tell the metrics services they were cleanly shutdown.
     metrics::MetricsService* metrics = g_browser_process->metrics_service();
-    if (metrics)
-      metrics->OnAppEnterBackground();
+    if (metrics) {
+      const bool keep_reporting =
+          base::FeatureList::IsEnabled(chrome::android::kUmaBackgroundSessions);
+      metrics->OnAppEnterBackground(keep_reporting);
+    }
     ukm::UkmService* ukm_service =
         g_browser_process->GetMetricsServicesManager()->GetUkmService();
     if (ukm_service)
       ukm_service->OnAppEnterBackground();
+
+    AndroidProfileSessionDurationsService* psd_service =
+        AndroidProfileSessionDurationsServiceFactory::GetForActiveUserProfile();
+    if (psd_service)
+      psd_service->OnAppEnterBackground(duration);
   }
 }
 
@@ -108,7 +132,6 @@ void UmaSessionStats::RegisterSyntheticMultiGroupFieldTrial(
 // the Java side.
 static void JNI_UmaSessionStats_ChangeMetricsReportingConsent(
     JNIEnv*,
-    const JavaParamRef<jclass>&,
     jboolean consent) {
   UpdateMetricsPrefsOnPermissionChange(consent);
 
@@ -117,9 +140,42 @@ static void JNI_UmaSessionStats_ChangeMetricsReportingConsent(
   // will ensure that the consent file contains the ClientID. The ID is passed
   // to the renderer for crash reporting when things go wrong.
   GoogleUpdateSettings::CollectStatsConsentTaskRunner()->PostTask(
-      FROM_HERE, base::Bind(base::IgnoreResult(
-                                GoogleUpdateSettings::SetCollectStatsConsent),
-                            consent));
+      FROM_HERE,
+      base::BindOnce(
+          base::IgnoreResult(GoogleUpdateSettings::SetCollectStatsConsent),
+          consent));
+}
+
+// Initialize the local consent bool variable to false. Used only for testing.
+static void JNI_UmaSessionStats_InitMetricsAndCrashReportingForTesting(
+    JNIEnv*) {
+  DCHECK(g_browser_process);
+
+  g_metrics_consent_for_testing = false;
+  ChromeMetricsServiceAccessor::SetMetricsAndCrashReportingForTesting(
+      &g_metrics_consent_for_testing);
+}
+
+// Clears the boolean consent pointer for ChromeMetricsServiceAccessor to
+// original setting. Used only for testing.
+static void JNI_UmaSessionStats_UnsetMetricsAndCrashReportingForTesting(
+    JNIEnv*) {
+  DCHECK(g_browser_process);
+
+  g_metrics_consent_for_testing = false;
+  ChromeMetricsServiceAccessor::SetMetricsAndCrashReportingForTesting(nullptr);
+}
+
+// Updates the metrics consent bit to |consent|. This is separate from
+// InitMetricsAndCrashReportingForTesting as the Set isn't meant to be used
+// repeatedly. Used only for testing.
+static void JNI_UmaSessionStats_UpdateMetricsAndCrashReportingForTesting(
+    JNIEnv*,
+    jboolean consent) {
+  DCHECK(g_browser_process);
+
+  g_metrics_consent_for_testing = consent;
+  g_browser_process->GetMetricsServicesManager()->UpdateUploadPermissions(true);
 }
 
 // Starts/stops the MetricsService based on existing consent and upload
@@ -137,7 +193,6 @@ static void JNI_UmaSessionStats_ChangeMetricsReportingConsent(
 // ChangeMetricsReportingConsent() should be called first.
 static void JNI_UmaSessionStats_UpdateMetricsServiceState(
     JNIEnv*,
-    const JavaParamRef<jclass>&,
     jboolean may_upload) {
   // This will also apply the consent state, taken from Chrome Local State
   // prefs.
@@ -147,7 +202,6 @@ static void JNI_UmaSessionStats_UpdateMetricsServiceState(
 
 static void JNI_UmaSessionStats_RegisterExternalExperiment(
     JNIEnv* env,
-    const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jstring>& jtrial_name,
     const JavaParamRef<jintArray>& jexperiment_ids) {
   const std::string trial_name_utf8(ConvertJavaStringToUTF8(env, jtrial_name));
@@ -165,9 +219,10 @@ static void JNI_UmaSessionStats_RegisterExternalExperiment(
   group_name_hashes.reserve(experiment_ids.size());
 
   variations::ActiveGroupId active_group;
-  active_group.name = metrics::HashName(trial_name_utf8);
+  active_group.name = variations::HashName(trial_name_utf8);
   for (int experiment_id : experiment_ids) {
-    active_group.group = metrics::HashName(base::IntToString(experiment_id));
+    active_group.group =
+        variations::HashName(base::NumberToString(experiment_id));
     // Since external experiments are not based on Chrome's low entropy source,
     // they are only sent to Google web properties for signed in users to make
     // sure that this couldn't be used to identify a user that's not signed in.
@@ -183,7 +238,6 @@ static void JNI_UmaSessionStats_RegisterExternalExperiment(
 
 static void JNI_UmaSessionStats_RegisterSyntheticFieldTrial(
     JNIEnv* env,
-    const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jstring>& jtrial_name,
     const JavaParamRef<jstring>& jgroup_name) {
   std::string trial_name(ConvertJavaStringToUTF8(env, jtrial_name));
@@ -191,25 +245,8 @@ static void JNI_UmaSessionStats_RegisterSyntheticFieldTrial(
   UmaSessionStats::RegisterSyntheticFieldTrial(trial_name, group_name);
 }
 
-static void JNI_UmaSessionStats_RecordMultiWindowSession(
-    JNIEnv*,
-    const JavaParamRef<jclass>&,
-    jint area_percent,
-    jint instance_count) {
-  UMA_HISTOGRAM_PERCENTAGE("MobileStartup.MobileMultiWindowSession",
-                           area_percent);
-  // Make sure the bucket count is the same as the range.  This currently
-  // expects no more than 10 simultaneous multi window instances.
-  UMA_HISTOGRAM_CUSTOM_COUNTS("MobileStartup.MobileMultiWindowInstances",
-                              instance_count,
-                              1 /* min */,
-                              10 /* max */,
-                              10 /* bucket count */);
-}
-
 static void JNI_UmaSessionStats_RecordTabCountPerLoad(
     JNIEnv*,
-    const JavaParamRef<jclass>&,
     jint num_tabs) {
   // Record how many tabs total are open.
   UMA_HISTOGRAM_CUSTOM_COUNTS("Tabs.TabCountPerLoad", num_tabs, 1, 200, 50);
@@ -217,7 +254,6 @@ static void JNI_UmaSessionStats_RecordTabCountPerLoad(
 
 static void JNI_UmaSessionStats_RecordPageLoaded(
     JNIEnv*,
-    const JavaParamRef<jclass>&,
     jboolean is_desktop_user_agent) {
   // Should be called whenever a page has been loaded.
   base::RecordAction(UserMetricsAction("MobilePageLoaded"));
@@ -226,14 +262,11 @@ static void JNI_UmaSessionStats_RecordPageLoaded(
   }
 }
 
-static void JNI_UmaSessionStats_RecordPageLoadedWithKeyboard(
-    JNIEnv*,
-    const JavaParamRef<jclass>&) {
+static void JNI_UmaSessionStats_RecordPageLoadedWithKeyboard(JNIEnv*) {
   base::RecordAction(UserMetricsAction("MobilePageLoadedWithKeyboard"));
 }
 
-static jlong JNI_UmaSessionStats_Init(JNIEnv* env,
-                                      const JavaParamRef<jclass>& obj) {
+static jlong JNI_UmaSessionStats_Init(JNIEnv* env) {
   // We should have only one UmaSessionStats instance.
   DCHECK(!g_uma_session_stats);
   g_uma_session_stats = new UmaSessionStats();

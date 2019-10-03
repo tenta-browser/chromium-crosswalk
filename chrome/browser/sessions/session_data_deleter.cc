@@ -6,24 +6,30 @@
 #include <stdint.h>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "build/build_config.h"
-#include "chrome/browser/browser_shutdown.h"
+#include "chrome/browser/lifetime/browser_shutdown.h"
 #include "chrome/browser/prefs/session_startup_pref.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/startup/startup_browser_creator.h"
 #include "content/public/browser/browser_context.h"
 #include "content/public/browser/browser_thread.h"
-#include "content/public/browser/dom_storage_context.h"
-#include "content/public/browser/local_storage_usage_info.h"
 #include "content/public/browser/storage_partition.h"
+#include "content/public/browser/storage_usage_info.h"
 #include "net/cookies/cookie_util.h"
-#include "services/network/public/interfaces/cookie_manager.mojom.h"
+#include "services/network/public/mojom/cookie_manager.mojom.h"
 #include "storage/browser/quota/special_storage_policy.h"
 
 namespace {
+
+bool OriginMatcher(const url::Origin& origin,
+                   storage::SpecialStoragePolicy* policy) {
+  return policy->IsStorageSessionOnly(origin.GetURL()) &&
+         !policy->IsStorageProtected(origin.GetURL());
+}
 
 class SessionDataDeleter
     : public base::RefCountedThreadSafe<SessionDataDeleter> {
@@ -36,12 +42,6 @@ class SessionDataDeleter
  private:
   friend class base::RefCountedThreadSafe<SessionDataDeleter>;
   ~SessionDataDeleter();
-
-  // Deletes the local storage described by |usages| for origins which are
-  // session-only.
-  void ClearSessionOnlyLocalStorage(
-      content::StoragePartition* storage_partition,
-      const std::vector<content::LocalStorageUsageInfo>& usages);
 
   // Takes the result of a CookieManager::GetAllCookies() method, and
   // initiates deletion of all cookies that are session only by the
@@ -65,10 +65,16 @@ SessionDataDeleter::SessionDataDeleter(
 
 void SessionDataDeleter::Run(content::StoragePartition* storage_partition) {
   if (storage_policy_.get() && storage_policy_->HasSessionOnlyOrigins()) {
-    storage_partition->GetDOMStorageContext()->GetLocalStorageUsage(
-        base::Bind(&SessionDataDeleter::ClearSessionOnlyLocalStorage,
-                   this,
-                   storage_partition));
+    // Cookies are not origin scoped, so they are handled separately.
+    const uint32_t removal_mask =
+        content::StoragePartition::REMOVE_DATA_MASK_ALL &
+        ~content::StoragePartition::REMOVE_DATA_MASK_COOKIES;
+    storage_partition->ClearData(
+        removal_mask, content::StoragePartition::QUOTA_MANAGED_STORAGE_MASK_ALL,
+        base::BindRepeating(&OriginMatcher),
+        /*cookie_deletion_filter=*/nullptr,
+        /*perform_storage_cleanup=*/false, base::Time(), base::Time::Max(),
+        base::DoNothing());
   }
 
   storage_partition->GetNetworkContext()->GetCookieManager(
@@ -104,40 +110,20 @@ void SessionDataDeleter::Run(content::StoragePartition* storage_partition) {
 
 void SessionDataDeleter::DeleteSessionOnlyOriginCookies(
     const std::vector<net::CanonicalCookie>& cookies) {
-  base::Time yesterday(base::Time::Now() - base::TimeDelta::FromDays(1));
-  for (const auto& cookie : cookies) {
-    GURL url =
-        net::cookie_util::CookieOriginToURL(cookie.Domain(), cookie.IsSecure());
-    if (!storage_policy_->IsStorageSessionOnlyOrBlocked(url))
-      continue;
+  auto delete_cookie_predicate =
+      storage_policy_->CreateDeleteCookieOnExitPredicate();
+  DCHECK(delete_cookie_predicate);
 
-    // Delete a single cookie by setting its expiration time into the past.
-    cookie_manager_->SetCanonicalCookie(
-        net::CanonicalCookie(cookie.Name(), cookie.Value(), cookie.Domain(),
-                             cookie.Path(), cookie.CreationDate(), yesterday,
-                             cookie.LastAccessDate(), cookie.IsSecure(),
-                             cookie.IsHttpOnly(), cookie.SameSite(),
-                             cookie.Priority()),
-        true /* secure_source */, true /* modify_http_only */,
-        // Fire and forget
-        network::mojom::CookieManager::SetCanonicalCookieCallback());
+  for (const auto& cookie : cookies) {
+    if (!delete_cookie_predicate.Run(cookie.Domain(), cookie.IsSecure())) {
+      continue;
+    }
+    // Fire and forget.
+    cookie_manager_->DeleteCanonicalCookie(cookie, base::DoNothing());
   }
 }
 
 SessionDataDeleter::~SessionDataDeleter() {}
-
-void SessionDataDeleter::ClearSessionOnlyLocalStorage(
-    content::StoragePartition* storage_partition,
-    const std::vector<content::LocalStorageUsageInfo>& usages) {
-  DCHECK(storage_policy_.get());
-  DCHECK(storage_policy_->HasSessionOnlyOrigins());
-  for (size_t i = 0; i < usages.size(); ++i) {
-    const content::LocalStorageUsageInfo& usage = usages[i];
-    if (!storage_policy_->IsStorageSessionOnly(usage.origin))
-      continue;
-    storage_partition->GetDOMStorageContext()->DeleteLocalStorage(usage.origin);
-  }
-}
 
 }  // namespace
 

@@ -9,15 +9,18 @@ import android.os.Bundle;
 import org.chromium.base.metrics.RecordHistogram;
 import org.chromium.base.metrics.RecordUserAction;
 import org.chromium.chrome.R;
-import org.chromium.chrome.browser.UrlConstants;
 import org.chromium.chrome.browser.browsing_data.ClearBrowsingDataTab;
 import org.chromium.chrome.browser.preferences.ClearBrowsingDataCheckBoxPreference;
 import org.chromium.chrome.browser.sync.ProfileSyncService;
-import org.chromium.chrome.browser.tabmodel.TabModel;
+import org.chromium.chrome.browser.tabmodel.TabLaunchType;
 import org.chromium.chrome.browser.tabmodel.document.TabDelegate;
+import org.chromium.chrome.browser.util.UrlConstants;
 import org.chromium.components.signin.ChromeSigninController;
 import org.chromium.components.sync.AndroidSyncSettings;
 import org.chromium.components.sync.ModelType;
+
+import java.util.Arrays;
+import java.util.List;
 
 /**
  * A simpler version of {@link ClearBrowsingDataPreferences} with fewer dialog options and more
@@ -29,29 +32,28 @@ public class ClearBrowsingDataPreferencesBasic extends ClearBrowsingDataPreferen
         super.onCreate(savedInstanceState);
 
         ClearBrowsingDataCheckBoxPreference historyCheckbox =
-                (ClearBrowsingDataCheckBoxPreference) findPreference(PREF_HISTORY);
+                (ClearBrowsingDataCheckBoxPreference) findPreference(
+                        getPreferenceKey(DialogOption.CLEAR_HISTORY));
         ClearBrowsingDataCheckBoxPreference cookiesCheckbox =
-                (ClearBrowsingDataCheckBoxPreference) findPreference(PREF_COOKIES);
+                (ClearBrowsingDataCheckBoxPreference) findPreference(
+                        getPreferenceKey(DialogOption.CLEAR_COOKIES_AND_SITE_DATA));
 
         historyCheckbox.setLinkClickDelegate(() -> {
             new TabDelegate(false /* incognito */)
-                    .launchUrl(UrlConstants.MY_ACTIVITY_URL_IN_CBD,
-                            TabModel.TabLaunchType.FROM_CHROME_UI);
+                    .launchUrl(UrlConstants.MY_ACTIVITY_URL_IN_CBD, TabLaunchType.FROM_CHROME_UI);
         });
 
         if (ChromeSigninController.get().isSignedIn()) {
-            if (isHistorySyncEnabled()) {
-                historyCheckbox.setSummary(R.string.clear_browsing_history_summary_synced);
-            } else {
-                historyCheckbox.setSummary(R.string.clear_browsing_history_summary_signed_in);
-            }
+            historyCheckbox.setSummary(isHistorySyncEnabled()
+                            ? R.string.clear_browsing_history_summary_synced
+                            : R.string.clear_browsing_history_summary_signed_in);
             cookiesCheckbox.setSummary(
-                    R.string.clear_cookies_and_site_data_signed_in_summary_basic);
+                    R.string.clear_cookies_and_site_data_summary_basic_signed_in);
         }
     }
 
     private boolean isHistorySyncEnabled() {
-        boolean syncEnabled = AndroidSyncSettings.isSyncEnabled(getActivity());
+        boolean syncEnabled = AndroidSyncSettings.get().isSyncEnabled();
         ProfileSyncService syncService = ProfileSyncService.get();
         return syncEnabled && syncService != null
                 && syncService.getActiveDataTypes().contains(ModelType.HISTORY_DELETE_DIRECTIVES);
@@ -63,9 +65,9 @@ public class ClearBrowsingDataPreferencesBasic extends ClearBrowsingDataPreferen
     }
 
     @Override
-    protected DialogOption[] getDialogOptions() {
-        return new DialogOption[] {DialogOption.CLEAR_HISTORY,
-                DialogOption.CLEAR_COOKIES_AND_SITE_DATA, DialogOption.CLEAR_CACHE};
+    protected List<Integer> getDialogOptions() {
+        return Arrays.asList(DialogOption.CLEAR_HISTORY, DialogOption.CLEAR_COOKIES_AND_SITE_DATA,
+                DialogOption.CLEAR_CACHE);
     }
 
     @Override

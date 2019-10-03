@@ -11,9 +11,9 @@
 #include <vector>
 
 #include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/callback.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
@@ -139,7 +139,7 @@ class LockScreenValueStoreMigratorImplTest : public testing::Test {
 
   std::string GenerateKey(const std::string& password) {
     std::unique_ptr<crypto::SymmetricKey> key =
-        crypto::SymmetricKey::DeriveKeyFromPassword(
+        crypto::SymmetricKey::DeriveKeyFromPasswordUsingPbkdf2(
             crypto::SymmetricKey::AES, password, "salt", 1000, 256);
     if (!key) {
       ADD_FAILURE() << "Failed to create symmetric key";
@@ -271,7 +271,7 @@ class LockScreenValueStoreMigratorImplTest : public testing::Test {
     ListBuilder app_handlers_builder;
     app_handlers_builder.Append(DictionaryBuilder()
                                     .Set("action", "new_note")
-                                    .SetBoolean("enabled_on_lock_screen", true)
+                                    .Set("enabled_on_lock_screen", true)
                                     .Build());
     scoped_refptr<const Extension> extension =
         ExtensionBuilder()
@@ -305,7 +305,7 @@ class LockScreenValueStoreMigratorImplTest : public testing::Test {
 
   void RunTaskRunnerTasks() {
     base::RunLoop run_loop;
-    task_runner_->PostTaskAndReply(FROM_HERE, base::Bind(&base::DoNothing),
+    task_runner_->PostTaskAndReply(FROM_HERE, base::DoNothing(),
                                    run_loop.QuitClosure());
     run_loop.Run();
   }
@@ -319,7 +319,7 @@ class LockScreenValueStoreMigratorImplTest : public testing::Test {
                                             ValueStore::StatusCode code) {
     task_runner_->PostTask(
         FROM_HERE,
-        base::Bind(
+        base::BindOnce(
             &LockScreenValueStoreMigratorImplTest::SetValueStoreReturnCodeImpl,
             base::Unretained(this), storage_type, extension_id, code));
   }

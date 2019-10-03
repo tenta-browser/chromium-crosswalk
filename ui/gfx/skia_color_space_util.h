@@ -13,38 +13,23 @@ namespace gfx {
 
 // Return the parameterized function in |fn|, evaluated at |x|. Note that this
 // will clamp output values to the range [0, 1].
-float COLOR_SPACE_EXPORT SkTransferFnEval(const SkColorSpaceTransferFn& fn,
+float COLOR_SPACE_EXPORT SkTransferFnEval(const skcms_TransferFunction& fn,
                                           float x);
 
 // Return the parameterized function in |fn|, evaluated at |x|. This will not
 // clamp output values.
 float COLOR_SPACE_EXPORT
-SkTransferFnEvalUnclamped(const SkColorSpaceTransferFn& fn, float x);
+SkTransferFnEvalUnclamped(const skcms_TransferFunction& fn, float x);
 
-SkColorSpaceTransferFn COLOR_SPACE_EXPORT
-SkTransferFnInverse(const SkColorSpaceTransferFn& fn);
-
-bool COLOR_SPACE_EXPORT
-SkTransferFnsApproximatelyCancel(const SkColorSpaceTransferFn& a,
-                                 const SkColorSpaceTransferFn& b);
+skcms_TransferFunction COLOR_SPACE_EXPORT
+SkTransferFnInverse(const skcms_TransferFunction& fn);
 
 bool COLOR_SPACE_EXPORT
-SkTransferFnIsApproximatelyIdentity(const SkColorSpaceTransferFn& fn);
+SkTransferFnsApproximatelyCancel(const skcms_TransferFunction& a,
+                                 const skcms_TransferFunction& b);
 
-// Approximates the |n| points in |x| and |t| by the transfer function |fn|.
-// Returns true if the approximation converged.
-bool COLOR_SPACE_EXPORT SkApproximateTransferFn(const float* x,
-                                                const float* t,
-                                                size_t n,
-                                                SkColorSpaceTransferFn* fn);
-
-// Approximates |sk_icc| by the transfer function |fn|. Returns in |max_error|
-// the maximum pointwise of all color channels' transfer functions with |fn|.
-// Returns false if no approximation was possible, or no approximation
-// converged.
-bool COLOR_SPACE_EXPORT SkApproximateTransferFn(sk_sp<SkICC> sk_icc,
-                                                float* max_error,
-                                                SkColorSpaceTransferFn* fn);
+bool COLOR_SPACE_EXPORT
+SkTransferFnIsApproximatelyIdentity(const skcms_TransferFunction& fn);
 
 bool COLOR_SPACE_EXPORT SkMatrixIsApproximatelyIdentity(const SkMatrix44& m);
 

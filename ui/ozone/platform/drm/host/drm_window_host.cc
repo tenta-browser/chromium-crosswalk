@@ -11,11 +11,12 @@
 #include "ui/events/ozone/evdev/event_factory_evdev.h"
 #include "ui/events/ozone/events_ozone.h"
 #include "ui/events/platform/platform_event_source.h"
+#include "ui/ozone/platform/drm/common/drm_overlay_manager.h"
 #include "ui/ozone/platform/drm/host/drm_cursor.h"
 #include "ui/ozone/platform/drm/host/drm_display_host.h"
 #include "ui/ozone/platform/drm/host/drm_display_host_manager.h"
-#include "ui/ozone/platform/drm/host/drm_overlay_manager.h"
 #include "ui/ozone/platform/drm/host/drm_window_host_manager.h"
+#include "ui/ozone/platform/drm/host/gpu_thread_adapter.h"
 #include "ui/platform_window/platform_window_delegate.h"
 
 namespace ui {
@@ -53,10 +54,10 @@ void DrmWindowHost::Initialize() {
   sender_->AddGpuThreadObserver(this);
   PlatformEventSource::GetInstance()->AddPlatformEventDispatcher(this);
   cursor_->OnWindowAdded(widget_, bounds_, GetCursorConfinedBounds());
-  delegate_->OnAcceleratedWidgetAvailable(widget_, 1.f);
+  delegate_->OnAcceleratedWidgetAvailable(widget_);
 }
 
-gfx::AcceleratedWidget DrmWindowHost::GetAcceleratedWidget() {
+gfx::AcceleratedWidget DrmWindowHost::GetAcceleratedWidget() const {
   return widget_;
 }
 
@@ -97,6 +98,10 @@ void DrmWindowHost::ReleaseCapture() {
   window_manager_->UngrabEvents(widget_);
 }
 
+bool DrmWindowHost::HasCapture() const {
+  return widget_ == window_manager_->event_grabber();
+}
+
 void DrmWindowHost::ToggleFullscreen() {
 }
 
@@ -107,6 +112,18 @@ void DrmWindowHost::Minimize() {
 }
 
 void DrmWindowHost::Restore() {
+}
+
+PlatformWindowState DrmWindowHost::GetPlatformWindowState() const {
+  return PlatformWindowState::kUnknown;
+}
+
+void DrmWindowHost::Activate() {
+  NOTIMPLEMENTED_LOG_ONCE();
+}
+
+void DrmWindowHost::Deactivate() {
+  NOTIMPLEMENTED_LOG_ONCE();
 }
 
 void DrmWindowHost::SetCursor(PlatformCursor cursor) {
@@ -125,13 +142,17 @@ void DrmWindowHost::ConfineCursorToBounds(const gfx::Rect& bounds) {
   cursor_->CommitBoundsChange(widget_, bounds_, bounds);
 }
 
-PlatformImeController* DrmWindowHost::GetPlatformImeController() {
-  return nullptr;
+void DrmWindowHost::SetRestoredBoundsInPixels(const gfx::Rect& bounds) {
+  NOTREACHED();
 }
 
-bool DrmWindowHost::CanDispatchEvent(const PlatformEvent& ne) {
-  DCHECK(ne);
-  Event* event = static_cast<Event*>(ne);
+gfx::Rect DrmWindowHost::GetRestoredBoundsInPixels() const {
+  NOTREACHED();
+  return gfx::Rect();
+}
+
+bool DrmWindowHost::CanDispatchEvent(const PlatformEvent& event) {
+  DCHECK(event);
 
   // If there is a grab, capture events here.
   gfx::AcceleratedWidget grabber = window_manager_->event_grabber();
@@ -170,10 +191,9 @@ bool DrmWindowHost::CanDispatchEvent(const PlatformEvent& ne) {
   return true;
 }
 
-uint32_t DrmWindowHost::DispatchEvent(const PlatformEvent& native_event) {
-  DCHECK(native_event);
+uint32_t DrmWindowHost::DispatchEvent(const PlatformEvent& event) {
+  DCHECK(event);
 
-  Event* event = static_cast<Event*>(native_event);
   if (event->IsLocatedEvent()) {
     // Make the event location relative to this window's origin.
     LocatedEvent* located_event = event->AsLocatedEvent();
@@ -183,8 +203,8 @@ uint32_t DrmWindowHost::DispatchEvent(const PlatformEvent& native_event) {
     located_event->set_root_location_f(location);
   }
   DispatchEventFromNativeUiEvent(
-      native_event, base::Bind(&PlatformWindowDelegate::DispatchEvent,
-                               base::Unretained(delegate_)));
+      event, base::BindOnce(&PlatformWindowDelegate::DispatchEvent,
+                            base::Unretained(delegate_)));
   return POST_DISPATCH_STOP_PROPAGATION;
 }
 
@@ -203,7 +223,8 @@ void DrmWindowHost::SendBoundsChange() {
   cursor_->CommitBoundsChange(widget_, bounds_, GetCursorConfinedBounds());
   sender_->GpuWindowBoundsChanged(widget_, bounds_);
 
-  overlay_manager_->ResetCache();
+  if (overlay_manager_)
+    overlay_manager_->ResetCache();
 }
 
 }  // namespace ui

@@ -11,8 +11,8 @@
 #include "base/logging.h"
 #include "base/single_thread_task_runner.h"
 #include "base/time/default_tick_clock.h"
-#include "jni/AudioTrackOutputStream_jni.h"
 #include "media/audio/audio_manager_base.h"
+#include "media/base/android/media_jni_headers/AudioTrackOutputStream_jni.h"
 #include "media/base/audio_sample_types.h"
 #include "media/base/audio_timestamp_helper.h"
 
@@ -33,7 +33,7 @@ AudioTrackOutputStream::AudioTrackOutputStream(AudioManagerBase* manager,
                                                const AudioParameters& params)
     : params_(params),
       audio_manager_(manager),
-      tick_clock_(new base::DefaultTickClock()) {
+      tick_clock_(base::DefaultTickClock::GetInstance()) {
   if (!params_.IsBitstreamFormat()) {
     audio_bus_ = AudioBus::Create(params_);
   }
@@ -88,6 +88,10 @@ void AudioTrackOutputStream::Close() {
   audio_manager_->ReleaseOutputStream(this);
 }
 
+// This stream is always used with sub second buffer sizes, where it's
+// sufficient to simply always flush upon Start().
+void AudioTrackOutputStream::Flush() {}
+
 void AudioTrackOutputStream::SetMute(bool muted) {
   if (params_.IsBitstreamFormat() && muted) {
     LOG(WARNING)
@@ -117,11 +121,11 @@ void AudioTrackOutputStream::SetVolume(double volume) {
 
   Java_AudioTrackOutputStream_setVolume(AttachCurrentThread(),
                                         j_audio_output_stream_, volume);
-};
+}
 
 void AudioTrackOutputStream::GetVolume(double* volume) {
   *volume = volume_;
-};
+}
 
 // AudioOutputStream::SourceCallback implementation methods called from Java.
 ScopedJavaLocalRef<jobject> AudioTrackOutputStream::OnMoreData(

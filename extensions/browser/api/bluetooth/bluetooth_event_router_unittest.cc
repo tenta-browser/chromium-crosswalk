@@ -8,13 +8,12 @@
 #include <string>
 #include <utility>
 
-#include "base/memory/ptr_util.h"
+#include "base/bind_helpers.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
 #include "content/public/test/test_browser_context.h"
-#include "content/public/test/test_browser_thread_bundle.h"
 #include "device/bluetooth/bluetooth_common.h"
-#include "device/bluetooth/bluetooth_uuid.h"
+#include "device/bluetooth/public/cpp/bluetooth_uuid.h"
 #include "device/bluetooth/test/mock_bluetooth_adapter.h"
 #include "extensions/browser/event_router.h"
 #include "extensions/browser/extension_registry.h"
@@ -42,8 +41,7 @@ namespace bluetooth = api::bluetooth;
 class BluetoothEventRouterTest : public ExtensionsTest {
  public:
   BluetoothEventRouterTest()
-      : ExtensionsTest(std::make_unique<content::TestBrowserThreadBundle>()),
-        mock_adapter_(new testing::StrictMock<device::MockBluetoothAdapter>()) {
+      : mock_adapter_(new testing::StrictMock<device::MockBluetoothAdapter>()) {
   }
 
   void SetUp() override {
@@ -113,16 +111,22 @@ TEST_F(BluetoothEventRouterTest, SetDiscoveryFilter) {
   df.CopyFrom(*discovery_filter);
 
   router_->SetDiscoveryFilter(std::move(discovery_filter), mock_adapter_,
-                              kTestExtensionId, base::Bind(&base::DoNothing),
-                              base::Bind(&base::DoNothing));
+                              kTestExtensionId, base::DoNothing(),
+                              base::DoNothing());
 
-  EXPECT_CALL(*mock_adapter_, StartDiscoverySessionWithFilterRaw(
-                                  testing::Pointee(IsFilterEqual(&df)),
-                                  testing::_, testing::_)).Times(1);
+  EXPECT_CALL(
+      *mock_adapter_,
+      StartScanWithFilter_(testing::Pointee(IsFilterEqual(&df)), testing::_))
+      .Times(1);
+
+  // RemoveDiscoverySession will be called when the BluetoothDiscoverySession
+  // is destroyed
+  EXPECT_CALL(*mock_adapter_,
+              RemoveDiscoverySession_(testing::_, testing::_, testing::_))
+      .Times(1);
 
   router_->StartDiscoverySession(mock_adapter_, kTestExtensionId,
-                                 base::Bind(&base::DoNothing),
-                                 base::Bind(&base::DoNothing));
+                                 base::DoNothing(), base::DoNothing());
 
   EXPECT_CALL(*mock_adapter_, RemoveObserver(testing::_)).Times(1);
 }

@@ -27,6 +27,17 @@ class ToolbarActionViewDelegate;
 // Media Router).
 class ToolbarActionViewController {
  public:
+  // The status of the extension's interaction for the page. This is independent
+  // of the action's clickability.
+  enum class PageInteractionStatus {
+    // The extension cannot run on the page.
+    kNone,
+    // The extension tried to access the page, but is pending user approval.
+    kPending,
+    // The extension has permission to run on the page.
+    kActive,
+  };
+
   virtual ~ToolbarActionViewController() {}
 
   // Returns the unique ID of this particular action. For extensions, this is
@@ -45,6 +56,8 @@ class ToolbarActionViewController {
   virtual base::string16 GetActionName() const = 0;
 
   // Returns the accessible name to use for the given |web_contents|.
+  // May be passed null, or a |web_contents| that returns -1 for
+  // |SessionTabHelper::IdForTab(..)|.
   virtual base::string16 GetAccessibleName(content::WebContents* web_contents)
       const = 0;
 
@@ -61,6 +74,9 @@ class ToolbarActionViewController {
 
   // Returns true if the action has a popup for the given |web_contents|.
   virtual bool HasPopup(content::WebContents* web_contents) const = 0;
+
+  // Returns whether there is currently a popup visible.
+  virtual bool IsShowingPopup() const = 0;
 
   // Hides the current popup, if one is visible.
   virtual void HidePopup() = 0;
@@ -90,8 +106,11 @@ class ToolbarActionViewController {
 
   // Registers an accelerator. Called when the view is added to the hierarchy.
   // Unregistering any commands is the responsibility of the controller.
-  virtual void RegisterCommand() {
-  }
+  virtual void RegisterCommand() {}
+
+  // Returns the PageInteractionStatus for the current page.
+  virtual PageInteractionStatus GetPageInteractionStatus(
+      content::WebContents* web_contents) const = 0;
 };
 
 #endif  // CHROME_BROWSER_UI_TOOLBAR_TOOLBAR_ACTION_VIEW_CONTROLLER_H_

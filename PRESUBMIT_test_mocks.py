@@ -51,12 +51,15 @@ class MockCannedChecks(object):
 
     return errors
 
+
 class MockInputApi(object):
   """Mock class for the InputApi class.
 
   This class can be used for unittests for presubmit by initializing the files
   attribute as the list of changed files.
   """
+
+  DEFAULT_BLACK_LIST = ()
 
   def __init__(self):
     self.canned_checks = MockCannedChecks()
@@ -73,14 +76,42 @@ class MockInputApi(object):
     self.change = MockChange([])
     self.presubmit_local_path = os.path.dirname(__file__)
 
+  def CreateMockFileInPath(self, f_list):
+    self.os_path.exists = lambda x: x in f_list
+
   def AffectedFiles(self, file_filter=None, include_deletes=False):
-    return self.files
+    for file in self.files:
+      if file_filter and not file_filter(file):
+        continue
+      if not include_deletes and file.Action() == 'D':
+        continue
+      yield file
 
   def AffectedSourceFiles(self, file_filter=None):
-    return self.files
+    return self.AffectedFiles(file_filter=file_filter)
+
+  def FilterSourceFile(self, file, white_list=(), black_list=()):
+    local_path = file.LocalPath()
+    found_in_white_list = not white_list
+    if white_list:
+      if type(white_list) is str:
+        raise TypeError('white_list should be an iterable of strings')
+      for pattern in white_list:
+        compiled_pattern = re.compile(pattern)
+        if compiled_pattern.search(local_path):
+          found_in_white_list = True
+          break
+    if black_list:
+      if type(black_list) is str:
+        raise TypeError('black_list should be an iterable of strings')
+      for pattern in black_list:
+        compiled_pattern = re.compile(pattern)
+        if compiled_pattern.search(local_path):
+          return False
+    return found_in_white_list
 
   def LocalPaths(self):
-    return self.files
+    return [file.LocalPath() for file in self.files]
 
   def PresubmitLocalPath(self):
     return self.presubmit_local_path
@@ -188,6 +219,10 @@ class MockFile(object):
   def __len__(self):
     """os.path.basename is called on MockFile so we need a len method."""
     return len(self._local_path)
+
+  def replace(self, altsep, sep):
+    """os.path.basename is called on MockFile so we need a replace method."""
+    return self._local_path.replace(altsep, sep)
 
 
 class MockAffectedFile(MockFile):

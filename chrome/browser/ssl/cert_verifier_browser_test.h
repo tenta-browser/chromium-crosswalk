@@ -5,13 +5,8 @@
 #ifndef CHROME_BROWSER_SSL_CERT_VERIFIER_BROWSER_TEST_H_
 #define CHROME_BROWSER_SSL_CERT_VERIFIER_BROWSER_TEST_H_
 
-#include <memory>
-
 #include "chrome/test/base/in_process_browser_test.h"
-
-namespace net {
-class MockCertVerifier;
-}  // namespace net
+#include "content/public/test/content_mock_cert_verifier.h"
 
 // CertVerifierBrowserTest allows tests to force certificate
 // verification results for requests made with any profile's main
@@ -24,15 +19,18 @@ class CertVerifierBrowserTest : public InProcessBrowserTest {
   ~CertVerifierBrowserTest() override;
 
   // InProcessBrowserTest:
+  void SetUpCommandLine(base::CommandLine* command_line) override;
   void SetUpInProcessBrowserTestFixture() override;
   void TearDownInProcessBrowserTestFixture() override;
 
-  // Returns a pointer to the MockCertVerifier used by all profiles in
-  // this test.
-  net::MockCertVerifier* mock_cert_verifier();
+  content::ContentMockCertVerifier::CertVerifier* mock_cert_verifier() {
+    return mock_cert_verifier_.mock_cert_verifier();
+  }
 
  private:
-  std::unique_ptr<net::MockCertVerifier> mock_cert_verifier_;
+  content::ContentMockCertVerifier mock_cert_verifier_;
+
+  DISALLOW_COPY_AND_ASSIGN(CertVerifierBrowserTest);
 };
 
 #endif  // CHROME_BROWSER_SSL_CERT_VERIFIER_BROWSER_TEST_H_

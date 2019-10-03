@@ -124,7 +124,7 @@ class ASH_EXPORT TriView : public views::View {
  protected:
   // View:
   void ViewHierarchyChanged(
-      const views::View::ViewHierarchyChangedDetails& details) override;
+      const views::ViewHierarchyChangedDetails& details) override;
   const char* GetClassName() const override;
 
  private:
@@ -138,11 +138,11 @@ class ASH_EXPORT TriView : public views::View {
 
   // Type spcific layout manager installed on |this|. Responsible for laying out
   // the container Views.
-  views::BoxLayout* box_layout_;
+  views::BoxLayout* box_layout_ = nullptr;
 
-  SizeRangeLayout* start_container_layout_manager_;
-  SizeRangeLayout* center_container_layout_manager_;
-  SizeRangeLayout* end_container_layout_manager_;
+  SizeRangeLayout* start_container_layout_manager_ = nullptr;
+  SizeRangeLayout* center_container_layout_manager_ = nullptr;
+  SizeRangeLayout* end_container_layout_manager_ = nullptr;
 
   // In order to detect direct manipulation of child views the
   // ViewHierarchyChanged() event override fails on a DCHECK. However, we need

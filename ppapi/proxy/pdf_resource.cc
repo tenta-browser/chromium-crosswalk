@@ -58,17 +58,19 @@ void PDFResource::SearchString(const unsigned short* input_string,
                                PP_PrivateFindResult** results,
                                uint32_t* count) {
   if (locale_.empty())
-    locale_ = GetLocale();
+    locale_ = GetLocale() + "@collation=search";
+
   const base::char16* string =
       reinterpret_cast<const base::char16*>(input_string);
   const base::char16* term =
       reinterpret_cast<const base::char16*>(input_term);
 
   UErrorCode status = U_ZERO_ERROR;
-  UStringSearch* searcher = usearch_open(term, -1, string, -1, locale_.c_str(),
-                                         0, &status);
+  UStringSearch* searcher =
+      usearch_open(term, -1, string, -1, locale_.c_str(), nullptr, &status);
   DCHECK(status == U_ZERO_ERROR || status == U_USING_FALLBACK_WARNING ||
-         status == U_USING_DEFAULT_WARNING);
+         status == U_USING_DEFAULT_WARNING)
+      << status;
   UCollationStrength strength = case_sensitive ? UCOL_TERTIARY : UCOL_PRIMARY;
 
   UCollator* collator = usearch_getCollator(searcher);
@@ -79,7 +81,7 @@ void PDFResource::SearchString(const unsigned short* input_string,
 
   status = U_ZERO_ERROR;
   int match_start = usearch_first(searcher, &status);
-  DCHECK(status == U_ZERO_ERROR);
+  DCHECK_EQ(U_ZERO_ERROR, status);
 
   std::vector<PP_PrivateFindResult> pp_results;
   while (match_start != USEARCH_DONE) {
@@ -89,7 +91,7 @@ void PDFResource::SearchString(const unsigned short* input_string,
     result.length = matched_length;
     pp_results.push_back(result);
     match_start = usearch_next(searcher, &status);
-    DCHECK(status == U_ZERO_ERROR);
+    DCHECK_EQ(U_ZERO_ERROR, status);
   }
 
   if (pp_results.empty() ||
@@ -134,6 +136,32 @@ void PDFResource::HasUnsupportedFeature() {
 
 void PDFResource::Print() {
   Post(RENDERER, PpapiHostMsg_PDF_Print());
+}
+
+void PDFResource::ShowAlertDialog(const char* message) {
+  SyncCall<PpapiPluginMsg_PDF_ShowAlertDialogReply>(
+      RENDERER, PpapiHostMsg_PDF_ShowAlertDialog(message));
+}
+
+bool PDFResource::ShowConfirmDialog(const char* message) {
+  bool bool_result = false;
+  if (SyncCall<PpapiPluginMsg_PDF_ShowConfirmDialogReply>(
+          RENDERER, PpapiHostMsg_PDF_ShowConfirmDialog(message),
+          &bool_result) != PP_OK) {
+    return false;
+  }
+  return bool_result;
+}
+
+PP_Var PDFResource::ShowPromptDialog(const char* message,
+                                     const char* default_answer) {
+  std::string str_result;
+  if (SyncCall<PpapiPluginMsg_PDF_ShowPromptDialogReply>(
+          RENDERER, PpapiHostMsg_PDF_ShowPromptDialog(message, default_answer),
+          &str_result) != PP_OK) {
+    return PP_MakeUndefined();
+  }
+  return StringVar::StringToPPVar(str_result);
 }
 
 void PDFResource::SaveAs() {
@@ -194,8 +222,12 @@ void PDFResource::SetAccessibilityPageInfo(
 }
 
 void PDFResource::SetCrashData(const char* pdf_url, const char* top_level_url) {
-  if (pdf_url)
-    base::debug::SetCrashKeyValue("subresource_url", pdf_url);
+  if (pdf_url) {
+    static base::debug::CrashKeyString* subresource_url =
+        base::debug::AllocateCrashKeyString("subresource_url",
+                                            base::debug::CrashKeySize::Size256);
+    base::debug::SetCrashKeyString(subresource_url, pdf_url);
+  }
   if (top_level_url)
     PluginGlobals::Get()->SetActiveURL(top_level_url);
 }
@@ -208,8 +240,8 @@ void PDFResource::SelectionChanged(const PP_FloatPoint& left,
                                                    right_height));
 }
 
-void PDFResource::DidScroll() {
-  Post(RENDERER, PpapiHostMsg_PDF_DidScroll());
+void PDFResource::SetPluginCanSave(bool can_save) {
+  Post(RENDERER, PpapiHostMsg_PDF_SetPluginCanSave(can_save));
 }
 
 }  // namespace proxy

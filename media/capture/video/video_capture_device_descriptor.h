@@ -8,7 +8,6 @@
 #include <string>
 #include <vector>
 
-#include "base/optional.h"
 #include "media/base/video_facing.h"
 #include "media/capture/capture_export.h"
 
@@ -19,6 +18,7 @@ namespace media {
 enum class VideoCaptureApi {
   LINUX_V4L2_SINGLE_PLANE,
   WIN_MEDIA_FOUNDATION,
+  WIN_MEDIA_FOUNDATION_SENSOR,
   WIN_DIRECT_SHOW,
   MACOSX_AVFOUNDATION,
   MACOSX_DECKLINK,
@@ -26,7 +26,7 @@ enum class VideoCaptureApi {
   ANDROID_API2_LEGACY,
   ANDROID_API2_FULL,
   ANDROID_API2_LIMITED,
-  ANDROID_TANGO,
+  VIRTUAL_DEVICE,
   UNKNOWN
 };
 
@@ -41,6 +41,11 @@ enum class VideoCaptureTransportType {
 // |device_id| represents a unique id of a physical device. Since the same
 // physical device may be accessible through different APIs |capture_api|
 // disambiguates the API.
+// TODO(tommi): Given that this struct has become more complex with private
+// members, methods that are not just direct getters/setters
+// (e.g., GetNameAndModel), let's turn it into a class in order to properly
+// conform with the style guide and protect the integrity of the data that the
+// class owns.
 struct CAPTURE_EXPORT VideoCaptureDeviceDescriptor {
  public:
   VideoCaptureDeviceDescriptor();
@@ -73,7 +78,10 @@ struct CAPTURE_EXPORT VideoCaptureDeviceDescriptor {
   // Friendly name of a device, plus the model identifier in parentheses.
   std::string GetNameAndModel() const;
 
-  std::string display_name;  // Name that is intended for display in the UI
+  // Name that is intended for display in the UI.
+  const std::string& display_name() const { return display_name_; }
+  void set_display_name(const std::string& name);
+
   std::string device_id;
   // A unique hardware identifier of the capture device.
   // It is of the form "[vid]:[pid]" when a USB device is detected, and empty
@@ -85,20 +93,8 @@ struct CAPTURE_EXPORT VideoCaptureDeviceDescriptor {
   VideoCaptureApi capture_api;
   VideoCaptureTransportType transport_type;
 
-  // Contains camera calibration parameters.
-  // These parameters apply to both RGB and depth video devices.  See also
-  // https://w3c.github.io/mediacapture-depth/#mediatracksettings-dictionary
-  // TODO(aleksandar.stojiljkovic): Add principal point and camera distortion
-  // model and coefficients.  See also https://crbug.com/616098
-  struct CameraCalibration {
-    double focal_length_x = 0.0;
-    double focal_length_y = 0.0;
-    // depth near and far are used only for depth cameras.
-    double depth_near = 0.0;
-    double depth_far = 0.0;
-  };
-
-  base::Optional<CameraCalibration> camera_calibration;
+ private:
+  std::string display_name_;  // Name that is intended for display in the UI
 };
 
 using VideoCaptureDeviceDescriptors = std::vector<VideoCaptureDeviceDescriptor>;

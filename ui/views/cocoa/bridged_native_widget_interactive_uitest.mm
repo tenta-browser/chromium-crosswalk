@@ -2,7 +2,7 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#import "ui/views/cocoa/bridged_native_widget.h"
+#import "components/remote_cocoa/app_shim/native_widget_ns_window_bridge.h"
 
 #import <Cocoa/Cocoa.h>
 
@@ -15,7 +15,7 @@
 #include "ui/base/test/ui_controls.h"
 #import "ui/base/test/windowed_nsnotification_observer.h"
 #import "ui/events/test/cocoa_test_event_utils.h"
-#include "ui/views/test/views_interactive_ui_test_base.h"
+#include "ui/views/cocoa/native_widget_mac_ns_window_host.h"
 #include "ui/views/test/widget_test.h"
 #include "ui/views/widget/native_widget_mac.h"
 #include "ui/views/window/native_frame_view.h"
@@ -29,7 +29,7 @@ namespace {
 // is not user-sizable.
 class ResizableDelegateView : public WidgetDelegateView {
  public:
-  ResizableDelegateView() {}
+  ResizableDelegateView() = default;
 
   // WidgetDelgate:
   bool CanResize() const override { return true; }
@@ -40,14 +40,15 @@ class ResizableDelegateView : public WidgetDelegateView {
 
 }  // namespace
 
-class BridgedNativeWidgetUITest : public test::WidgetTest {
+class BridgedNativeWidgetUITest : public WidgetTest {
  public:
   BridgedNativeWidgetUITest() = default;
 
   // testing::Test:
   void SetUp() override {
-    ViewsInteractiveUITestBase::InteractiveSetUp();
+    SetUpForInteractiveTests();
     WidgetTest::SetUp();
+
     Widget::InitParams init_params =
         CreateParams(Widget::InitParams::TYPE_WINDOW);
     init_params.ownership = Widget::InitParams::WIDGET_OWNS_NATIVE_WIDGET;
@@ -65,7 +66,7 @@ class BridgedNativeWidgetUITest : public test::WidgetTest {
   }
 
   NSWindow* test_window() {
-    return widget_->GetNativeWindow();
+    return widget_->GetNativeWindow().GetNativeNSWindow();
   }
 
  protected:
@@ -192,40 +193,6 @@ TEST_F(BridgedNativeWidgetUITest, FullscreenRestore) {
 
 namespace {
 
-// This is used to wait for reposted events to be seen. We can't just use
-// RunPendingMessages() because CGEventPost might not be synchronous.
-class HitTestBridgedNativeWidget : public BridgedNativeWidget {
- public:
-  explicit HitTestBridgedNativeWidget(NativeWidgetMac* widget)
-      : BridgedNativeWidget(widget) {}
-
-  // BridgedNativeWidget:
-  bool ShouldRepostPendingLeftMouseDown(NSEvent* event) override {
-    did_repost_ = BridgedNativeWidget::ShouldRepostPendingLeftMouseDown(event);
-
-    if (run_loop_)
-      run_loop_->Quit();
-
-    return did_repost_;
-  }
-
-  void WaitForShouldRepost() {
-    base::RunLoop run_loop;
-    run_loop_ = &run_loop;
-    run_loop.Run();
-    run_loop_ = nullptr;
-  }
-
-  bool IsDraggable() { return [ns_view() mouseDownCanMoveWindow]; }
-  bool did_repost() { return did_repost_; }
-
- private:
-  base::RunLoop* run_loop_ = nullptr;
-  bool did_repost_ = false;
-
-  DISALLOW_COPY_AND_ASSIGN(HitTestBridgedNativeWidget);
-};
-
 // This is used to return a customized result to NonClientHitTest.
 class HitTestNonClientFrameView : public NativeFrameView {
  public:
@@ -284,18 +251,13 @@ void WaitForEvent(NSUInteger mask) {
 }  // namespace
 
 // This is used to inject test versions of NativeFrameView and
-// BridgedNativeWidget.
+// NativeWidgetNSWindowBridge.
 class HitTestNativeWidgetMac : public NativeWidgetMac {
  public:
   HitTestNativeWidgetMac(internal::NativeWidgetDelegate* delegate,
                          NativeFrameView* native_frame_view)
       : NativeWidgetMac(delegate), native_frame_view_(native_frame_view) {
-    NativeWidgetMac::bridge_.reset(new HitTestBridgedNativeWidget(this));
-  }
-
-  HitTestBridgedNativeWidget* bridge() {
-    return static_cast<HitTestBridgedNativeWidget*>(
-        NativeWidgetMac::bridge_.get());
+    ns_window_host_ = std::make_unique<NativeWidgetMacNSWindowHost>(this);
   }
 
   // internal::NativeWidgetPrivate:
@@ -334,7 +296,7 @@ TEST_F(BridgedNativeWidgetUITest, DISABLED_HitTest) {
   const NSPoint bottom_right_point = {398, 2};
   const NSPoint right_of_bottom_right = {398 + 10, 2};
 
-  NSWindow* window = widget.GetNativeWindow();
+  NSWindow* window = widget.GetNativeWindow().GetNativeNSWindow();
 
   EXPECT_FALSE([window ignoresMouseEvents]);
   // OSX uses both the alpha value of the window and the underlying CALayer to
@@ -344,11 +306,6 @@ TEST_F(BridgedNativeWidgetUITest, DISABLED_HitTest) {
   // explicitly call setIgnoresMouseEvents: to ensure the window receives the
   // mouse events.
   [window setIgnoresMouseEvents:NO];
-
-  HitTestBridgedNativeWidget* bridge = native_widget->bridge();
-
-  const bool using_drag_event_monitor =
-      BridgedNativeWidget::ShouldUseDragEventMonitor();
 
   // Dragging the window should work.
   frame_view->set_hit_test_result(HTCAPTION);
@@ -360,18 +317,8 @@ TEST_F(BridgedNativeWidgetUITest, DISABLED_HitTest) {
             initForNotification:NSWindowWillMoveNotification]);
     NSEvent* mouse_down = cocoa_test_event_utils::LeftMouseDownAtPointInWindow(
         NSMakePoint(20, 20), window);
-    EXPECT_FALSE(bridge->IsDraggable());
     CGEventPost(kCGSessionEventTap, [mouse_down CGEvent]);
-    if (using_drag_event_monitor) {
-      bridge->WaitForShouldRepost();
-      EXPECT_TRUE(bridge->did_repost());
-      EXPECT_TRUE(bridge->IsDraggable());
-      bridge->WaitForShouldRepost();
-      EXPECT_FALSE(bridge->did_repost());
-      EXPECT_FALSE(bridge->IsDraggable());
-    } else {
-      WaitForEvent(NSLeftMouseDownMask);
-    }
+    WaitForEvent(NSLeftMouseDownMask);
 
     base::scoped_nsobject<WindowedNSNotificationObserver> did_move_observer(
         [[WindowedNSNotificationObserver alloc]
@@ -402,18 +349,8 @@ TEST_F(BridgedNativeWidgetUITest, DISABLED_HitTest) {
             initForNotification:NSWindowWillMoveNotification]);
     NSEvent* mouse_down = cocoa_test_event_utils::LeftMouseDownAtPointInWindow(
         bottom_right_point, window);
-    EXPECT_FALSE(bridge->IsDraggable());
     CGEventPost(kCGSessionEventTap, [mouse_down CGEvent]);
-    if (using_drag_event_monitor) {
-      bridge->WaitForShouldRepost();
-      EXPECT_TRUE(bridge->did_repost());
-      EXPECT_TRUE(bridge->IsDraggable());
-      bridge->WaitForShouldRepost();
-      EXPECT_FALSE(bridge->did_repost());
-      EXPECT_FALSE(bridge->IsDraggable());
-    } else {
-      WaitForEvent(NSLeftMouseDownMask);
-    }
+    WaitForEvent(NSLeftMouseDownMask);
 
     base::scoped_nsobject<WindowedNSNotificationObserver> did_move_observer(
         [[WindowedNSNotificationObserver alloc]
@@ -449,7 +386,6 @@ TEST_F(BridgedNativeWidgetUITest, DISABLED_HitTest) {
             initForNotification:NSWindowWillMoveNotification]);
     NSEvent* mouse_down = cocoa_test_event_utils::LeftMouseDownAtPointInWindow(
         bottom_right_point, window);
-    EXPECT_FALSE(bridge->IsDraggable());
     CGEventPost(kCGSessionEventTap, [mouse_down CGEvent]);
 
     base::scoped_nsobject<WindowedNSNotificationObserver> did_resize_observer(
@@ -462,14 +398,6 @@ TEST_F(BridgedNativeWidgetUITest, DISABLED_HitTest) {
     NSEvent* mouse_up = cocoa_test_event_utils::MouseEventAtPoint(
         NSMakePoint(x + 408, y + 2), NSLeftMouseUp, 0);
     CGEventPost(kCGSessionEventTap, [mouse_up CGEvent]);
-
-    if (using_drag_event_monitor) {
-      // The only event observed by us is the original mouse-down. It should not
-      // be reposted.
-      bridge->WaitForShouldRepost();
-      EXPECT_FALSE(bridge->did_repost());
-      EXPECT_FALSE(bridge->IsDraggable());
-    }
 
     EXPECT_TRUE([did_resize_observer wait]);
     EXPECT_EQ(0, [will_move_observer notificationCount]);

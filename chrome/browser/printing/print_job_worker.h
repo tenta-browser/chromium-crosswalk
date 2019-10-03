@@ -11,20 +11,16 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/threading/thread.h"
-#include "chrome/browser/printing/printer_query.h"
+#include "base/values.h"
+#include "build/build_config.h"
 #include "content/public/browser/browser_thread.h"
 #include "printing/page_number.h"
 #include "printing/print_job_constants.h"
 #include "printing/printing_context.h"
 
-namespace base {
-class DictionaryValue;
-}
-
 namespace printing {
 
 class PrintJob;
-class PrintJobWorkerOwner;
 class PrintedDocument;
 class PrintedPage;
 
@@ -35,12 +31,15 @@ class PrintedPage;
 // PrintJob always outlives its worker instance.
 class PrintJobWorker {
  public:
-  PrintJobWorker(int render_process_id,
-                 int render_frame_id,
-                 PrintJobWorkerOwner* owner);
+  using SettingsCallback =
+      base::OnceCallback<void(const PrintSettings&, PrintingContext::Result)>;
+
+  PrintJobWorker(int render_process_id, int render_frame_id);
   virtual ~PrintJobWorker();
 
-  void SetNewOwner(PrintJobWorkerOwner* new_owner);
+  void SetPrintJob(PrintJob* print_job);
+
+  /* The following functions may only be called before calling SetPrintJob(). */
 
   // Initializes the print settings. If |ask_user_for_settings| is true, a
   // Print... dialog box will be shown to ask the user their preference.
@@ -51,10 +50,19 @@ class PrintJobWorker {
                    bool has_selection,
                    MarginType margin_type,
                    bool is_scripted,
-                   bool is_modifiable);
+                   bool is_modifiable,
+                   SettingsCallback callback);
 
-  // Set the new print settings.
-  void SetSettings(std::unique_ptr<base::DictionaryValue> new_settings);
+  // Set the new print settings from a dictionary value.
+  void SetSettings(base::Value new_settings, SettingsCallback callback);
+
+#if defined(OS_CHROMEOS)
+  // Set the new print settings from a POD type.
+  void SetSettingsFromPOD(std::unique_ptr<printing::PrintSettings> new_settings,
+                          SettingsCallback callback);
+#endif
+
+  /* The following functions may only be called after calling SetPrintJob(). */
 
   // Starts the printing loop. Every pages are printed as soon as the data is
   // available. Makes sure the new_document is the right one.
@@ -68,14 +76,16 @@ class PrintJobWorker {
   // the next page can be printed.
   void OnNewPage();
 
-  // This is the only function that can be called in a thread.
+  /* The following functions may be called before or after SetPrintJob(). */
+
+  // Cancels the job.
   void Cancel();
 
   // Returns true if the thread has been started, and not yet stopped.
   bool IsRunning() const;
 
   // Posts the given task to be run.
-  bool PostTask(const base::Location& from_here, const base::Closure& task);
+  bool PostTask(const base::Location& from_here, base::OnceClosure task);
 
   // Signals the thread to exit in the near future.
   void StopSoon();
@@ -98,8 +108,17 @@ class PrintJobWorker {
   // and DEFAULT_INIT_DONE. These three are sent through PrintJob::InitDone().
   class NotificationTask;
 
+  // Posts a task to call OnNewPage(). Used to wait for pages/document to be
+  // available.
+  void PostWaitForPage();
+
+#if defined(OS_WIN)
   // Renders a page in the printer.
   void SpoolPage(PrintedPage* page);
+#else
+  // Renders the document to the printer.
+  void SpoolJob();
+#endif
 
   // Closes the job since spooling is done.
   void OnDocumentDone();
@@ -111,21 +130,29 @@ class PrintJobWorker {
   // Asks the user for print settings. Must be called on the UI thread.
   // Required on Mac and Linux. Windows can display UI from non-main threads,
   // but sticks with this for consistency.
-  void GetSettingsWithUI(
-      int document_page_count,
-      bool has_selection,
-      bool is_scripted);
+  void GetSettingsWithUI(int document_page_count,
+                         bool has_selection,
+                         bool is_scripted,
+                         SettingsCallback callback);
 
   // Called on the UI thread to update the print settings.
-  void UpdatePrintSettings(std::unique_ptr<base::DictionaryValue> new_settings);
+  void UpdatePrintSettings(base::Value new_settings, SettingsCallback callback);
 
-  // Reports settings back to owner_.
-  void GetSettingsDone(PrintingContext::Result result);
+#if defined(OS_CHROMEOS)
+  // Called on the UI thread to update the print settings.
+  void UpdatePrintSettingsFromPOD(
+      std::unique_ptr<printing::PrintSettings> new_settings,
+      SettingsCallback callback);
+#endif
+
+  // Reports settings back to |callback|.
+  void GetSettingsDone(SettingsCallback callback,
+                       PrintingContext::Result result);
 
   // Use the default settings. When using GTK+ or Mac, this can still end up
   // displaying a dialog. So this needs to happen from the UI thread on these
   // systems.
-  void UseDefaultSettings();
+  void UseDefaultSettings(SettingsCallback callback);
 
   // Printing context delegate.
   const std::unique_ptr<PrintingContext::Delegate> printing_context_delegate_;
@@ -137,8 +164,8 @@ class PrintJobWorker {
   scoped_refptr<PrintedDocument> document_;
 
   // The print job owning this worker thread. It is guaranteed to outlive this
-  // object.
-  PrintJobWorkerOwner* owner_;
+  // object and should be set with SetPrintJob().
+  PrintJob* print_job_ = nullptr;
 
   // Current page number to print.
   PageNumber page_number_;
@@ -150,7 +177,7 @@ class PrintJobWorker {
   scoped_refptr<base::SequencedTaskRunner> task_runner_;
 
   // Used to generate a WeakPtr for callbacks.
-  base::WeakPtrFactory<PrintJobWorker> weak_factory_;
+  base::WeakPtrFactory<PrintJobWorker> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(PrintJobWorker);
 };

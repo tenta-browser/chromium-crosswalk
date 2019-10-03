@@ -48,6 +48,7 @@ class PulseAudioOutputStream : public AudioOutputStream {
   // Implementation of AudioOutputStream.
   bool Open() override;
   void Close() override;
+  void Flush() override;
   void Start(AudioSourceCallback* callback) override;
   void Stop() override;
   void SetVolume(double volume) override;
@@ -92,6 +93,8 @@ class PulseAudioOutputStream : public AudioOutputStream {
 
   // Container for retrieving data from AudioSourceCallback::OnMoreData().
   std::unique_ptr<AudioBus> audio_bus_;
+
+  const size_t buffer_size_;
 
   base::ThreadChecker thread_checker_;
 

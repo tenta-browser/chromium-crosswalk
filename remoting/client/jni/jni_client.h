@@ -16,10 +16,8 @@
 
 namespace remoting {
 
-class AudioPlayerAndroid;
 class ChromotingClientRuntime;
 class JniGlDisplayHandler;
-class JniPairingSecretFetcher;
 
 struct ConnectToHostInfo;
 
@@ -54,11 +52,19 @@ class JniClient : public ChromotingSession::Delegate {
                                 const std::string& id,
                                 const std::string& secret) override;
 
+  // Notifies the user interface that the user needs to enter a PIN. The current
+  // authentication attempt is put on hold until |callback| is invoked.
+  void FetchSecret(
+      bool pairing_supported,
+      const protocol::SecretFetchedCallback& secret_fetched_callback) override;
+
   // Pops up a third party login page to fetch token required for
   // authentication. Call on UI thread.
-  void FetchThirdPartyToken(const std::string& token_url,
-                            const std::string& client_id,
-                            const std::string& scope) override;
+  void FetchThirdPartyToken(
+      const std::string& token_url,
+      const std::string& client_id,
+      const std::string& scopes,
+      const protocol::ThirdPartyTokenFetchedCallback& callback) override;
 
   // Pass on the set of negotiated capabilities to the client.
   void SetCapabilities(const std::string& capabilities) override;
@@ -76,6 +82,7 @@ class JniClient : public ChromotingSession::Delegate {
                const base::android::JavaParamRef<jstring>& username,
                const base::android::JavaParamRef<jstring>& auth_token,
                const base::android::JavaParamRef<jstring>& host_jid,
+               const base::android::JavaParamRef<jstring>& host_ftl_id,
                const base::android::JavaParamRef<jstring>& host_id,
                const base::android::JavaParamRef<jstring>& host_pubkey,
                const base::android::JavaParamRef<jstring>& pair_id,
@@ -139,6 +146,12 @@ class JniClient : public ChromotingSession::Delegate {
                             const base::android::JavaParamRef<jstring>& type,
                             const base::android::JavaParamRef<jstring>& data);
 
+  void SendClientResolution(JNIEnv* env,
+                            const base::android::JavaParamRef<jobject>& caller,
+                            jint dips_width,
+                            jint dips_height,
+                            jfloat scale);
+
   // Deletes this object.
   void Destroy(JNIEnv* env, const base::android::JavaParamRef<jobject>& caller);
 
@@ -154,10 +167,11 @@ class JniClient : public ChromotingSession::Delegate {
   base::android::ScopedJavaGlobalRef<jobject> java_client_;
 
   std::unique_ptr<JniGlDisplayHandler> display_handler_;
-  std::unique_ptr<AudioPlayerAndroid> audio_player_;
 
-  // Deleted on UI thread.
-  std::unique_ptr<JniPairingSecretFetcher> secret_fetcher_;
+  std::string host_id_;
+
+  protocol::SecretFetchedCallback secret_fetched_callback_;
+  protocol::ThirdPartyTokenFetchedCallback third_party_token_fetched_callback_;
 
   // Deleted on Network thread.
   std::unique_ptr<ChromotingSession> session_;

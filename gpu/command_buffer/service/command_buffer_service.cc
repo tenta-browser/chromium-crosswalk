@@ -11,44 +11,23 @@
 #include <memory>
 
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/trace_event/trace_event.h"
 #include "gpu/command_buffer/common/cmd_buffer_common.h"
 #include "gpu/command_buffer/common/command_buffer_shared.h"
 #include "gpu/command_buffer/service/transfer_buffer_manager.h"
 
-using ::base::SharedMemory;
-
 namespace gpu {
 
-namespace {
-
-class MemoryBufferBacking : public BufferBacking {
- public:
-  explicit MemoryBufferBacking(size_t size)
-      : memory_(new char[size]), size_(size) {}
-  ~MemoryBufferBacking() override {}
-  void* GetMemory() const override { return memory_.get(); }
-  size_t GetSize() const override { return size_; }
-
- private:
-  std::unique_ptr<char[]> memory_;
-  size_t size_;
-  DISALLOW_COPY_AND_ASSIGN(MemoryBufferBacking);
-};
-
-}  // anonymous namespace
-
-CommandBufferService::CommandBufferService(
-    CommandBufferServiceClient* client,
-    TransferBufferManager* transfer_buffer_manager)
-    : client_(client), transfer_buffer_manager_(transfer_buffer_manager) {
+CommandBufferService::CommandBufferService(CommandBufferServiceClient* client,
+                                           MemoryTracker* memory_tracker)
+    : client_(client),
+      transfer_buffer_manager_(
+          std::make_unique<TransferBufferManager>(memory_tracker)) {
   DCHECK(client_);
-  DCHECK(transfer_buffer_manager_);
   state_.token = 0;
 }
 
-CommandBufferService::~CommandBufferService() {}
+CommandBufferService::~CommandBufferService() = default;
 
 void CommandBufferService::UpdateState() {
   ++state_.generation;
@@ -124,10 +103,10 @@ void CommandBufferService::SetGetBuffer(int32_t transfer_buffer_id) {
   ++state_.set_get_buffer_count;
 
   // If the buffer is invalid we handle it gracefully.
-  // This means ring_buffer_ can be NULL.
+  // This means ring_buffer_ can be nullptr.
   ring_buffer_ = GetTransferBuffer(transfer_buffer_id);
   if (ring_buffer_) {
-    int32_t size = ring_buffer_->size();
+    uint32_t size = ring_buffer_->size();
     volatile void* memory = ring_buffer_->memory();
     // check proper alignments.
     DCHECK_EQ(
@@ -166,10 +145,9 @@ void CommandBufferService::SetReleaseCount(uint64_t release_count) {
   UpdateState();
 }
 
-scoped_refptr<Buffer> CommandBufferService::CreateTransferBuffer(size_t size,
+scoped_refptr<Buffer> CommandBufferService::CreateTransferBuffer(uint32_t size,
                                                                  int32_t* id) {
-  static int32_t next_id = 1;
-  *id = next_id++;
+  *id = GetNextBufferId();
   auto result = CreateTransferBufferWithId(size, *id);
   if (!result)
     *id = -1;
@@ -186,21 +164,21 @@ scoped_refptr<Buffer> CommandBufferService::GetTransferBuffer(int32_t id) {
 
 bool CommandBufferService::RegisterTransferBuffer(
     int32_t id,
-    std::unique_ptr<BufferBacking> buffer) {
+    scoped_refptr<Buffer> buffer) {
   return transfer_buffer_manager_->RegisterTransferBuffer(id,
                                                           std::move(buffer));
 }
 
 scoped_refptr<Buffer> CommandBufferService::CreateTransferBufferWithId(
-    size_t size,
+    uint32_t size,
     int32_t id) {
-  if (!RegisterTransferBuffer(id,
-                              std::make_unique<MemoryBufferBacking>(size))) {
+  scoped_refptr<Buffer> buffer = MakeMemoryBuffer(size);
+  if (!RegisterTransferBuffer(id, buffer)) {
     SetParseError(gpu::error::kOutOfBounds);
     return nullptr;
   }
 
-  return GetTransferBuffer(id);
+  return buffer;
 }
 
 void CommandBufferService::SetToken(int32_t token) {
@@ -224,6 +202,10 @@ void CommandBufferService::SetScheduled(bool scheduled) {
   TRACE_EVENT2("gpu", "CommandBufferService:SetScheduled", "this", this,
                "scheduled", scheduled);
   scheduled_ = scheduled;
+}
+
+size_t CommandBufferService::GetSharedMemoryBytesAllocated() const {
+  return transfer_buffer_manager_->shared_memory_bytes_allocated();
 }
 
 }  // namespace gpu

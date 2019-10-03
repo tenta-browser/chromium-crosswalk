@@ -1,4 +1,4 @@
-#!/usr/bin/python
+#!/usr/bin/env vpython
 # Copyright 2013 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -6,11 +6,11 @@
 """Patch an orderfile.
 
 Starting with a list of symbols in a binary and an orderfile (ordered list of
-sections), matches the symbols in the orderfile and augments each symbol with
+symbols), matches the symbols in the orderfile and augments each symbol with
 the symbols residing at the same address (due to having identical code).  The
-output is a list of section matching rules appropriate for the linker option
--section-ordering-file.  These section matching rules include both actual
-section names and names with wildcard (*) suffixes.
+output is a list of symbols appropriate for the linker
+option --symbol-ordering-file for lld. Note this is not usable with gold (which
+uses section names to order the binary).
 
 Note: It is possible to have.
 - Several symbols mapping to the same offset in the binary.
@@ -22,29 +22,28 @@ The general pipeline is:
 2. Get the symbol names from the orderfile
 3. Find the orderfile symbol names in the symbols coming from the binary
 4. For each symbol found, get all the symbols at the same address
-5. Output them to an updated orderfile, with several different prefixes
-   and suffixes
-6. Output catch-all section matching rules for unprofiled methods.
+5. Output them to an updated orderfile suitable lld
 """
 
+import argparse
 import collections
 import logging
-import optparse
+import re
 import sys
 
 import cyglog_to_orderfile
 import cygprofile_utils
 import symbol_extractor
 
-# Prefixes for the symbols. We strip them from the incoming symbols, and add
-# them back in the output file.
-_PREFIXES = ('.text.startup.', '.text.hot.', '.text.unlikely.', '.text.')
-
-# Suffixes for the symbols.  These are due to method splitting for inlining and
+# Suffixes for symbols.  These are due to method splitting for inlining and
 # method cloning for various reasons including constant propagation and
 # inter-procedural optimization.
 _SUFFIXES = ('.clone.', '.part.', '.isra.', '.constprop.')
 
+
+# The pattern and format for a linker-generated outlined function.
+_OUTLINED_FUNCTION_RE = re.compile(r'OUTLINED_FUNCTION_(?P<index>\d+)$')
+_OUTLINED_FUNCTION_FORMAT = 'OUTLINED_FUNCTION_{}'
 
 def RemoveSuffixes(name):
   """Strips method name suffixes from cloning and splitting.
@@ -83,337 +82,185 @@ def _UniqueGenerator(generator):
   return _FilteringFunction
 
 
-def _GroupSymbolInfos(symbol_infos):
-  """Groups the symbol infos by name and offset.
+def _GroupSymbolsByOffset(binary_filename):
+  """Produce a map symbol name -> all symbol names at same offset.
+
+  Suffixes are stripped.
+  """
+  symbol_infos = [
+      s._replace(name=RemoveSuffixes(s.name))
+      for s in symbol_extractor.SymbolInfosFromBinary(binary_filename)]
+  offset_map = symbol_extractor.GroupSymbolInfosByOffset(symbol_infos)
+  missing_offsets = 0
+  sym_to_matching = {}
+  for sym in symbol_infos:
+    if sym.offset not in offset_map:
+      missing_offsets += 1
+      continue
+    matching = [s.name for s in offset_map[sym.offset]]
+    assert sym.name in matching
+    sym_to_matching[sym.name] = matching
+  return sym_to_matching
+
+
+def _GetMaxOutlinedIndex(sym_dict):
+  """Find the largest index of an outlined functions.
+
+  See _OUTLINED_FUNCTION_RE for the definition of the index. In practice the
+  maximum index equals the total number of outlined functions. This function
+  asserts that the index is near the total number of outlined functions.
 
   Args:
-    symbol_infos: an iterable of SymbolInfo
+    sym_dict: Dict with symbol names as keys.
 
   Returns:
-    The same output as _GroupSymbolInfosFromBinary.
+    The largest index of an outlined function seen in the keys of |sym_dict|.
   """
-  # Map the addresses to symbols.
-  offset_to_symbol_infos = collections.defaultdict(list)
-  name_to_symbol_infos = collections.defaultdict(list)
-  for symbol in symbol_infos:
-    symbol = symbol_extractor.SymbolInfo(name=RemoveSuffixes(symbol.name),
-                                         offset=symbol.offset,
-                                         size=symbol.size,
-                                         section=symbol.section)
-    offset_to_symbol_infos[symbol.offset].append(symbol)
-    name_to_symbol_infos[symbol.name].append(symbol)
-  return (dict(offset_to_symbol_infos), dict(name_to_symbol_infos))
+  seen = set()
+  for sym in sym_dict:
+    m = _OUTLINED_FUNCTION_RE.match(sym)
+    if m:
+      seen.add(int(m.group('index')))
+  if not seen:
+    return None
+  max_index = max(seen)
+  # Assert that the number of outlined functions is reasonable compared to the
+  # indices we've seen. At the time of writing, outlined functions are indexed
+  # consecutively from 0. If this radically changes, then other outlining
+  # behavior may have changed to violate some assumptions.
+  assert max_index < 2 * len(seen)
+  return max_index
 
 
-def _GroupSymbolInfosFromBinary(binary_filename):
-  """Group all the symbols from a binary by name and offset.
+def _StripSuffixes(section_list):
+  """Remove all suffixes on items in a list of symbols."""
+  return [RemoveSuffixes(section) for section in section_list]
+
+
+def _PatchedSymbols(symbol_to_matching, profiled_symbols, max_outlined_index):
+  """Internal computation of an orderfile.
 
   Args:
-    binary_filename: path to the binary.
-
-  Returns:
-    A tuple of dict:
-    (offset_to_symbol_infos, name_to_symbol_infos):
-    - offset_to_symbol_infos: {offset: [symbol_info1, ...]}
-    - name_to_symbol_infos: {name: [symbol_info1, ...]}
-  """
-  symbol_infos = symbol_extractor.SymbolInfosFromBinary(binary_filename)
-  return _GroupSymbolInfos(symbol_infos)
-
-
-def _StripPrefix(line):
-  """Strips the linker section name prefix from a symbol line.
-
-  Args:
-    line: a line from an orderfile, usually in the form:
-          .text.SymbolName
-
-  Returns:
-    The symbol, SymbolName in the example above.
-  """
-  for prefix in _PREFIXES:
-    if line.startswith(prefix):
-      return line[len(prefix):]
-  return line  # Unprefixed case
-
-
-def _SectionNameToSymbols(section_name, section_to_symbols_map):
-  """Yields all symbols which could be referred to by section_name.
-
-  If the section name is present in the map, the names in the map are returned.
-  Otherwise, any clone annotations and prefixes are stripped from the section
-  name and the remainder is returned.
-  """
-  if (not section_name or
-      section_name == '.text' or
-      section_name.endswith('*')):
-    return  # Don't return anything for catch-all sections
-  if section_name in section_to_symbols_map:
-    for symbol in section_to_symbols_map[section_name]:
-      yield symbol
-  else:
-    name = _StripPrefix(section_name)
-    if name:
-      yield name
-
-
-def GetSectionsFromOrderfile(filename):
-  """Yields the sections from an orderfile.
-
-  Args:
-    filename: The name of the orderfile.
+    symbol_to_matching: ({symbol name -> [symbols at same offset]}), as from
+      _GroupSymbolsByOffset.
+    profiled_symbols: ([symbol names]) as from the unpatched orderfile.
+    max_outlined_index: (int or None) if not None, add outlined function names
+      to the end of the patched orderfile.
 
   Yields:
-    A list of symbol names.
+    Patched symbols, in a consistent order to profiled_symbols.
   """
-  with open(filename, 'r') as f:
+  missing_symbol_count = 0
+  seen_symbols = set()
+  for sym in profiled_symbols:
+    if _OUTLINED_FUNCTION_RE.match(sym):
+      continue
+    if sym in seen_symbols:
+      continue
+    if sym not in symbol_to_matching:
+      missing_symbol_count += 1
+      continue
+    for matching in symbol_to_matching[sym]:
+      if matching in seen_symbols:
+        continue
+      if _OUTLINED_FUNCTION_RE.match(matching):
+        continue
+      yield matching
+      seen_symbols.add(matching)
+    assert sym in seen_symbols
+  logging.warning('missing symbol count = %d', missing_symbol_count)
+
+  if max_outlined_index is not None:
+    # The number of outlined functions may change with each build, so only
+    # ordering the outlined functions currently in the binary will not
+    # guarantee ordering after code changes before the next orderfile is
+    # generated. So we double the number of outlined functions as a measure of
+    # security.
+    for idx in xrange(2 * max_outlined_index + 1):
+      yield _OUTLINED_FUNCTION_FORMAT.format(idx)
+
+
+@_UniqueGenerator
+def ReadOrderfile(orderfile):
+  """Reads an orderfile and cleans up symbols.
+
+  Args:
+    orderfile: The name of the orderfile.
+
+  Yields:
+    Symbol names, cleaned and unique.
+  """
+  with open(orderfile) as f:
     for line in f.xreadlines():
-      line = line.rstrip('\n')
+      line = line.strip()
       if line:
         yield line
 
 
-@_UniqueGenerator
-def GetSymbolsFromOrderfile(filename, section_to_symbols_map):
-  """Yields the symbols from an orderfile.  Output elements do not repeat.
+def GeneratePatchedOrderfile(unpatched_orderfile, native_lib_filename,
+                             output_filename, order_outlined=False):
+  """Writes a patched orderfile.
 
   Args:
-    filename: The name of the orderfile.
-    section_to_symbols_map: The mapping from section to symbol names.  If a
-                            section name is missing from the mapping, the
-                            symbol name is assumed to be the section name with
-                            prefixes and suffixes stripped.
-
-  Yields:
-    A list of symbol names.
+    unpatched_orderfile: (str) Path to the unpatched orderfile.
+    native_lib_filename: (str) Path to the native library.
+    output_filename: (str) Path to the patched orderfile.
+    order_outlined: (bool) If outlined function symbols are present in the
+      native library, then add ordering of them to the orderfile. If there
+      are no outlined function symbols present then this flag has no effect.
   """
-  # TODO(lizeb,pasko): Move this method to symbol_extractor.py
-  for section in GetSectionsFromOrderfile(filename):
-    for symbol in _SectionNameToSymbols(RemoveSuffixes(section),
-                                        section_to_symbols_map):
-      yield symbol
+  symbol_to_matching = _GroupSymbolsByOffset(native_lib_filename)
+  if order_outlined:
+    max_outlined_index = _GetMaxOutlinedIndex(symbol_to_matching)
+    if not max_outlined_index:
+      # Only generate ordered outlined functions if they already appeared in
+      # the library.
+      max_outlined_index = None
+  else:
+    max_outlined_index = None  # Ignore outlining.
+  profiled_symbols = ReadOrderfile(unpatched_orderfile)
+
+  with open(output_filename, 'w') as f:
+    # Make sure the anchor functions are located in the right place, here and
+    # after everything else.
+    # See the comment in //base/android/library_loader/anchor_functions.cc.
+    #
+    # __cxx_global_var_init is one of the largest symbols (~38kB as of May
+    # 2018), called extremely early, and not instrumented.
+    for first_section in ('dummy_function_start_of_ordered_text',
+                          '__cxx_global_var_init'):
+      f.write(first_section + '\n')
+
+    for sym in _PatchedSymbols(symbol_to_matching, profiled_symbols,
+                               max_outlined_index):
+      f.write(sym + '\n')
+
+    f.write('dummy_function_end_of_ordered_text\n')
 
 
-def _SymbolsWithSameOffset(profiled_symbol, name_to_symbol_info,
-                           offset_to_symbol_info):
-  """Expands a symbol to include all symbols with the same offset.
-
-  Args:
-    profiled_symbol: the string symbol name to be expanded.
-    name_to_symbol_info: {name: [symbol_info1], ...}, as returned by
-        GetSymbolInfosFromBinary
-    offset_to_symbol_info: {offset: [symbol_info1, ...], ...}
-
-  Returns:
-    A list of symbol names, or an empty list if profiled_symbol was not in
-    name_to_symbol_info.
-  """
-  if profiled_symbol not in name_to_symbol_info:
-    return []
-  symbol_infos = name_to_symbol_info[profiled_symbol]
-  expanded = []
-  for symbol_info in symbol_infos:
-    expanded += (s.name for s in offset_to_symbol_info[symbol_info.offset])
-  return expanded
+def _CreateArgumentParser():
+  """Creates and returns the argument parser."""
+  parser = argparse.ArgumentParser()
+  parser.add_argument('--target-arch', action='store', default='arm',
+                      choices=['arm', 'arm64', 'x86', 'x86_64', 'x64', 'mips'],
+                      help='The target architecture for the library.')
+  parser.add_argument('--unpatched-orderfile', required=True,
+                      help='Path to the unpatched orderfile')
+  parser.add_argument('--native-library', required=True,
+                      help='Path to the native library')
+  parser.add_argument('--output-file', required=True, help='Output filename')
+  return parser
 
 
-@_UniqueGenerator
-def _SectionMatchingRules(section_name, name_to_symbol_infos,
-                          offset_to_symbol_infos, section_to_symbols_map,
-                          symbol_to_sections_map, suffixed_sections):
-  """Gets the set of section matching rules for section_name.
-
-  These rules will include section_name, but also any sections which may
-  contain the same code due to cloning, splitting, or identical code folding.
-
-  Args:
-    section_name: The section to expand.
-    name_to_symbol_infos: {name: [symbol_info1], ...}, as returned by
-        GetSymbolInfosFromBinary.
-    offset_to_symbol_infos: {offset: [symbol_info1, ...], ...}
-    section_to_symbols_map: The mapping from section to symbol name.  Missing
-        section names are treated as per _SectionNameToSymbols.
-    symbol_to_sections_map: The mapping from symbol name to names of linker
-        sections containing the symbol.  If a symbol isn't in the mapping, the
-        section names are generated from the set of _PREFIXES with the symbol
-        name.
-    suffixed_sections: A set of sections which can have suffixes.
-
-  Yields:
-    Section names including at least section_name.
-  """
-  for name in _ExpandSection(section_name, name_to_symbol_infos,
-                             offset_to_symbol_infos, section_to_symbols_map,
-                             symbol_to_sections_map):
-    yield name
-    # Since only a subset of methods (mostly those compiled with O2) ever get
-    # suffixes, don't emit the wildcards for ones where it won't be helpful.
-    # Otherwise linking takes too long.
-    if name in suffixed_sections:
-      # TODO(lizeb,pasko): instead of just appending .*, append .suffix.* for
-      # _SUFFIXES.  We can't do this right now because that many wildcards
-      # seems to kill the linker (linking libchrome takes 3 hours).  This gets
-      # almost all the benefit at a much lower link-time cost, but could cause
-      # problems with unexpected suffixes.
-      yield name + '.*'
-
-def _ExpandSection(section_name, name_to_symbol_infos, offset_to_symbol_infos,
-                   section_to_symbols_map, symbol_to_sections_map):
-  """Yields the set of section names for section_name.
-
-  This set will include section_name, but also any sections which may contain
-  the same code due to identical code folding.
-
-  Args:
-    section_name: The section to expand.
-    name_to_symbol_infos: {name: [symbol_info1], ...}, as returned by
-        GetSymbolInfosFromBinary.
-    offset_to_symbol_infos: {offset: [symbol_info1, ...], ...}
-    section_to_symbols_map: The mapping from section to symbol name.  Missing
-        section names are treated as per _SectionNameToSymbols.
-    symbol_to_sections_map: The mapping from symbol name to names of linker
-        sections containing the symbol.  If a symbol isn't in the mapping, the
-        section names are generated from the set of _PREFIXES with the symbol
-        name.
-
-  Yields:
-    Section names including at least section_name.
-  """
-  yield section_name
-  for first_sym in _SectionNameToSymbols(section_name,
-                                         section_to_symbols_map):
-    for symbol in _SymbolsWithSameOffset(first_sym, name_to_symbol_infos,
-                                         offset_to_symbol_infos):
-      if symbol in symbol_to_sections_map:
-        for section in symbol_to_sections_map[symbol]:
-          yield section
-      for prefix in _PREFIXES:
-        yield prefix + symbol
-
-
-@_UniqueGenerator
-def _ExpandSections(section_names, name_to_symbol_infos,
-                    offset_to_symbol_infos, section_to_symbols_map,
-                    symbol_to_sections_map, suffixed_sections):
-  """Gets an ordered set of section matching rules for a list of sections.
-
-  Rules will not be repeated.
-
-  Args:
-    section_names: The sections to expand.
-    name_to_symbol_infos: {name: [symbol_info1], ...}, as returned by
-                          _GroupSymbolInfosFromBinary.
-    offset_to_symbol_infos: {offset: [symbol_info1, ...], ...}
-    section_to_symbols_map: The mapping from section to symbol names.
-    symbol_to_sections_map: The mapping from symbol name to names of linker
-                            sections containing the symbol.
-    suffixed_sections:      A set of sections which can have suffixes.
-
-  Yields:
-    Section matching rules including at least section_names.
-  """
-  for profiled_section in section_names:
-    for section in _SectionMatchingRules(
-        profiled_section, name_to_symbol_infos, offset_to_symbol_infos,
-        section_to_symbols_map, symbol_to_sections_map, suffixed_sections):
-      yield section
-
-
-def _CombineSectionListsByPrimaryName(symbol_to_sections_map):
-  """Combines values of the symbol_to_sections_map by stripping suffixes.
-
-  Example:
-    {foo: [.text.foo, .text.bar.part.1],
-     foo.constprop.4: [.text.baz.constprop.3]} ->
-    {foo: [.text.foo, .text.bar, .text.baz]}
-
-  Args:
-    symbol_to_sections_map: Mapping from symbol name to list of section names
-
-  Returns:
-    The same mapping, but with symbol and section names suffix-stripped.
-  """
-  simplified = {}
-  for suffixed_symbol, suffixed_sections in symbol_to_sections_map.iteritems():
-    symbol = RemoveSuffixes(suffixed_symbol)
-    sections = [RemoveSuffixes(section) for section in suffixed_sections]
-    simplified.setdefault(symbol, []).extend(sections)
-  return simplified
-
-
-def _SectionsWithSuffixes(symbol_to_sections_map):
-  """Finds sections which have suffixes applied.
-
-  Args:
-    symbol_to_sections_map: a map where the values are lists of section names.
-
-  Returns:
-    A set containing all section names which were seen with suffixes applied.
-  """
-  sections_with_suffixes = set()
-  for suffixed_sections in symbol_to_sections_map.itervalues():
-    for suffixed_section in suffixed_sections:
-      section = RemoveSuffixes(suffixed_section)
-      if section != suffixed_section:
-        sections_with_suffixes.add(section)
-  return sections_with_suffixes
-
-
-def _StripSuffixes(section_list):
-  """Remove all suffixes on items in a list of sections or symbols."""
-  return [RemoveSuffixes(section) for section in section_list]
-
-
-def main(argv):
-  parser = optparse.OptionParser(usage=
-      'usage: %prog [options] <unpatched_orderfile> <library>')
-  parser.add_option('--target-arch', action='store', dest='arch',
-                    choices=['arm', 'arm64', 'x86', 'x86_64', 'x64', 'mips'],
-                    help='The target architecture for the library.')
-  options, argv = parser.parse_args(argv)
-  if not options.arch:
-    options.arch = cygprofile_utils.DetectArchitecture()
-  if len(argv) != 3:
-    parser.print_help()
-    return 1
-  orderfile_filename = argv[1]
-  binary_filename = argv[2]
-  symbol_extractor.SetArchitecture(options.arch)
-  (offset_to_symbol_infos, name_to_symbol_infos) = _GroupSymbolInfosFromBinary(
-      binary_filename)
-  obj_dir = cygprofile_utils.GetObjDir(binary_filename)
-  raw_symbol_map = cyglog_to_orderfile.GetSymbolToSectionsMapFromObjectFiles(
-      obj_dir)
-  suffixed = _SectionsWithSuffixes(raw_symbol_map)
-  symbol_to_sections_map = _CombineSectionListsByPrimaryName(raw_symbol_map)
-  section_to_symbols_map = cygprofile_utils.InvertMapping(
-      symbol_to_sections_map)
-  profiled_sections = _StripSuffixes(
-      GetSectionsFromOrderfile(orderfile_filename))
-  expanded_sections = _ExpandSections(
-      profiled_sections, name_to_symbol_infos, offset_to_symbol_infos,
-      section_to_symbols_map, symbol_to_sections_map, suffixed)
-
-  # Make sure the anchor functions are located in the right place, here and
-  # after everything else.
-  # See the comment in //tools/cygprofile/lightweight_cyrprofile.cc.
-  # The linker ignores sections it doesn't see, so this can stay for all builds.
-  for prefix in _PREFIXES:
-    print prefix + 'dummy_function_to_anchor_text'
-
-  for section in expanded_sections:
-    print section
-  # The following is needed otherwise Gold only applies a partial sort.
-  print '.text'  # gets methods not in a section, such as assembly
-  for prefix in _PREFIXES:
-    print prefix + '*'  # gets everything else
-
-  for prefix in _PREFIXES:
-    print prefix + 'dummy_function_at_the_end_of_text'
-
+def main():
+  parser = _CreateArgumentParser()
+  options = parser.parse_args()
+  symbol_extractor.SetArchitecture(options.target_arch)
+  GeneratePatchedOrderfile(options.unpatched_orderfile, options.native_library,
+                           options.output_file)
   return 0
 
 
 if __name__ == '__main__':
   logging.basicConfig(level=logging.INFO)
-  sys.exit(main(sys.argv))
+  sys.exit(main())

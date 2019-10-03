@@ -5,8 +5,7 @@
 #include "services/viz/public/cpp/compositing/render_pass_struct_traits.h"
 
 #include "base/numerics/safe_conversions.h"
-#include "base/trace_event/trace_event.h"
-#include "services/viz/public/cpp/compositing/shared_quad_state_struct_traits.h"
+#include "ui/gfx/mojo/color_space_mojom_traits.h"
 
 namespace mojo {
 
@@ -15,15 +14,15 @@ bool StructTraits<viz::mojom::RenderPassDataView,
                   std::unique_ptr<viz::RenderPass>>::
     Read(viz::mojom::RenderPassDataView data,
          std::unique_ptr<viz::RenderPass>* out) {
-  TRACE_EVENT0(TRACE_DISABLED_BY_DEFAULT("cc.debug.ipc"),
-               "StructTraits::RenderPass::Read");
   *out = viz::RenderPass::Create();
   if (!data.ReadOutputRect(&(*out)->output_rect) ||
       !data.ReadDamageRect(&(*out)->damage_rect) ||
       !data.ReadTransformToRootTarget(&(*out)->transform_to_root_target) ||
       !data.ReadFilters(&(*out)->filters) ||
-      !data.ReadBackgroundFilters(&(*out)->background_filters) ||
-      !data.ReadColorSpace(&(*out)->color_space)) {
+      !data.ReadBackdropFilters(&(*out)->backdrop_filters) ||
+      !data.ReadBackdropFilterBounds(&(*out)->backdrop_filter_bounds) ||
+      !data.ReadColorSpace(&(*out)->color_space) ||
+      !data.ReadCopyRequests(&(*out)->copy_requests)) {
     return false;
   }
   (*out)->id = data.id();

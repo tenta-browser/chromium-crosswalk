@@ -5,6 +5,8 @@
 package org.chromium.chrome.browser;
 
 import android.os.SystemClock;
+import android.support.annotation.IntDef;
+import android.text.format.DateUtils;
 import android.util.LruCache;
 
 import org.chromium.base.Callback;
@@ -20,12 +22,15 @@ import org.chromium.content_public.browser.RenderFrameHost;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.services.service_manager.InterfaceProvider;
 
+import java.lang.annotation.Retention;
+import java.lang.annotation.RetentionPolicy;
+
 /**
  * This is the top-level CopylessPaste metadata extraction for AppIndexing.
  */
 public class AppIndexingUtil {
     private static final int CACHE_SIZE = 100;
-    private static final int CACHE_VISIT_CUTOFF_MS = 60 * 60 * 1000; // 1 hour
+    private static final int CACHE_VISIT_CUTOFF_MS = (int) DateUtils.HOUR_IN_MILLIS;
     // Cache of recently seen urls. If a url is among the CACHE_SIZE most recent pages visited, and
     // the parse was in the last CACHE_VISIT_CUTOFF_MS milliseconds, then we don't parse the page,
     // and instead just report the view (not the content) to App Indexing.
@@ -35,10 +40,14 @@ public class AppIndexingUtil {
 
     // Constants used to log UMA "enum" histograms about the cache state.
     // The values should not be changed or reused, and CACHE_HISTOGRAM_BOUNDARY should be the last.
-    private static final int CACHE_HIT_WITH_ENTITY = 0;
-    private static final int CACHE_HIT_WITHOUT_ENTITY = 1;
-    private static final int CACHE_MISS = 2;
-    private static final int CACHE_HISTOGRAM_BOUNDARY = 3;
+    @IntDef({CacheHit.WITH_ENTITY, CacheHit.WITHOUT_ENTITY, CacheHit.MISS})
+    @Retention(RetentionPolicy.SOURCE)
+    private @interface CacheHit {
+        int WITH_ENTITY = 0;
+        int WITHOUT_ENTITY = 1;
+        int MISS = 2;
+        int NUM_ENTRIES = 3;
+    }
 
     /**
      * Extracts entities from document metadata and reports it to on-device App Indexing.
@@ -61,17 +70,17 @@ public class AppIndexingUtil {
             if (lastPageVisitContainedEntity(url)) {
                 // Condition 1
                 RecordHistogram.recordEnumeratedHistogram(
-                        "CopylessPaste.CacheHit", CACHE_HIT_WITH_ENTITY, CACHE_HISTOGRAM_BOUNDARY);
+                        "CopylessPaste.CacheHit", CacheHit.WITH_ENTITY, CacheHit.NUM_ENTRIES);
                 getAppIndexingReporter().reportWebPageView(url, tab.getTitle());
                 return;
             }
             // Condition 2
             RecordHistogram.recordEnumeratedHistogram(
-                    "CopylessPaste.CacheHit", CACHE_HIT_WITHOUT_ENTITY, CACHE_HISTOGRAM_BOUNDARY);
+                    "CopylessPaste.CacheHit", CacheHit.WITHOUT_ENTITY, CacheHit.NUM_ENTRIES);
         } else {
             // Condition 3
             RecordHistogram.recordEnumeratedHistogram(
-                    "CopylessPaste.CacheHit", CACHE_MISS, CACHE_HISTOGRAM_BOUNDARY);
+                    "CopylessPaste.CacheHit", CacheHit.MISS, CacheHit.NUM_ENTRIES);
             CopylessPaste copylessPaste = getCopylessPasteInterface(tab);
             if (copylessPaste == null) {
                 return;
@@ -94,9 +103,7 @@ public class AppIndexingUtil {
     }
 
     private boolean wasPageVisitedRecently(String url) {
-        if (url == null) {
-            return false;
-        }
+        if (url == null) return false;
         CacheEntry entry = getPageCache().get(url);
         if (entry == null || (getElapsedTime() - entry.lastSeenTimeMs > CACHE_VISIT_CUTOFF_MS)) {
             return false;
@@ -109,9 +116,7 @@ public class AppIndexingUtil {
      * parsed.
      */
     private boolean lastPageVisitContainedEntity(String url) {
-        if (url == null) {
-            return false;
-        }
+        if (url == null) return false;
         CacheEntry entry = getPageCache().get(url);
         if (entry == null || !entry.containedEntity) {
             return false;
@@ -151,8 +156,7 @@ public class AppIndexingUtil {
     }
 
     boolean isEnabledForDevice() {
-        return !SysUtils.isLowEndDevice()
-                && ChromeFeatureList.isEnabled(ChromeFeatureList.COPYLESS_PASTE);
+        return !SysUtils.isLowEndDevice();
     }
 
     private LruCache<String, CacheEntry> getPageCache() {

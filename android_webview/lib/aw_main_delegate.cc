@@ -8,32 +8,38 @@
 
 #include "android_webview/browser/aw_content_browser_client.h"
 #include "android_webview/browser/aw_media_url_interceptor.h"
-#include "android_webview/browser/aw_safe_browsing_config_helper.h"
-#include "android_webview/browser/browser_view_renderer.h"
-#include "android_webview/browser/command_line_helper.h"
-#include "android_webview/browser/deferred_gpu_command_service.h"
+#include "android_webview/browser/gfx/browser_view_renderer.h"
+#include "android_webview/browser/gfx/deferred_gpu_command_service.h"
+#include "android_webview/browser/scoped_add_feature_flags.h"
+#include "android_webview/browser/tracing/aw_trace_event_args_whitelist.h"
 #include "android_webview/common/aw_descriptors.h"
 #include "android_webview/common/aw_paths.h"
+#include "android_webview/common/aw_resource_bundle.h"
 #include "android_webview/common/aw_switches.h"
-#include "android_webview/common/crash_reporter/aw_microdump_crash_reporter.h"
+#include "android_webview/common/crash_reporter/aw_crash_reporter_client.h"
 #include "android_webview/common/crash_reporter/crash_keys.h"
 #include "android_webview/gpu/aw_content_gpu_client.h"
 #include "android_webview/renderer/aw_content_renderer_client.h"
 #include "base/android/apk_assets.h"
 #include "base/android/build_info.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/cpu.h"
-#include "base/debug/crash_logging.h"
 #include "base/i18n/icu_util.h"
+#include "base/i18n/rtl.h"
 #include "base/lazy_instance.h"
 #include "base/logging.h"
+#include "base/posix/global_descriptors.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/threading/thread_restrictions.h"
 #include "cc/base/switches.h"
-#include "components/crash/content/app/breakpad_linux.h"
+#include "components/autofill/core/common/autofill_features.h"
+#include "components/crash/core/common/crash_key.h"
 #include "components/safe_browsing/android/safe_browsing_api_handler_bridge.h"
-#include "components/spellcheck/common/spellcheck_features.h"
-#include "content/public/browser/android/browser_media_player_manager_register.h"
+#include "components/services/heap_profiling/public/cpp/profiling_client.h"
+#include "components/spellcheck/spellcheck_buildflags.h"
+#include "components/viz/common/features.h"
+#include "content/public/browser/android/media_url_interceptor_register.h"
 #include "content/public/browser/browser_main_runner.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/render_process_host.h"
@@ -43,11 +49,18 @@
 #include "gin/public/isolate_holder.h"
 #include "gin/v8_initializer.h"
 #include "gpu/command_buffer/service/gpu_switches.h"
+#include "gpu/config/gpu_finch_features.h"
 #include "gpu/ipc/gl_in_process_context.h"
 #include "media/base/media_switches.h"
-#include "media/media_features.h"
-#include "ui/base/resource/resource_bundle.h"
+#include "media/media_buildflags.h"
+#include "third_party/blink/public/common/features.h"
+#include "ui/base/ui_base_paths.h"
+#include "ui/base/ui_base_switches.h"
 #include "ui/events/gesture_detection/gesture_configuration.h"
+
+#if BUILDFLAG(ENABLE_SPELLCHECK)
+#include "components/spellcheck/common/spellcheck_features.h"
+#endif  // ENABLE_SPELLCHECK
 
 namespace android_webview {
 
@@ -75,10 +88,11 @@ bool AwMainDelegate::BasicStartupComplete(int* exit_code) {
   // Web Notification API and the Push API are not supported (crbug.com/434712)
   cl->AppendSwitch(switches::kDisableNotifications);
 
-#if BUILDFLAG(ENABLE_WEBRTC)
   // WebRTC hardware decoding is not supported, internal bug 15075307
   cl->AppendSwitch(switches::kDisableWebRtcHWDecoding);
-#endif
+
+  // Check damage in OnBeginFrame to prevent unnecessary draws.
+  cl->AppendSwitch(cc::switches::kCheckDamageEarly);
 
   // This is needed for sharing textures across the different GL threads.
   cl->AppendSwitch(switches::kEnableThreadedTextureMailboxes);
@@ -86,8 +100,9 @@ bool AwMainDelegate::BasicStartupComplete(int* exit_code) {
   // WebView does not yet support screen orientation locking.
   cl->AppendSwitch(switches::kDisableScreenOrientationLock);
 
-  // WebView does not currently support Web Speech API (crbug.com/487255)
-  cl->AppendSwitch(switches::kDisableSpeechAPI);
+  // WebView does not currently support Web Speech Synthesis API,
+  // but it does support Web Speech Recognition API (crbug.com/487255).
+  cl->AppendSwitch(switches::kDisableSpeechSynthesisAPI);
 
   // WebView does not currently support the Permissions API (crbug.com/490120)
   cl->AppendSwitch(switches::kDisablePermissionsAPI);
@@ -125,12 +140,19 @@ bool AwMainDelegate::BasicStartupComplete(int* exit_code) {
     base::android::RegisterApkAssetWithFileDescriptorStore(
         content::kV8NativesDataDescriptor,
         gin::V8Initializer::GetNativesFilePath());
+#if defined(USE_V8_CONTEXT_SNAPSHOT)
+    gin::V8Initializer::V8SnapshotFileType file_type =
+        gin::V8Initializer::V8SnapshotFileType::kWithAdditionalContext;
+#else
+    gin::V8Initializer::V8SnapshotFileType file_type =
+        gin::V8Initializer::V8SnapshotFileType::kDefault;
+#endif
     base::android::RegisterApkAssetWithFileDescriptorStore(
         content::kV8Snapshot32DataDescriptor,
-        gin::V8Initializer::GetSnapshotFilePath(true));
+        gin::V8Initializer::GetSnapshotFilePath(true, file_type));
     base::android::RegisterApkAssetWithFileDescriptorStore(
         content::kV8Snapshot64DataDescriptor,
-        gin::V8Initializer::GetSnapshotFilePath(false));
+        gin::V8Initializer::GetSnapshotFilePath(false, file_type));
   }
 #endif  // V8_USE_EXTERNAL_STARTUP_DATA
 
@@ -139,22 +161,54 @@ bool AwMainDelegate::BasicStartupComplete(int* exit_code) {
     cl->AppendSwitch(switches::kInProcessGPU);
   }
 
-  CommandLineHelper::AddEnabledFeature(
-      *cl, spellcheck::kAndroidSpellCheckerNonLowEnd.name);
+  {
+    ScopedAddFeatureFlags features(cl);
 
-  CommandLineHelper::AddDisabledFeature(*cl, features::kWebPayments.name);
+#if BUILDFLAG(ENABLE_SPELLCHECK)
+    features.EnableIfNotSet(spellcheck::kAndroidSpellCheckerNonLowEnd);
+#endif  // ENABLE_SPELLCHECK
 
-  // WebView does not support AndroidOverlay yet for video overlays.
-  CommandLineHelper::AddDisabledFeature(*cl, media::kUseAndroidOverlay.name);
+    features.EnableIfNotSet(
+        autofill::features::kAutofillSkipComparingInferredLabels);
 
-  // WebView does not support EME persistent license yet, because it's not
-  // clear on how user can remove persistent media licenses from UI.
-  CommandLineHelper::AddDisabledFeature(*cl,
-                                        media::kMediaDrmPersistentLicense.name);
+    if (cl->HasSwitch(switches::kWebViewLogJsConsoleMessages)) {
+      features.EnableIfNotSet(::features::kLogJsConsoleMessages);
+    }
 
-  CommandLineHelper::AddEnabledFeature(*cl, features::kLoadingWithMojo.name);
+    features.DisableIfNotSet(::features::kWebPayments);
 
-  CommandLineHelper::AddDisabledFeature(*cl, features::kMojoInputMessages.name);
+    // WebView does not and should not support WebAuthN.
+    features.DisableIfNotSet(::features::kWebAuth);
+
+    // WebView isn't compatible with OOP-D.
+    features.DisableIfNotSet(::features::kVizDisplayCompositor);
+
+    // WebView does not support AndroidOverlay yet for video overlays.
+    features.DisableIfNotSet(media::kUseAndroidOverlay);
+
+    // WebView doesn't support embedding CompositorFrameSinks which is needed
+    // for UseSurfaceLayerForVideo feature. https://crbug.com/853832
+    features.EnableIfNotSet(media::kDisableSurfaceLayerForVideo);
+
+    // WebView does not support EME persistent license yet, because it's not
+    // clear on how user can remove persistent media licenses from UI.
+    features.DisableIfNotSet(media::kMediaDrmPersistentLicense);
+
+    features.DisableIfNotSet(
+        autofill::features::kAutofillRestrictUnownedFieldsToFormlessCheckout);
+
+    features.DisableIfNotSet(::features::kBackgroundFetch);
+
+    features.DisableIfNotSet(::features::kAndroidSurfaceControl);
+
+    // TODO(https://crbug.com/963653): SmsReceiver is not yet supported on
+    // WebView.
+    features.DisableIfNotSet(::features::kSmsReceiver);
+
+    // WebView relies on tweaking the size heuristic to dynamically enable
+    // or disable accelerated cavnas 2d.
+    features.DisableIfNotSet(blink::features::kAlwaysAccelerateCanvas);
+  }
 
   android_webview::RegisterPathProvider();
 
@@ -162,6 +216,21 @@ bool AwMainDelegate::BasicStartupComplete(int* exit_code) {
       new safe_browsing::SafeBrowsingApiHandlerBridge());
   safe_browsing::SafeBrowsingApiHandler::SetInstance(
       safe_browsing_api_handler_.get());
+
+  // Used only if the argument filter is enabled in tracing config,
+  // as is the case by default in aw_tracing_controller.cc
+  base::trace_event::TraceLog::GetInstance()->SetArgumentFilterPredicate(
+      base::BindRepeating(&IsTraceEventArgsWhitelisted));
+  base::trace_event::TraceLog::GetInstance()->SetMetadataFilterPredicate(
+      base::BindRepeating(&IsTraceMetadataWhitelisted));
+
+  // The TLS slot used by the memlog allocator shim needs to be initialized
+  // early to ensure that it gets assigned a low slot number. If it gets
+  // initialized too late, the glibc TLS system will require a malloc call in
+  // order to allocate storage for a higher slot number. Since malloc is hooked,
+  // this causes re-entrancy into the allocator shim, while the TLS object is
+  // partially-initialized, which the TLS object is supposed to protect again.
+  heap_profiling::InitTLSSlot();
 
   return false;
 }
@@ -175,72 +244,52 @@ void AwMainDelegate::PreSandboxStartup() {
 
   const base::CommandLine& command_line =
       *base::CommandLine::ForCurrentProcess();
+
   std::string process_type =
       command_line.GetSwitchValueASCII(switches::kProcessType);
-  int crash_signal_fd = -1;
+  const bool is_browser_process = process_type.empty();
+  if (!is_browser_process) {
+    base::i18n::SetICUDefaultLocale(
+        command_line.GetSwitchValueASCII(switches::kLang));
+  }
+
   if (process_type == switches::kRendererProcess) {
-    auto* global_descriptors = base::GlobalDescriptors::GetInstance();
-    int pak_fd = global_descriptors->Get(kAndroidWebViewLocalePakDescriptor);
-    base::MemoryMappedFile::Region pak_region =
-        global_descriptors->GetRegion(kAndroidWebViewLocalePakDescriptor);
-    ui::ResourceBundle::InitSharedInstanceWithPakFileRegion(base::File(pak_fd),
-                                                            pak_region);
-
-    std::pair<int, ui::ScaleFactor> extra_paks[] = {
-        {kAndroidWebViewMainPakDescriptor, ui::SCALE_FACTOR_NONE},
-        {kAndroidWebView100PercentPakDescriptor, ui::SCALE_FACTOR_100P}};
-
-    for (const auto& pak_info : extra_paks) {
-      pak_fd = global_descriptors->Get(pak_info.first);
-      pak_region = global_descriptors->GetRegion(pak_info.first);
-      ui::ResourceBundle::GetSharedInstance().AddDataPackFromFileRegion(
-          base::File(pak_fd), pak_region, pak_info.second);
-    }
-
-    crash_signal_fd =
-        global_descriptors->Get(kAndroidWebViewCrashSignalDescriptor);
-  }
-  if (process_type.empty()) {
-    if (command_line.HasSwitch(switches::kWebViewSandboxedRenderer)) {
-      process_type = breakpad::kBrowserProcessType;
-    } else {
-      process_type = breakpad::kWebViewSingleProcessType;
-    }
+    InitResourceBundleRendererSide();
   }
 
-  crash_reporter::EnableCrashReporter(process_type, crash_signal_fd);
+  EnableCrashReporter(process_type);
 
   base::android::BuildInfo* android_build_info =
       base::android::BuildInfo::GetInstance();
-  base::debug::SetCrashKeyValue(crash_keys::kAppPackageName,
-                                android_build_info->package_name());
-  base::debug::SetCrashKeyValue(crash_keys::kAppPackageVersionCode,
-                                android_build_info->package_version_code());
-  base::debug::SetCrashKeyValue(
-      crash_keys::kAndroidSdkInt,
-      base::IntToString(android_build_info->sdk_int()));
+
+  static ::crash_reporter::CrashKeyString<64> app_name_key(
+      crash_keys::kAppPackageName);
+  app_name_key.Set(android_build_info->host_package_name());
+
+  static ::crash_reporter::CrashKeyString<64> app_version_key(
+      crash_keys::kAppPackageVersionCode);
+  app_version_key.Set(android_build_info->host_version_code());
+
+  static ::crash_reporter::CrashKeyString<8> sdk_int_key(
+      crash_keys::kAndroidSdkInt);
+  sdk_int_key.Set(base::NumberToString(android_build_info->sdk_int()));
 }
 
 int AwMainDelegate::RunProcess(
     const std::string& process_type,
     const content::MainFunctionParams& main_function_params) {
-  if (process_type.empty()) {
-    browser_runner_.reset(content::BrowserMainRunner::Create());
-    int exit_code = browser_runner_->Initialize(main_function_params);
-    DCHECK_LT(exit_code, 0);
+  // Defer to the default main method outside the browser process.
+  if (!process_type.empty())
+    return -1;
 
-    // At this point the content client has received the GPU info required
-    // to create a GPU fingerpring, and we can pass it to the microdump
-    // crash handler on the same thread as the crash handler was initialized.
-    crash_reporter::AddGpuFingerprintToMicrodumpCrashHandler(
-        content_client_.gpu_fingerprint());
-
-    // Return 0 so that we do NOT trigger the default behavior. On Android, the
-    // UI message loop is managed by the Java application.
-    return 0;
-  }
-
-  return -1;
+  browser_runner_ = content::BrowserMainRunner::Create();
+  int exit_code = browser_runner_->Initialize(main_function_params);
+  // We do not expect Initialize() to ever fail in AndroidWebView. On success
+  // it returns a negative value but we do not want to use that on Android.
+  DCHECK_LT(exit_code, 0);
+  // Return 0 so that we do NOT trigger the default behavior. On Android, the
+  // UI message loop is managed by the Java application.
+  return 0;
 }
 
 void AwMainDelegate::ProcessExiting(const std::string& process_type) {
@@ -249,8 +298,24 @@ void AwMainDelegate::ProcessExiting(const std::string& process_type) {
   logging::CloseLogFile();
 }
 
+bool AwMainDelegate::ShouldCreateFeatureList() {
+  // TODO(https://crbug.com/887468): Move the creation of FeatureList from
+  // AwBrowserMainParts::PreCreateThreads() to
+  // AwMainDelegate::PostEarlyInitialization().
+  return false;
+}
+
+// This function is called only on the browser process.
+void AwMainDelegate::PostEarlyInitialization(bool is_running_tests) {
+  InitIcuAndResourceBundleBrowserSide();
+  aw_feature_list_creator_->CreateFeatureListAndFieldTrials();
+}
+
 content::ContentBrowserClient* AwMainDelegate::CreateContentBrowserClient() {
-  content_browser_client_.reset(new AwContentBrowserClient());
+  DCHECK(!aw_feature_list_creator_);
+  aw_feature_list_creator_ = std::make_unique<AwFeatureListCreator>();
+  content_browser_client_.reset(
+      new AwContentBrowserClient(aw_feature_list_creator_.get()));
   return content_browser_client_.get();
 }
 
@@ -259,22 +324,21 @@ gpu::SyncPointManager* GetSyncPointManager() {
   DCHECK(DeferredGpuCommandService::GetInstance());
   return DeferredGpuCommandService::GetInstance()->sync_point_manager();
 }
-
-const gpu::GPUInfo& GetGPUInfo() {
+gpu::SharedImageManager* GetSharedImageManager() {
   DCHECK(DeferredGpuCommandService::GetInstance());
-  return DeferredGpuCommandService::GetInstance()->gpu_info();
-}
-
-const gpu::GpuFeatureInfo& GetGpuFeatureInfo() {
-  DCHECK(DeferredGpuCommandService::GetInstance());
-  return DeferredGpuCommandService::GetInstance()->gpu_feature_info();
+  const bool enable_shared_image =
+      base::CommandLine::ForCurrentProcess()->HasSwitch(
+          switches::kWebViewEnableSharedImage);
+  return enable_shared_image
+             ? DeferredGpuCommandService::GetInstance()->shared_image_manager()
+             : nullptr;
 }
 }  // namespace
 
 content::ContentGpuClient* AwMainDelegate::CreateContentGpuClient() {
-  content_gpu_client_.reset(new AwContentGpuClient(
-      base::Bind(&GetSyncPointManager), base::Bind(&GetGPUInfo),
-      base::Bind(&GetGpuFeatureInfo)));
+  content_gpu_client_ = std::make_unique<AwContentGpuClient>(
+      base::BindRepeating(&GetSyncPointManager),
+      base::BindRepeating(&GetSharedImageManager));
   return content_gpu_client_.get();
 }
 

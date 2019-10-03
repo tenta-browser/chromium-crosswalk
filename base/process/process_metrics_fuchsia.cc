@@ -4,48 +4,39 @@
 
 #include "base/process/process_metrics.h"
 
+#include <lib/fdio/limits.h>
+
 namespace base {
 
+size_t GetMaxFds() {
+  return FDIO_MAX_FD;
+}
+
+size_t GetHandleLimit() {
+  // Duplicated from the internal Magenta kernel constant kMaxHandleCount
+  // (zircon/kernel/object/handle.cc).
+  return 256 * 1024u;
+}
+
 size_t GetSystemCommitCharge() {
-  // Not available, doesn't seem likely that it will be (for the whole system).
-  NOTIMPLEMENTED();
+  // TODO(https://crbug.com/926581): Fuchsia does not support this.
   return 0;
 }
 
 // static
 std::unique_ptr<ProcessMetrics> ProcessMetrics::CreateProcessMetrics(
     ProcessHandle process) {
-  NOTIMPLEMENTED();  // TODO(fuchsia): https://crbug.com/706592.
+  // TODO(https://crbug.com/926581).
   return nullptr;
 }
 
-double ProcessMetrics::GetPlatformIndependentCPUUsage() {
-  NOTIMPLEMENTED();  // TODO(fuchsia): https://crbug.com/706592.
-  return 0.0;
-}
-
-size_t ProcessMetrics::GetPagefileUsage() const {
-  NOTIMPLEMENTED();  // TODO(fuchsia): https://crbug.com/706592.
-  return 0;
-}
-
-size_t ProcessMetrics::GetWorkingSetSize() const {
-  NOTIMPLEMENTED();  // TODO(fuchsia): https://crbug.com/706592.
-  return 0;
-}
-
-size_t ProcessMetrics::GetPeakWorkingSetSize() const {
-  NOTIMPLEMENTED();  // TODO(fuchsia): https://crbug.com/706592.
-  return 0;
-}
-
-bool ProcessMetrics::GetWorkingSetKBytes(WorkingSetKBytes* ws_usage) const {
-  NOTIMPLEMENTED();  // TODO(fuchsia): https://crbug.com/706592.
-  return false;
+TimeDelta ProcessMetrics::GetCumulativeCPUUsage() {
+  // TODO(https://crbug.com/926581).
+  return TimeDelta();
 }
 
 bool GetSystemMemoryInfo(SystemMemoryInfoKB* meminfo) {
-  NOTIMPLEMENTED();  // TODO(fuchsia): https://crbug.com/706592.
+  // TODO(https://crbug.com/926581).
   return false;
 }
 

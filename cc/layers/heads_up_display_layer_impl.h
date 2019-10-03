@@ -9,24 +9,29 @@
 #include <string>
 #include <vector>
 
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
 #include "base/time/time.h"
 #include "cc/cc_export.h"
 #include "cc/layers/layer_impl.h"
 #include "cc/resources/memory_history.h"
-#include "cc/resources/scoped_resource.h"
+#include "cc/resources/resource_pool.h"
 #include "cc/trees/debug_rect_history.h"
 #include "third_party/skia/include/core/SkRefCnt.h"
 
-class SkCanvas;
-class SkPaint;
 class SkTypeface;
 struct SkRect;
 
-namespace cc {
+namespace viz {
+class ClientResourceProvider;
+}
 
+namespace cc {
 class FrameRateCounter;
+class LayerTreeFrameSink;
+class PaintCanvas;
+class PaintFlags;
+
+enum class TextAlign { kLeft, kCenter, kRight };
 
 class CC_EXPORT HeadsUpDisplayLayerImpl : public LayerImpl {
  public:
@@ -35,26 +40,34 @@ class CC_EXPORT HeadsUpDisplayLayerImpl : public LayerImpl {
       int id) {
     return base::WrapUnique(new HeadsUpDisplayLayerImpl(tree_impl, id));
   }
+  HeadsUpDisplayLayerImpl(const HeadsUpDisplayLayerImpl&) = delete;
   ~HeadsUpDisplayLayerImpl() override;
+
+  HeadsUpDisplayLayerImpl& operator=(const HeadsUpDisplayLayerImpl&) = delete;
 
   std::unique_ptr<LayerImpl> CreateLayerImpl(LayerTreeImpl* tree_impl) override;
 
   bool WillDraw(DrawMode draw_mode,
-                LayerTreeResourceProvider* resource_provider) override;
+                viz::ClientResourceProvider* resource_provider) override;
   void AppendQuads(viz::RenderPass* render_pass,
                    AppendQuadsData* append_quads_data) override;
   void UpdateHudTexture(DrawMode draw_mode,
-                        ResourceProvider* resource_provider,
-                        viz::ContextProvider* context_provider,
+                        LayerTreeFrameSink* frame_sink,
+                        viz::ClientResourceProvider* resource_provider,
+                        bool gpu_raster,
                         const viz::RenderPassList& list);
 
   void ReleaseResources() override;
 
   gfx::Rect GetEnclosingRectInTargetSpace() const override;
 
-  bool IsAnimatingHUDContents() const { return fade_step_ > 0; }
+  bool IsAnimatingHUDContents() const {
+    return paint_rects_fade_step_ > 0 || layout_shift_rects_fade_step_ > 0;
+  }
 
   void SetHUDTypeface(sk_sp<SkTypeface> typeface);
+  void SetLayoutShiftRects(const std::vector<gfx::Rect>& rects);
+  const std::vector<gfx::Rect>& LayoutShiftRects() const;
 
   // This evicts hud quad appended during render pass preparation.
   void EvictHudQuad(const viz::RenderPassList& list);
@@ -88,58 +101,58 @@ class CC_EXPORT HeadsUpDisplayLayerImpl : public LayerImpl {
   void AsValueInto(base::trace_event::TracedValue* dict) const override;
 
   void UpdateHudContents();
-  void DrawHudContents(SkCanvas* canvas);
-
-  int MeasureText(SkPaint* paint, const std::string& text, int size) const;
-  void DrawText(SkCanvas* canvas,
-                SkPaint* paint,
+  void DrawHudContents(PaintCanvas* canvas);
+  void DrawText(PaintCanvas* canvas,
+                const PaintFlags& flags,
                 const std::string& text,
-                SkPaint::Align align,
+                TextAlign align,
                 int size,
                 int x,
                 int y) const;
-  void DrawText(SkCanvas* canvas,
-                SkPaint* paint,
+  void DrawText(PaintCanvas* canvas,
+                const PaintFlags& flags,
                 const std::string& text,
-                SkPaint::Align align,
+                TextAlign align,
                 int size,
                 const SkPoint& pos) const;
-  void DrawGraphBackground(SkCanvas* canvas,
-                           SkPaint* paint,
+  void DrawGraphBackground(PaintCanvas* canvas,
+                           PaintFlags* flags,
                            const SkRect& bounds) const;
-  void DrawGraphLines(SkCanvas* canvas,
-                      SkPaint* paint,
+  void DrawGraphLines(PaintCanvas* canvas,
+                      PaintFlags* flags,
                       const SkRect& bounds,
                       const Graph& graph) const;
 
-  SkRect DrawFPSDisplay(SkCanvas* canvas,
+  SkRect DrawFPSDisplay(PaintCanvas* canvas,
                         const FrameRateCounter* fps_counter,
                         int right,
                         int top) const;
-  SkRect DrawMemoryDisplay(SkCanvas* canvas,
+  SkRect DrawMemoryDisplay(PaintCanvas* canvas,
                            int top,
                            int right,
                            int width) const;
-  SkRect DrawGpuRasterizationStatus(SkCanvas* canvas,
+  SkRect DrawGpuRasterizationStatus(PaintCanvas* canvas,
                                     int right,
                                     int top,
                                     int width) const;
-  void DrawDebugRect(SkCanvas* canvas,
-                     SkPaint* paint,
+  void DrawDebugRect(PaintCanvas* canvas,
+                     PaintFlags* flags,
                      const DebugRect& rect,
                      SkColor stroke_color,
                      SkColor fill_color,
                      float stroke_width,
                      const std::string& label_text) const;
-  void DrawDebugRects(SkCanvas* canvas, DebugRectHistory* debug_rect_history);
+  void DrawDebugRects(PaintCanvas* canvas,
+                      DebugRectHistory* debug_rect_history);
 
-  void AcquireResource(ResourceProvider* resource_provider);
-  void ReleaseUnmatchedSizeResources(ResourceProvider* resource_provider);
-
-  std::vector<std::unique_ptr<ScopedResource>> resources_;
-  sk_sp<SkSurface> hud_surface_;
+  ResourcePool::InUsePoolResource in_flight_resource_;
+  std::unique_ptr<ResourcePool> pool_;
+  viz::DrawQuad* current_quad_ = nullptr;
+  // Used for software raster when it will be uploaded to a texture.
+  sk_sp<SkSurface> staging_surface_;
 
   sk_sp<SkTypeface> typeface_;
+  std::vector<gfx::Rect> layout_shift_rects_;
 
   float internal_contents_scale_;
   gfx::Size internal_content_bounds_;
@@ -147,12 +160,12 @@ class CC_EXPORT HeadsUpDisplayLayerImpl : public LayerImpl {
   Graph fps_graph_;
   Graph paint_time_graph_;
   MemoryHistory::Entry memory_entry_;
-  int fade_step_;
+  int paint_rects_fade_step_ = 0;
+  int layout_shift_rects_fade_step_ = 0;
   std::vector<DebugRect> paint_rects_;
+  std::vector<DebugRect> layout_shift_debug_rects_;
 
   base::TimeTicks time_of_last_graph_update_;
-
-  DISALLOW_COPY_AND_ASSIGN(HeadsUpDisplayLayerImpl);
 };
 
 }  // namespace cc

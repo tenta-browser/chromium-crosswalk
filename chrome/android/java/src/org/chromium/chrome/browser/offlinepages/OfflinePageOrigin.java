@@ -4,6 +4,7 @@
 
 package org.chromium.chrome.browser.offlinepages;
 
+import android.annotation.SuppressLint;
 import android.content.Context;
 import android.content.pm.PackageManager;
 import android.content.pm.PackageManager.NameNotFoundException;
@@ -17,6 +18,7 @@ import org.json.JSONException;
 
 import org.chromium.base.VisibleForTesting;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.chrome.browser.tab.TabAssociatedApp;
 
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
@@ -31,7 +33,7 @@ public class OfflinePageOrigin {
 
     /** Creates origin based on the context and tab. */
     public OfflinePageOrigin(Context context, Tab tab) {
-        this(context, tab.getAppAssociatedWith());
+        this(context, TabAssociatedApp.getAppId(tab));
     }
 
     /** Creates origin based on the context and an app name. */
@@ -140,12 +142,33 @@ public class OfflinePageOrigin {
         return mAppName;
     }
 
+    @Override
+    public String toString() {
+        return encodeAsJsonString();
+    }
+
+    @Override
+    public boolean equals(Object other) {
+        if (other != null && other instanceof OfflinePageOrigin) {
+            OfflinePageOrigin o = (OfflinePageOrigin) other;
+            return mAppName.equals(o.mAppName) && Arrays.equals(mSignatures, o.mSignatures);
+        }
+        return false;
+    }
+
+    @Override
+    public int hashCode() {
+        return Arrays.deepHashCode(new Object[] {mAppName, mSignatures});
+    }
+
     /**
      * @param context The context to look up signatures.
      * @param appName The name of the application to look up.
      * @return a sorted list of strings representing the signatures of an app.
      *          Null if the app name is invalid or cannot be found.
      */
+    @SuppressLint("PackageManagerGetSignatures")
+    // https://stackoverflow.com/questions/39192844/android-studio-warning-when-using-packagemanager-get-signatures
     private static String[] getAppSignaturesFor(Context context, String appName) {
         if (TextUtils.isEmpty(appName)) return null;
         try {

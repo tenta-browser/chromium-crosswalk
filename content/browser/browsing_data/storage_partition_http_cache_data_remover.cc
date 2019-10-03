@@ -4,17 +4,18 @@
 
 #include "content/browser/browsing_data/storage_partition_http_cache_data_remover.h"
 
+#include "base/bind.h"
 #include "base/location.h"
 #include "base/sequenced_task_runner_helpers.h"
 #include "base/single_thread_task_runner.h"
+#include "base/task/post_task.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "content/browser/browsing_data/conditional_cache_deletion_helper.h"
+#include "content/public/browser/browser_task_traits.h"
 #include "content/public/browser/browser_thread.h"
 #include "content/public/browser/storage_partition.h"
-#include "net/disk_cache/blockfile/backend_impl.h"
+#include "content/public/common/content_features.h"
 #include "net/disk_cache/disk_cache.h"
-#include "net/disk_cache/memory/mem_backend_impl.h"
-#include "net/disk_cache/simple/simple_backend_impl.h"
 #include "net/http/http_cache.h"
 #include "net/url_request/url_request_context.h"
 #include "net/url_request/url_request_context_getter.h"
@@ -69,8 +70,8 @@ void StoragePartitionHttpCacheDataRemover::Remove(
   DCHECK(!done_callback.is_null());
   done_callback_ = std::move(done_callback);
 
-  BrowserThread::PostTask(
-      BrowserThread::IO, FROM_HERE,
+  base::PostTaskWithTraits(
+      FROM_HERE, {BrowserThread::IO},
       base::BindOnce(
           &StoragePartitionHttpCacheDataRemover::ClearHttpCacheOnIOThread,
           base::Unretained(this)));
@@ -130,8 +131,8 @@ void StoragePartitionHttpCacheDataRemover::DoClearCache(int rv) {
 
         rv = http_cache->GetBackend(
             &cache_,
-            base::Bind(&StoragePartitionHttpCacheDataRemover::DoClearCache,
-                       base::Unretained(this)));
+            base::BindOnce(&StoragePartitionHttpCacheDataRemover::DoClearCache,
+                           base::Unretained(this)));
         break;
       }
       case CacheState::DELETE_MAIN:
@@ -151,14 +152,15 @@ void StoragePartitionHttpCacheDataRemover::DoClearCache(int rv) {
                          &StoragePartitionHttpCacheDataRemover::DoClearCache,
                          base::Unretained(this)));
           } else if (delete_begin_.is_null() && delete_end_.is_max()) {
-            rv = cache_->DoomAllEntries(
-                base::Bind(&StoragePartitionHttpCacheDataRemover::DoClearCache,
-                           base::Unretained(this)));
+            rv = cache_->DoomAllEntries(base::BindOnce(
+                &StoragePartitionHttpCacheDataRemover::DoClearCache,
+                base::Unretained(this)));
           } else {
             rv = cache_->DoomEntriesBetween(
                 delete_begin_, delete_end_,
-                base::Bind(&StoragePartitionHttpCacheDataRemover::DoClearCache,
-                           base::Unretained(this)));
+                base::BindOnce(
+                    &StoragePartitionHttpCacheDataRemover::DoClearCache,
+                    base::Unretained(this)));
           }
           cache_ = nullptr;
         }
@@ -169,8 +171,8 @@ void StoragePartitionHttpCacheDataRemover::DoClearCache(int rv) {
         next_cache_state_ = CacheState::NONE;
 
         // Notify the UI thread that we are done.
-        BrowserThread::PostTask(
-            BrowserThread::UI, FROM_HERE,
+        base::PostTaskWithTraits(
+            FROM_HERE, {BrowserThread::UI},
             base::BindOnce(
                 &StoragePartitionHttpCacheDataRemover::ClearedHttpCache,
                 base::Unretained(this)));

@@ -22,19 +22,32 @@
 #include "components/cast_channel/logger.h"
 #include "components/cast_channel/proto/cast_channel.pb.h"
 #include "net/base/net_errors.h"
-#include "net/socket/socket.h"
 
 #define VLOG_WITH_CONNECTION(level) \
   VLOG(level) << "[" << ip_endpoint_.ToString() << ", auth=SSL_VERIFIED] "
 
 namespace cast_channel {
 
-CastTransportImpl::CastTransportImpl(net::Socket* socket,
+namespace {
+
+#if DCHECK_IS_ON()
+// Used to filter out PING and PONG message from logs, since there are a lot of
+// them and they're not interesting.
+bool IsPingPong(const CastMessage& message) {
+  return message.has_payload_utf8() &&
+         (message.payload_utf8() == R"({"type":"PING"})" ||
+          message.payload_utf8() == R"({"type":"PONG"})");
+}
+#endif  // DCHECK_IS_ON()
+
+}  // namespace
+
+CastTransportImpl::CastTransportImpl(Channel* channel,
                                      int channel_id,
                                      const net::IPEndPoint& ip_endpoint,
                                      scoped_refptr<Logger> logger)
     : started_(false),
-      socket_(socket),
+      channel_(channel),
       write_state_(WriteState::IDLE),
       read_state_(ReadState::READ),
       error_state_(ChannelError::NONE),
@@ -45,7 +58,7 @@ CastTransportImpl::CastTransportImpl(net::Socket* socket,
 
   // Buffer is reused across messages to minimize unnecessary buffer
   // [re]allocations.
-  read_buffer_ = new net::GrowableIOBuffer();
+  read_buffer_ = base::MakeRefCounted<net::GrowableIOBuffer>();
   read_buffer_->SetCapacity(MessageFramer::MessageHeader::max_message_size());
   framer_.reset(new MessageFramer(read_buffer_));
 }
@@ -64,7 +77,6 @@ bool CastTransportImpl::IsTerminalReadState(ReadState read_state) {
   return read_state == ReadState::READ_ERROR;
 }
 
-
 void CastTransportImpl::SetReadDelegate(std::unique_ptr<Delegate> delegate) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(delegate);
@@ -76,26 +88,26 @@ void CastTransportImpl::SetReadDelegate(std::unique_ptr<Delegate> delegate) {
 
 void CastTransportImpl::FlushWriteQueue() {
   for (; !write_queue_.empty(); write_queue_.pop()) {
-    net::CompletionCallback& callback = write_queue_.front().callback;
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(callback, net::ERR_FAILED));
-    callback.Reset();
+        FROM_HERE, base::BindOnce(std::move(write_queue_.front().callback),
+                                  net::ERR_FAILED));
   }
 }
 
 void CastTransportImpl::SendMessage(const CastMessage& message,
-                                    const net::CompletionCallback& callback) {
+                                    net::CompletionOnceCallback callback) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
+  DCHECK(IsCastMessageValid(message));
+  DVLOG_IF(1, !IsPingPong(message)) << "Sending: " << message;
   std::string serialized_message;
   if (!MessageFramer::Serialize(message, &serialized_message)) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(callback, net::ERR_FAILED));
+        FROM_HERE, base::BindOnce(std::move(callback), net::ERR_FAILED));
     return;
   }
-  WriteRequest write_request(message.namespace_(), serialized_message,
-                             callback);
 
-  write_queue_.push(write_request);
+  write_queue_.emplace(message.namespace_(), serialized_message,
+                       std::move(callback));
   if (write_state_ == WriteState::IDLE) {
     SetWriteState(WriteState::WRITE);
     OnWriteResult(net::OK);
@@ -105,15 +117,14 @@ void CastTransportImpl::SendMessage(const CastMessage& message,
 CastTransportImpl::WriteRequest::WriteRequest(
     const std::string& namespace_,
     const std::string& payload,
-    const net::CompletionCallback& callback)
-    : message_namespace(namespace_), callback(callback) {
+    net::CompletionOnceCallback callback)
+    : message_namespace(namespace_), callback(std::move(callback)) {
   VLOG(2) << "WriteRequest size: " << payload.size();
-  io_buffer = new net::DrainableIOBuffer(new net::StringIOBuffer(payload),
-                                         payload.size());
+  io_buffer = base::MakeRefCounted<net::DrainableIOBuffer>(
+      base::MakeRefCounted<net::StringIOBuffer>(payload), payload.size());
 }
 
-CastTransportImpl::WriteRequest::WriteRequest(const WriteRequest& other) =
-    default;
+CastTransportImpl::WriteRequest::WriteRequest(WriteRequest&& other) = default;
 
 CastTransportImpl::WriteRequest::~WriteRequest() {}
 
@@ -188,18 +199,19 @@ void CastTransportImpl::OnWriteResult(int result) {
 
 int CastTransportImpl::DoWrite() {
   DCHECK(!write_queue_.empty());
-  WriteRequest& request = write_queue_.front();
+  net::DrainableIOBuffer* io_buffer = write_queue_.front().io_buffer.get();
 
-  VLOG_WITH_CONNECTION(2) << "WriteData byte_count = "
-                          << request.io_buffer->size() << " bytes_written "
-                          << request.io_buffer->BytesConsumed();
+  VLOG_WITH_CONNECTION(2) << "WriteData byte_count = " << io_buffer->size()
+                          << " bytes_written " << io_buffer->BytesConsumed();
 
   SetWriteState(WriteState::WRITE_COMPLETE);
 
-  int rv = socket_->Write(
-      request.io_buffer.get(), request.io_buffer->BytesRemaining(),
-      base::Bind(&CastTransportImpl::OnWriteResult, base::Unretained(this)));
-  return rv;
+  // TODO(mfoltz): Improve APIs for CastTransportImpl::Channel::{Read|Write} so
+  // that they don't expect raw pointers but handle movable parameters instead.
+  channel_->Write(io_buffer, io_buffer->BytesRemaining(),
+                  base::BindOnce(&CastTransportImpl::OnWriteResult,
+                                 base::Unretained(this)));
+  return net::ERR_IO_PENDING;
 }
 
 int CastTransportImpl::DoWriteComplete(int result) {
@@ -214,8 +226,7 @@ int CastTransportImpl::DoWriteComplete(int result) {
   }
 
   // Some bytes were successfully written
-  WriteRequest& request = write_queue_.front();
-  scoped_refptr<net::DrainableIOBuffer> io_buffer = request.io_buffer;
+  net::DrainableIOBuffer* io_buffer = write_queue_.front().io_buffer.get();
   io_buffer->DidConsume(result);
   if (io_buffer->BytesRemaining() == 0) {  // Message fully sent
     SetWriteState(WriteState::DO_CALLBACK);
@@ -230,11 +241,11 @@ int CastTransportImpl::DoWriteCallback() {
   VLOG_WITH_CONNECTION(2) << "DoWriteCallback";
   DCHECK(!write_queue_.empty());
 
-  WriteRequest& request = write_queue_.front();
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE, base::Bind(request.callback, net::OK));
-
+      FROM_HERE,
+      base::BindOnce(std::move(write_queue_.front().callback), net::OK));
   write_queue_.pop();
+
   if (write_queue_.empty()) {
     SetWriteState(WriteState::IDLE);
   } else {
@@ -318,9 +329,10 @@ int CastTransportImpl::DoRead() {
   DCHECK_GT(num_bytes_to_read, 0u);
 
   // Read up to num_bytes_to_read into |current_read_buffer_|.
-  return socket_->Read(
+  channel_->Read(
       read_buffer_.get(), base::checked_cast<uint32_t>(num_bytes_to_read),
-      base::Bind(&CastTransportImpl::OnReadResult, base::Unretained(this)));
+      base::BindOnce(&CastTransportImpl::OnReadResult, base::Unretained(this)));
+  return net::ERR_IO_PENDING;
 }
 
 int CastTransportImpl::DoReadComplete(int result) {
@@ -360,6 +372,8 @@ int CastTransportImpl::DoReadCallback() {
     return net::ERR_INVALID_RESPONSE;
   }
   SetReadState(ReadState::READ);
+  DVLOG_IF(1, !IsPingPong(*current_message_))
+      << "Received: " << *current_message_;
   delegate_->OnMessage(*current_message_);
   current_message_.reset();
   return net::OK;

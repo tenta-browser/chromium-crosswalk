@@ -7,8 +7,8 @@
 #include "base/bind.h"
 #include "content/public/browser/web_contents.h"
 #include "content/public/common/url_constants.h"
-#include "printing/features/features.h"
-#include "third_party/WebKit/public/web/WebContextMenuData.h"
+#include "printing/buildflags/buildflags.h"
+#include "third_party/blink/public/web/web_context_menu_data.h"
 
 using blink::WebContextMenuData;
 using content::WebContents;
@@ -19,10 +19,6 @@ bool IsDevToolsURL(const GURL& url) {
   return url.SchemeIs(content::kChromeDevToolsScheme);
 }
 
-bool DefaultIsInternalResourcesURL(const GURL& url) {
-  return url.SchemeIs(content::kChromeUIScheme);
-}
-
 }  // namespace
 
 ContextMenuContentType::ContextMenuContentType(
@@ -31,10 +27,7 @@ ContextMenuContentType::ContextMenuContentType(
     bool supports_custom_items)
     : params_(params),
       source_web_contents_(web_contents),
-      supports_custom_items_(supports_custom_items),
-      internal_resources_url_checker_(
-          base::Bind(&DefaultIsInternalResourcesURL)) {
-}
+      supports_custom_items_(supports_custom_items) {}
 
 ContextMenuContentType::~ContextMenuContentType() {
 }
@@ -63,10 +56,9 @@ bool ContextMenuContentType::SupportsGroup(int group) {
   if (IsDevToolsURL(params_.page_url)) {
     // DevTools mostly provides custom context menu and uses
     // only the following default options.
-    if (group != ITEM_GROUP_CUSTOM &&
-        group != ITEM_GROUP_EDITABLE &&
-        group != ITEM_GROUP_COPY &&
-        group != ITEM_GROUP_DEVELOPER) {
+    if (group != ITEM_GROUP_CUSTOM && group != ITEM_GROUP_EDITABLE &&
+        group != ITEM_GROUP_COPY && group != ITEM_GROUP_DEVELOPER &&
+        group != ITEM_GROUP_SEARCH_PROVIDER) {
       return false;
     }
   }
@@ -92,18 +84,19 @@ bool ContextMenuContentType::SupportsGroupInternal(int group) {
       if (!is_candidate && params_.page_url.is_empty())
         DCHECK(params_.frame_url.is_empty());
 
-      return is_candidate && !params_.page_url.is_empty() &&
-          !IsInternalResourcesURL(params_.page_url);
+      return is_candidate && !params_.page_url.is_empty();
     }
 
     case ITEM_GROUP_FRAME: {
       bool page_group_supported = SupportsGroupInternal(ITEM_GROUP_PAGE);
-      return page_group_supported && !params_.frame_url.is_empty() &&
-          !IsInternalResourcesURL(params_.page_url);
+      return page_group_supported && !params_.frame_url.is_empty();
     }
 
     case ITEM_GROUP_LINK:
       return has_link;
+
+    case ITEM_GROUP_SMART_SELECTION:
+      return has_selection && !has_link;
 
     case ITEM_GROUP_MEDIA_IMAGE:
       return params_.media_type == WebContextMenuData::kMediaTypeImage;
@@ -125,11 +118,7 @@ bool ContextMenuContentType::SupportsGroupInternal(int group) {
       return params_.media_type == WebContextMenuData::kMediaTypePlugin;
 
     case ITEM_GROUP_MEDIA_FILE:
-#if defined(WEBCONTEXT_MEDIATYPEFILE_DEFINED)
       return params_.media_type == WebContextMenuData::kMediaTypeFile;
-#else
-      return false;
-#endif
 
     case ITEM_GROUP_EDITABLE:
       return params_.is_editable;
@@ -172,8 +161,4 @@ bool ContextMenuContentType::SupportsGroupInternal(int group) {
       NOTREACHED();
       return false;
   }
-}
-
-bool ContextMenuContentType::IsInternalResourcesURL(const GURL& url) {
-  return internal_resources_url_checker_.Run(url);
 }

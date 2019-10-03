@@ -5,6 +5,9 @@
 #ifndef UI_VIEWS_WIDGET_DESKTOP_AURA_DESKTOP_WINDOW_TREE_HOST_WIN_H_
 #define UI_VIEWS_WIDGET_DESKTOP_AURA_DESKTOP_WINDOW_TREE_HOST_WIN_H_
 
+#include <memory>
+#include <string>
+
 #include "base/macros.h"
 #include "ui/aura/window_tree_host.h"
 #include "ui/views/views_export.h"
@@ -20,7 +23,9 @@ class FocusClient;
 }
 
 namespace ui {
+enum class DomCode;
 class InputMethod;
+class KeyboardHook;
 }  // namespace ui
 
 namespace wm {
@@ -34,6 +39,10 @@ class NonClientFrameView;
 
 namespace corewm {
 class TooltipWin;
+}
+
+namespace test {
+class DesktopWindowTreeHostWinTestApi;
 }
 
 class VIEWS_EXPORT DesktopWindowTreeHostWin
@@ -52,8 +61,7 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
 
  protected:
   // Overridden from DesktopWindowTreeHost:
-  void Init(aura::Window* content_window,
-            const Widget::InitParams& params) override;
+  void Init(const Widget::InitParams& params) override;
   void OnNativeWidgetCreated(const Widget::InitParams& params) override;
   void OnActiveWindowChanged(bool active) override;
   void OnWidgetInitDone() override;
@@ -63,8 +71,8 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
   void Close() override;
   void CloseNow() override;
   aura::WindowTreeHost* AsWindowTreeHost() override;
-  void ShowWindowWithState(ui::WindowShowState show_state) override;
-  void ShowMaximizedWithBounds(const gfx::Rect& restored_bounds) override;
+  void Show(ui::WindowShowState show_state,
+            const gfx::Rect& restore_bounds) override;
   bool IsVisible() const override;
   void SetSize(const gfx::Size& size) override;
   void StackAbove(aura::Window* window) override;
@@ -87,8 +95,8 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
   bool IsMaximized() const override;
   bool IsMinimized() const override;
   bool HasCapture() const override;
-  void SetAlwaysOnTop(bool always_on_top) override;
-  bool IsAlwaysOnTop() const override;
+  void SetZOrderLevel(ui::ZOrderLevel order) override;
+  ui::ZOrderLevel GetZOrderLevel() const override;
   void SetVisibleOnAllWorkspaces(bool always_visible) override;
   bool IsVisibleOnAllWorkspaces() const override;
   bool SetWindowTitle(const base::string16& title) override;
@@ -106,6 +114,7 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
   void SetFullscreen(bool fullscreen) override;
   bool IsFullscreen() const override;
   void SetOpacity(float opacity) override;
+  void SetAspectRatio(const gfx::SizeF& aspect_ratio) override;
   void SetWindowIcons(const gfx::ImageSkia& window_icon,
                       const gfx::ImageSkia& app_icon) override;
   void InitModalType(ui::ModalType modal_type) override;
@@ -127,6 +136,11 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
   gfx::Point GetLocationOnScreenInPixels() const override;
   void SetCapture() override;
   void ReleaseCapture() override;
+  bool CaptureSystemKeyEventsImpl(
+      base::Optional<base::flat_set<ui::DomCode>> dom_codes) override;
+  void ReleaseSystemKeyEventCapture() override;
+  bool IsKeyLocked(ui::DomCode dom_code) override;
+  base::flat_map<std::string, std::string> GetKeyboardLayoutMap() override;
   void SetCursorNative(gfx::NativeCursor cursor) override;
   void OnCursorVisibilityChangedNative(bool show) override;
   void MoveCursorToScreenLocationInPixels(
@@ -144,8 +158,7 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
   FrameMode GetFrameMode() const override;
   bool HasFrame() const override;
   void SchedulePaint() override;
-  void SetAlwaysRenderAsActive(bool always_render_as_active) override;
-  bool IsAlwaysRenderAsActive() override;
+  bool ShouldPaintAsActive() const override;
   bool CanResize() const override;
   bool CanMaximize() const override;
   bool CanMinimize() const override;
@@ -156,15 +169,15 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
   int GetInitialShowState() const override;
   bool WillProcessWorkAreaChange() const override;
   int GetNonClientComponent(const gfx::Point& point) const override;
-  void GetWindowMask(const gfx::Size& size, gfx::Path* path) override;
-  bool GetClientAreaInsets(gfx::Insets* insets) const override;
+  void GetWindowMask(const gfx::Size& size, SkPath* path) override;
+  bool GetClientAreaInsets(gfx::Insets* insets,
+                           HMONITOR monitor) const override;
+  bool GetDwmFrameInsetsInPixels(gfx::Insets* insets) const override;
   void GetMinMaxSize(gfx::Size* min_size, gfx::Size* max_size) const override;
   gfx::Size GetRootViewSize() const override;
   gfx::Size DIPToScreenSize(const gfx::Size& dip_size) const override;
   void ResetWindowControls() override;
   gfx::NativeViewAccessible GetNativeViewAccessible() override;
-  bool ShouldHandleSystemCommands() const override;
-  void HandleAppDeactivated() override;
   void HandleActivationChanged(bool active) override;
   bool HandleAppCommand(short command) override;
   void HandleCancelMode() override;
@@ -183,14 +196,14 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
   void HandleWorkAreaChanged() override;
   void HandleVisibilityChanging(bool visible) override;
   void HandleVisibilityChanged(bool visible) override;
+  void HandleWindowMinimizedOrRestored(bool restored) override;
   void HandleClientSizeChanged(const gfx::Size& new_size) override;
   void HandleFrameChanged() override;
   void HandleNativeFocus(HWND last_focused_window) override;
   void HandleNativeBlur(HWND focused_window) override;
-  bool HandleMouseEvent(const ui::MouseEvent& event) override;
-  bool HandlePointerEvent(ui::PointerEvent* event) override;
+  bool HandleMouseEvent(ui::MouseEvent* event) override;
   void HandleKeyEvent(ui::KeyEvent* event) override;
-  void HandleTouchEvent(const ui::TouchEvent& event) override;
+  void HandleTouchEvent(ui::TouchEvent* event) override;
   bool HandleIMEMessage(UINT message,
                         WPARAM w_param,
                         LPARAM l_param,
@@ -207,7 +220,8 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
                     LPARAM l_param,
                     LRESULT* result) override;
   void PostHandleMSG(UINT message, WPARAM w_param, LPARAM l_param) override;
-  bool HandleScrollEvent(const ui::ScrollEvent& event) override;
+  bool HandleScrollEvent(ui::ScrollEvent* event) override;
+  bool HandleGestureEvent(ui::GestureEvent* event) override;
   void HandleWindowSizeChanging() override;
   void HandleWindowSizeUnchanged() override;
   void HandleWindowScaleFactorChanged(float window_scale_factor) override;
@@ -217,6 +231,8 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
   HWND GetHWND() const;
 
  private:
+  friend class ::views::test::DesktopWindowTreeHostWinTestApi;
+
   void SetWindowTransparency();
 
   // Returns true if a modal window is active in the current root window chain.
@@ -225,6 +241,9 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
   // Called whenever the HWND resizes or moves, to see if the nearest HMONITOR
   // has changed, and, if so, inform the aura::WindowTreeHost.
   void CheckForMonitorChange();
+
+  // Accessor for DesktopNativeWidgetAura::content_window().
+  aura::Window* content_window();
 
   HMONITOR last_monitor_from_window_ = nullptr;
 
@@ -236,8 +255,6 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
   internal::NativeWidgetDelegate* native_widget_delegate_;
 
   DesktopNativeWidgetAura* desktop_native_widget_aura_;
-
-  aura::Window* content_window_;
 
   // Owned by DesktopNativeWidgetAura.
   DesktopDragDropClientWin* drag_drop_client_;
@@ -281,11 +298,18 @@ class VIEWS_EXPORT DesktopWindowTreeHostWin
   // whenever the cursor visibility state changes.
   static bool is_cursor_visible_;
 
+  // Captures system key events when keyboard lock is requested.
+  std::unique_ptr<ui::KeyboardHook> keyboard_hook_;
+
   std::unique_ptr<wm::ScopedTooltipDisabler> tooltip_disabler_;
 
   // Indicates if current window will receive mouse events when should not
   // become activated.
   bool wants_mouse_events_when_inactive_ = false;
+
+  // The z-order level of the window; the window exhibits "always on top"
+  // behavior if > 0.
+  ui::ZOrderLevel z_order_ = ui::ZOrderLevel::kNormal;
 
   DISALLOW_COPY_AND_ASSIGN(DesktopWindowTreeHostWin);
 };

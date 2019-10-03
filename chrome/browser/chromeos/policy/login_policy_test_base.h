@@ -9,6 +9,8 @@
 #include <string>
 
 #include "base/macros.h"
+#include "chrome/browser/chromeos/login/test/fake_gaia_mixin.h"
+#include "chrome/browser/chromeos/login/test/local_policy_test_server_mixin.h"
 #include "chrome/browser/chromeos/login/test/oobe_base_test.h"
 
 namespace base {
@@ -27,22 +29,32 @@ class LoginPolicyTestBase : public chromeos::OobeBaseTest {
   ~LoginPolicyTestBase() override;
 
   // chromeos::OobeBaseTest::
-  void SetUp() override;
-  void SetUpCommandLine(base::CommandLine* command_line) override;
+  void SetUpInProcessBrowserTestFixture() override;
   void SetUpOnMainThread() override;
 
   virtual void GetMandatoryPoliciesValue(base::DictionaryValue* policy) const;
   virtual void GetRecommendedPoliciesValue(base::DictionaryValue* policy) const;
+  virtual std::string GetAccount() const;
+  virtual std::string GetIdToken() const;
 
   UserPolicyTestHelper* user_policy_helper() {
     return user_policy_helper_.get();
   }
 
+  Profile* GetProfileForActiveUser();
+
   void SkipToLoginScreen();
-  void LogIn(const std::string& user_id, const std::string& password);
+  // Should match ShowSigninScreenForTest method in SigninScreenHandler.
+  void LogIn(const std::string& user_id,
+             const std::string& password,
+             const std::string& services);
 
   static const char kAccountPassword[];
   static const char kAccountId[];
+  static const char kEmptyServices[];
+
+  chromeos::FakeGaiaMixin fake_gaia_{&mixin_host_, embedded_test_server()};
+  chromeos::LocalPolicyTestServerMixin local_policy_server_{&mixin_host_};
 
  private:
   void SetUpGaiaServerWithAccessTokens();

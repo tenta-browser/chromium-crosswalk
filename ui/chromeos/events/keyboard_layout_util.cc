@@ -5,18 +5,32 @@
 #include "ui/chromeos/events/keyboard_layout_util.h"
 
 #include "ui/chromeos/events/event_rewriter_chromeos.h"
-#include "ui/events/devices/input_device_manager.h"
+#include "ui/events/devices/device_data_manager.h"
 
 namespace ui {
 
 bool DeviceUsesKeyboardLayout2() {
   for (const InputDevice& keyboard :
-       InputDeviceManager::GetInstance()->GetKeyboardDevices()) {
+       DeviceDataManager::GetInstance()->GetKeyboardDevices()) {
     EventRewriterChromeOS::KeyboardTopRowLayout layout;
-    if (keyboard.type == InputDeviceType::INPUT_DEVICE_INTERNAL &&
-        EventRewriterChromeOS::GetKeyboardTopRowLayout(keyboard.sys_path,
-                                                       &layout)) {
-      return layout == EventRewriterChromeOS::kKbdTopRowLayout2;
+    if (EventRewriterChromeOS::GetKeyboardTopRowLayout(keyboard.sys_path,
+                                                       &layout) &&
+        layout == EventRewriterChromeOS::kKbdTopRowLayout2) {
+      return true;
+    }
+  }
+
+  return false;
+}
+
+bool DeviceKeyboardHasAssistantKey() {
+  for (const InputDevice& keyboard :
+       DeviceDataManager::GetInstance()->GetKeyboardDevices()) {
+    bool has_assistant_key = false;
+    if (EventRewriterChromeOS::HasAssistantKeyOnKeyboard(keyboard.sys_path,
+                                                         &has_assistant_key) &&
+        has_assistant_key) {
+      return true;
     }
   }
 

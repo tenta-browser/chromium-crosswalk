@@ -18,18 +18,17 @@ namespace views {
 class View;
 }
 
-struct LocationBarDecoration;
+struct DecorationInfo;
 
 // Helper class used to layout a list of decorations inside the omnibox.
 class LocationBarLayout {
-
  public:
-  enum Position {
-    LEFT_EDGE = 0,
-    RIGHT_EDGE,
+  enum class Position {
+    kLeftEdge,
+    kRightEdge,
   };
 
-  LocationBarLayout(Position position, int item_padding, int item_edit_padding);
+  LocationBarLayout(Position position, int item_edit_padding);
   virtual ~LocationBarLayout();
 
   // Add a decoration, specifying:
@@ -40,7 +39,6 @@ class LocationBarLayout {
   //   decorations;
   // - |edge_item_padding|, the padding between the omnibox edge and the item,
   //   if the item is the first one drawn;
-  // - |item_padding|, the padding between the previous item and this one;
   // - The |view| corresponding to this decoration, a weak pointer.
   // Note that |auto_collapse| can be true if and only if |max_fraction| is 0.
   void AddDecoration(int y,
@@ -48,11 +46,7 @@ class LocationBarLayout {
                      bool auto_collapse,
                      double max_fraction,
                      int edge_item_padding,
-                     int item_padding,
                      views::View* view);
-
-  // Add a non-resizable decoration with standard padding.
-  void AddDecoration(int y, int height, views::View* view);
 
   // First pass of decoration layout process. Pass the full width of the
   // location bar in |entry_width|. This pass will adjust it to account for
@@ -77,14 +71,11 @@ class LocationBarLayout {
   // the left of the omnibox, RIGHT_EDGE means the opposite.
   Position position_;
 
-  // The default padding between items.
-  int item_padding_;
-
   // The padding between the last decoration and the edit box.
   int item_edit_padding_;
 
   // The list of decorations to layout.
-  std::vector<std::unique_ptr<LocationBarDecoration>> decorations_;
+  std::vector<std::unique_ptr<DecorationInfo>> decorations_;
 
   DISALLOW_COPY_AND_ASSIGN(LocationBarLayout);
 };

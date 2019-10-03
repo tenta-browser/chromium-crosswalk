@@ -11,8 +11,9 @@
 #include "base/files/file.h"
 #include "base/logging.h"
 #include "base/numerics/math_constants.h"
+#include "base/thread_annotations.h"
 #include "base/time/time.h"
-#include "media/audio/sounds/wav_audio_handler.h"
+#include "media/audio/wav_audio_handler.h"
 #include "media/base/audio_bus.h"
 
 namespace media {
@@ -87,8 +88,8 @@ class BeepContext {
 
  private:
   mutable base::Lock lock_;
-  bool beep_once_;
-  bool automatic_beep_;
+  bool beep_once_ GUARDED_BY(lock_);
+  bool automatic_beep_ GUARDED_BY(lock_);
 };
 
 BeepContext* GetBeepContext() {
@@ -102,14 +103,9 @@ BeepContext* GetBeepContext() {
 // SineWaveAudioSource implementation.
 
 SineWaveAudioSource::SineWaveAudioSource(int channels,
-                                         double freq, double sample_freq)
-    : channels_(channels),
-      f_(freq / sample_freq),
-      time_state_(0),
-      cap_(0),
-      callbacks_(0),
-      errors_(0) {
-}
+                                         double freq,
+                                         double sample_freq)
+    : channels_(channels), f_(freq / sample_freq) {}
 
 SineWaveAudioSource::~SineWaveAudioSource() = default;
 
@@ -119,21 +115,29 @@ int SineWaveAudioSource::OnMoreData(base::TimeDelta /* delay */,
                                     base::TimeTicks /* delay_timestamp */,
                                     int /* prior_frames_skipped */,
                                     AudioBus* dest) {
-  base::AutoLock auto_lock(time_lock_);
-  callbacks_++;
+  int max_frames;
 
-  // The table is filled with s(t) = kint16max*sin(Theta*t),
-  // where Theta = 2*PI*fs.
-  // We store the discrete time value |t| in a member to ensure that the
-  // next pass starts at a correct state.
-  int max_frames =
-      cap_ > 0 ? std::min(dest->frames(), cap_ - time_state_) : dest->frames();
-  for (int i = 0; i < max_frames; ++i)
-    dest->channel(0)[i] = sin(2.0 * base::kPiDouble * f_ * time_state_++);
-  for (int i = 1; i < dest->channels(); ++i) {
-    memcpy(dest->channel(i), dest->channel(0),
-           max_frames * sizeof(*dest->channel(i)));
+  {
+    base::AutoLock auto_lock(lock_);
+    callbacks_++;
+
+    // The table is filled with s(t) = kint16max*sin(Theta*t),
+    // where Theta = 2*PI*fs.
+    // We store the discrete time value |t| in a member to ensure that the
+    // next pass starts at a correct state.
+    max_frames = cap_ > 0 ? std::min(dest->frames(), cap_ - pos_samples_)
+                          : dest->frames();
+    for (int i = 0; i < max_frames; ++i)
+      dest->channel(0)[i] = sin(2.0 * base::kPiDouble * f_ * pos_samples_++);
+    for (int i = 1; i < dest->channels(); ++i) {
+      memcpy(dest->channel(i), dest->channel(0),
+             max_frames * sizeof(*dest->channel(i)));
+    }
   }
+
+  if (on_more_data_callback_)
+    on_more_data_callback_.Run();
+
   return max_frames;
 }
 
@@ -142,14 +146,14 @@ void SineWaveAudioSource::OnError() {
 }
 
 void SineWaveAudioSource::CapSamples(int cap) {
-  base::AutoLock auto_lock(time_lock_);
+  base::AutoLock auto_lock(lock_);
   DCHECK_GT(cap, 0);
   cap_ = cap;
 }
 
 void SineWaveAudioSource::Reset() {
-  base::AutoLock auto_lock(time_lock_);
-  time_state_ = 0;
+  base::AutoLock auto_lock(lock_);
+  pos_samples_ = 0;
 }
 
 FileSource::FileSource(const AudioParameters& params,
@@ -193,8 +197,7 @@ void FileSource::LoadWavFile(const base::FilePath& path_to_wav_file) {
   AudioParameters file_audio_slice(
       AudioParameters::AUDIO_PCM_LOW_LATENCY,
       GuessChannelLayout(wav_audio_handler_->num_channels()),
-      wav_audio_handler_->sample_rate(), wav_audio_handler_->bits_per_sample(),
-      params_.frames_per_buffer());
+      wav_audio_handler_->sample_rate(), params_.frames_per_buffer());
 
   file_audio_converter_.reset(
       new AudioConverter(file_audio_slice, params_, false));
@@ -244,14 +247,13 @@ double FileSource::ProvideInput(AudioBus* audio_bus_into_converter,
 void FileSource::OnError() {}
 
 BeepingSource::BeepingSource(const AudioParameters& params)
-    : buffer_size_(params.GetBytesPerBuffer()),
+    : buffer_size_(params.GetBytesPerBuffer(kSampleFormatU8)),
       buffer_(new uint8_t[buffer_size_]),
       params_(params),
       last_callback_time_(base::TimeTicks::Now()),
       beep_duration_in_buffers_(kBeepDurationMilliseconds *
                                 params.sample_rate() /
-                                params.frames_per_buffer() /
-                                1000),
+                                params.frames_per_buffer() / 1000),
       beep_generated_in_buffers_(0),
       beep_period_in_frames_(params.sample_rate() / kBeepFrequency) {}
 
@@ -264,7 +266,7 @@ int BeepingSource::OnMoreData(base::TimeDelta /* delay */,
   // Accumulate the time from the last beep.
   interval_from_last_beep_ += base::TimeTicks::Now() - last_callback_time_;
 
-  memset(buffer_.get(), 0, buffer_size_);
+  memset(buffer_.get(), 128, buffer_size_);
   bool should_beep = false;
   BeepContext* beep_context = GetBeepContext();
   if (beep_context->automatic_beep()) {
@@ -283,17 +285,16 @@ int BeepingSource::OnMoreData(base::TimeDelta /* delay */,
   // generate a beep sound.
   if (should_beep || beep_generated_in_buffers_) {
     // Compute the number of frames to output high value. Then compute the
-    // number of bytes based on channels and bits per channel.
+    // number of bytes based on channels.
     int high_frames = beep_period_in_frames_ / 2;
-    int high_bytes = high_frames * params_.bits_per_sample() *
-        params_.channels() / 8;
+    int high_bytes = high_frames * params_.channels();
 
     // Separate high and low with the same number of bytes to generate a
     // square wave.
     int position = 0;
     while (position + high_bytes <= buffer_size_) {
       // Write high values first.
-      memset(buffer_.get() + position, 128, high_bytes);
+      memset(buffer_.get() + position, 255, high_bytes);
       // Then leave low values in the buffer with |high_bytes|.
       position += high_bytes * 2;
     }
@@ -304,8 +305,8 @@ int BeepingSource::OnMoreData(base::TimeDelta /* delay */,
   }
 
   last_callback_time_ = base::TimeTicks::Now();
-  dest->FromInterleaved(buffer_.get(), dest->frames(),
-                        params_.bits_per_sample() / 8);
+  dest->FromInterleaved<UnsignedInt8SampleTypeTraits>(buffer_.get(),
+                                                      dest->frames());
   return dest->frames();
 }
 

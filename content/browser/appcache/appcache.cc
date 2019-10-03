@@ -7,6 +7,7 @@
 #include <stddef.h>
 
 #include <algorithm>
+#include <vector>
 
 #include "base/logging.h"
 #include "base/stl_util.h"
@@ -14,6 +15,8 @@
 #include "content/browser/appcache/appcache_host.h"
 #include "content/browser/appcache/appcache_storage.h"
 #include "content/common/appcache_interfaces.h"
+#include "third_party/blink/public/mojom/appcache/appcache.mojom.h"
+#include "url/origin.h"
 
 namespace content {
 
@@ -23,6 +26,7 @@ AppCache::AppCache(AppCacheStorage* storage, int64_t cache_id)
       online_whitelist_all_(false),
       is_complete_(false),
       cache_size_(0),
+      padding_size_(0),
       storage_(storage) {
   storage_->working_set()->AddCache(this);
 }
@@ -45,6 +49,7 @@ void AppCache::AddEntry(const GURL& url, const AppCacheEntry& entry) {
   DCHECK(entries_.find(url) == entries_.end());
   entries_.insert(EntryMap::value_type(url, entry));
   cache_size_ += entry.response_size();
+  padding_size_ += entry.padding_size();
 }
 
 bool AppCache::AddOrModifyEntry(const GURL& url, const AppCacheEntry& entry) {
@@ -52,41 +57,46 @@ bool AppCache::AddOrModifyEntry(const GURL& url, const AppCacheEntry& entry) {
       entries_.insert(EntryMap::value_type(url, entry));
 
   // Entry already exists.  Merge the types of the new and existing entries.
-  if (!ret.second)
+  if (!ret.second) {
     ret.first->second.add_types(entry.types());
-  else
+  } else {
     cache_size_ += entry.response_size();  // New entry. Add to cache size.
+    padding_size_ += entry.padding_size();
+  }
   return ret.second;
 }
 
 void AppCache::RemoveEntry(const GURL& url) {
-  EntryMap::iterator found = entries_.find(url);
+  auto found = entries_.find(url);
   DCHECK(found != entries_.end());
+  DCHECK_GE(cache_size_, found->second.response_size());
+  DCHECK_GE(padding_size_, found->second.padding_size());
   cache_size_ -= found->second.response_size();
+  padding_size_ -= found->second.padding_size();
   entries_.erase(found);
 }
 
 AppCacheEntry* AppCache::GetEntry(const GURL& url) {
-  EntryMap::iterator it = entries_.find(url);
+  auto it = entries_.find(url);
   return (it != entries_.end()) ? &(it->second) : nullptr;
 }
 
 const AppCacheEntry* AppCache::GetEntryAndUrlWithResponseId(
     int64_t response_id,
     GURL* optional_url_out) {
-  for (EntryMap::const_iterator iter = entries_.begin();
-       iter !=  entries_.end(); ++iter) {
-    if (iter->second.response_id() == response_id) {
+  for (const auto& pair : entries_) {
+    if (pair.second.response_id() == response_id) {
       if (optional_url_out)
-        *optional_url_out = iter->first;
-      return &iter->second;
+        *optional_url_out = pair.first;
+      return &pair.second;
     }
   }
   return nullptr;
 }
 
-GURL AppCache::GetNamespaceEntryUrl(const AppCacheNamespaceVector& namespaces,
-                                    const GURL& namespace_url) const {
+GURL AppCache::GetNamespaceEntryUrl(
+    const std::vector<AppCacheNamespace>& namespaces,
+    const GURL& namespace_url) const {
   size_t count = namespaces.size();
   for (size_t i = 0; i < count; ++i) {
     if (namespaces[i].namespace_url == namespace_url)
@@ -124,16 +134,17 @@ void AppCache::InitializeWithDatabaseRecords(
     const std::vector<AppCacheDatabase::NamespaceRecord>& intercepts,
     const std::vector<AppCacheDatabase::NamespaceRecord>& fallbacks,
     const std::vector<AppCacheDatabase::OnlineWhiteListRecord>& whitelists) {
-  DCHECK(cache_id_ == cache_record.cache_id);
+  DCHECK_EQ(cache_id_, cache_record.cache_id);
   online_whitelist_all_ = cache_record.online_wildcard;
   update_time_ = cache_record.update_time;
 
   for (size_t i = 0; i < entries.size(); ++i) {
     const AppCacheDatabase::EntryRecord& entry = entries.at(i);
     AddEntry(entry.url, AppCacheEntry(entry.flags, entry.response_id,
-                                      entry.response_size));
+                                      entry.response_size, entry.padding_size));
   }
-  DCHECK(cache_size_ == cache_record.cache_size);
+  DCHECK_EQ(cache_size_, cache_record.cache_size);
+  DCHECK_EQ(padding_size_, cache_record.padding_size);
 
   for (size_t i = 0; i < intercepts.size(); ++i)
     intercept_namespaces_.push_back(intercepts.at(i).namespace_);
@@ -172,21 +183,21 @@ void AppCache::ToDatabaseRecords(
   cache_record->group_id = group->group_id();
   cache_record->online_wildcard = online_whitelist_all_;
   cache_record->update_time = update_time_;
-  cache_record->cache_size = 0;
+  cache_record->cache_size = cache_size_;
+  cache_record->padding_size = padding_size_;
 
-  for (EntryMap::const_iterator iter = entries_.begin();
-       iter != entries_.end(); ++iter) {
+  for (const auto& pair : entries_) {
     entries->push_back(AppCacheDatabase::EntryRecord());
     AppCacheDatabase::EntryRecord& record = entries->back();
-    record.url = iter->first;
+    record.url = pair.first;
     record.cache_id = cache_id_;
-    record.flags = iter->second.types();
-    record.response_id = iter->second.response_id();
-    record.response_size = iter->second.response_size();
-    cache_record->cache_size += record.response_size;
+    record.flags = pair.second.types();
+    record.response_id = pair.second.response_id();
+    record.response_size = pair.second.response_size();
+    record.padding_size = pair.second.padding_size();
   }
 
-  GURL origin = group->manifest_url().GetOrigin();
+  const url::Origin origin = url::Origin::Create(group->manifest_url());
 
   for (size_t i = 0; i < intercept_namespaces_.size(); ++i) {
     intercepts->push_back(AppCacheDatabase::NamespaceRecord());
@@ -263,28 +274,28 @@ bool AppCache::FindResponseForRequest(const GURL& url,
   return *found_network_namespace;
 }
 
-
-void AppCache::ToResourceInfoVector(AppCacheResourceInfoVector* infos) const {
+void AppCache::ToResourceInfoVector(
+    std::vector<blink::mojom::AppCacheResourceInfo>* infos) const {
   DCHECK(infos && infos->empty());
-  for (EntryMap::const_iterator iter = entries_.begin();
-       iter !=  entries_.end(); ++iter) {
-    infos->push_back(AppCacheResourceInfo());
-    AppCacheResourceInfo& info = infos->back();
-    info.url = iter->first;
-    info.is_master = iter->second.IsMaster();
-    info.is_manifest = iter->second.IsManifest();
-    info.is_intercept = iter->second.IsIntercept();
-    info.is_fallback = iter->second.IsFallback();
-    info.is_foreign = iter->second.IsForeign();
-    info.is_explicit = iter->second.IsExplicit();
-    info.size = iter->second.response_size();
-    info.response_id = iter->second.response_id();
+  for (const auto& pair : entries_) {
+    infos->push_back(blink::mojom::AppCacheResourceInfo());
+    blink::mojom::AppCacheResourceInfo& info = infos->back();
+    info.url = pair.first;
+    info.is_master = pair.second.IsMaster();
+    info.is_manifest = pair.second.IsManifest();
+    info.is_intercept = pair.second.IsIntercept();
+    info.is_fallback = pair.second.IsFallback();
+    info.is_foreign = pair.second.IsForeign();
+    info.is_explicit = pair.second.IsExplicit();
+    info.response_size = pair.second.response_size();
+    info.padding_size = pair.second.padding_size();
+    info.response_id = pair.second.response_id();
   }
 }
 
 // static
 const AppCacheNamespace* AppCache::FindNamespace(
-    const AppCacheNamespaceVector& namespaces,
+    const std::vector<AppCacheNamespace>& namespaces,
     const GURL& url) {
   size_t count = namespaces.size();
   for (size_t i = 0; i < count; ++i) {

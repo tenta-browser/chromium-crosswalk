@@ -14,22 +14,18 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
 #include "base/time/default_tick_clock.h"
-#include "chrome/browser/media/cast_remoting_sender.h"
+#include "components/mirroring/browser/cast_remoting_sender.h"
 #include "content/public/browser/browser_message_filter.h"
 #include "media/cast/cast_sender.h"
 #include "media/cast/logging/logging_defines.h"
 #include "media/cast/net/cast_transport.h"
-#include "media/cast/net/udp_transport.h"
-#include "net/url_request/url_request_context_getter.h"
-#include "services/device/public/interfaces/wake_lock.mojom.h"
-
-class Profile;
+#include "services/device/public/mojom/wake_lock.mojom.h"
 
 namespace cast {
 
 class CastTransportHostFilter : public content::BrowserMessageFilter {
  public:
-  explicit CastTransportHostFilter(Profile* profile);
+  CastTransportHostFilter();
 
   // Used by unit test only.
   void InitializeNoOpWakeLockForTesting();
@@ -101,9 +97,6 @@ class CastTransportHostFilter : public content::BrowserMessageFilter {
 
   base::IDMap<std::unique_ptr<media::cast::CastTransport>> id_map_;
 
-  // Clock used by Cast transport.
-  base::DefaultTickClock clock_;
-
   // While |id_map_| is non-empty, we use |wake_lock_| to request and
   // hold a wake lock. This prevents Chrome from being suspended while remoting
   // content. If any wake lock is held upon destruction, it's implicitly
@@ -112,15 +105,14 @@ class CastTransportHostFilter : public content::BrowserMessageFilter {
 
   // This map records all active remoting senders. It uses the unique RTP
   // stream ID as the key.
-  base::IDMap<std::unique_ptr<CastRemotingSender>> remoting_sender_map_;
+  base::IDMap<std::unique_ptr<mirroring::CastRemotingSender>>
+      remoting_sender_map_;
 
   // This map stores all active remoting streams for each channel. It uses the
   // channel ID as the key.
   std::multimap<int32_t, int32_t> stream_id_map_;
 
-  scoped_refptr<net::URLRequestContextGetter> url_request_context_getter_;
-
-  base::WeakPtrFactory<CastTransportHostFilter> weak_factory_;
+  base::WeakPtrFactory<CastTransportHostFilter> weak_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(CastTransportHostFilter);
 };

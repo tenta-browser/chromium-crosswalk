@@ -6,15 +6,20 @@
 
 #include "base/bind.h"
 #include "base/command_line.h"
+#include "base/feature_list.h"
 #include "base/files/file_util.h"
+#include "base/metrics/field_trial_params.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/process/launch.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "build/build_config.h"
 #include "chrome/browser/browser_process.h"
 #include "chrome/browser/interstitials/chrome_metrics_helper.h"
+#include "chrome/browser/interstitials/enterprise_util.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ssl/chrome_ssl_host_state_delegate.h"
-#include "chrome/common/chrome_switches.h"
+#include "chrome/browser/ssl/chrome_ssl_host_state_delegate_factory.h"
+#include "chrome/common/chrome_features.h"
 #include "chrome/common/pref_names.h"
 #include "chrome/common/url_constants.h"
 #include "components/safe_browsing/common/safe_browsing_prefs.h"
@@ -27,7 +32,8 @@
 
 #if defined(OS_CHROMEOS)
 #include "chrome/browser/profiles/profile_manager.h"
-#include "chrome/browser/ui/chrome_pages.h"
+#include "chrome/browser/ui/settings_window_manager_chromeos.h"
+#include "chrome/common/webui_url_constants.h"
 #endif
 
 #if defined(OS_WIN)
@@ -47,6 +53,24 @@
 using content::Referrer;
 
 namespace {
+
+void RecordRecurrentErrorAction(
+    SSLErrorControllerClient::RecurrentErrorAction action,
+    int cert_error) {
+  UMA_HISTOGRAM_ENUMERATION("interstitial.ssl_recurrent_error.action", action);
+  if (cert_error == net::ERR_CERTIFICATE_TRANSPARENCY_REQUIRED) {
+    UMA_HISTOGRAM_ENUMERATION(
+        "interstitial.ssl_recurrent_error.ct_error.action", action);
+  }
+}
+
+bool HasSeenRecurrentErrorInternal(content::WebContents* web_contents,
+                                   int cert_error) {
+  ChromeSSLHostStateDelegate* state =
+      ChromeSSLHostStateDelegateFactory::GetForProfile(
+          Profile::FromBrowserContext(web_contents->GetBrowserContext()));
+  return state->HasSeenRecurrentErrors(cert_error);
+}
 
 #if !defined(OS_CHROMEOS)
 void LaunchDateAndTimeSettingsImpl() {
@@ -105,7 +129,7 @@ void LaunchDateAndTimeSettingsImpl() {
 
 #elif defined(OS_WIN)
   base::FilePath path;
-  PathService::Get(base::DIR_SYSTEM, &path);
+  base::PathService::Get(base::DIR_SYSTEM, &path);
   static const base::char16 kControlPanelExe[] = L"control.exe";
   path = path.Append(base::string16(kControlPanelExe));
   base::CommandLine command(path);
@@ -123,16 +147,12 @@ void LaunchDateAndTimeSettingsImpl() {
 }
 #endif
 
-bool AreCommittedInterstitialsEnabled() {
-  return base::CommandLine::ForCurrentProcess()->HasSwitch(
-      switches::kCommittedInterstitials);
-}
-
 }  // namespace
 
 SSLErrorControllerClient::SSLErrorControllerClient(
     content::WebContents* web_contents,
     const net::SSLInfo& ssl_info,
+    int cert_error,
     const GURL& request_url,
     std::unique_ptr<security_interstitials::MetricsHelper> metrics_helper)
     : SecurityInterstitialControllerClient(
@@ -143,44 +163,44 @@ SSLErrorControllerClient::SSLErrorControllerClient(
           g_browser_process->GetApplicationLocale(),
           GURL(chrome::kChromeUINewTabURL)),
       ssl_info_(ssl_info),
-      request_url_(request_url) {}
+      request_url_(request_url),
+      cert_error_(cert_error) {
+  if (HasSeenRecurrentErrorInternal(web_contents_, cert_error_)) {
+    RecordRecurrentErrorAction(RecurrentErrorAction::kShow, cert_error_);
+  }
+}
 
 SSLErrorControllerClient::~SSLErrorControllerClient() {}
 
 void SSLErrorControllerClient::GoBack() {
-  if (!AreCommittedInterstitialsEnabled()) {
-    SecurityInterstitialControllerClient::GoBack();
-    return;
-  }
-
   SecurityInterstitialControllerClient::GoBackAfterNavigationCommitted();
 }
 
 void SSLErrorControllerClient::Proceed() {
+  if (HasSeenRecurrentErrorInternal(web_contents_, cert_error_)) {
+    RecordRecurrentErrorAction(RecurrentErrorAction::kProceed, cert_error_);
+  }
+
+  MaybeTriggerSecurityInterstitialProceededEvent(web_contents_, request_url_,
+                                                 "SSL_ERROR", cert_error_);
 #if BUILDFLAG(ENABLE_EXTENSIONS)
   // Hosted Apps should not be allowed to run if there is a problem with their
   // certificate. So, when users click proceed on an interstitial, move the tab
   // to a regular Chrome window and proceed as usual there.
   Browser* browser = chrome::FindBrowserWithWebContents(web_contents_);
-  if (browser &&
-      extensions::HostedAppBrowserController::IsForExperimentalHostedAppBrowser(
-          browser)) {
+  if (web_app::AppBrowserController::IsForWebAppBrowser(browser))
     chrome::OpenInChrome(browser);
-  }
 #endif  // BUILDFLAG(ENABLE_EXTENSIONS)
-
-  if (!AreCommittedInterstitialsEnabled()) {
-    SecurityInterstitialControllerClient::Proceed();
-    return;
-  }
 
   Profile* profile =
       Profile::FromBrowserContext(web_contents_->GetBrowserContext());
   ChromeSSLHostStateDelegate* state = static_cast<ChromeSSLHostStateDelegate*>(
       profile->GetSSLHostStateDelegate());
-  state->AllowCert(request_url_.host(), *ssl_info_.cert.get(),
-                   net::MapCertStatusToNetError(ssl_info_.cert_status));
-  Reload();
+  // ChromeSSLHostStateDelegate can be null during tests.
+  if (state) {
+    state->AllowCert(request_url_.host(), *ssl_info_.cert.get(), cert_error_);
+    Reload();
+  }
 }
 
 bool SSLErrorControllerClient::CanLaunchDateAndTimeSettings() {
@@ -196,11 +216,15 @@ void SSLErrorControllerClient::LaunchDateAndTimeSettings() {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
 #if defined(OS_CHROMEOS)
-  chrome::ShowSettingsSubPageForProfile(ProfileManager::GetActiveUserProfile(),
-                                        chrome::kDateTimeSubPage);
+  chrome::SettingsWindowManager::GetInstance()->ShowOSSettings(
+      ProfileManager::GetActiveUserProfile(), chrome::kDateTimeSubPage);
 #else
   base::PostTaskWithTraits(FROM_HERE,
                            {base::TaskPriority::USER_VISIBLE, base::MayBlock()},
                            base::BindOnce(&LaunchDateAndTimeSettingsImpl));
 #endif
+}
+
+bool SSLErrorControllerClient::HasSeenRecurrentError() {
+  return HasSeenRecurrentErrorInternal(web_contents_, cert_error_);
 }

@@ -4,14 +4,8 @@
 
 #include "chrome/browser/metrics/thread_watcher_report_hang.h"
 
-// We disable optimizations for the whole file so the compiler doesn't merge
-// them all together.
-MSVC_DISABLE_OPTIMIZE()
-MSVC_PUSH_DISABLE_WARNING(4748)
-
 #include "base/debug/debugger.h"
 #include "base/debug/dump_without_crashing.h"
-#include "build/build_config.h"
 
 namespace metrics {
 
@@ -28,7 +22,8 @@ NOINLINE void ReportThreadHang() {
 #endif
 }
 
-#if !defined(OS_ANDROID) || !defined(NDEBUG)
+#if !defined(OS_ANDROID)
+
 NOINLINE void StartupHang() {
   volatile int inhibit_comdat = __LINE__;
   ALLOW_UNUSED_LOCAL(inhibit_comdat);
@@ -36,7 +31,6 @@ NOINLINE void StartupHang() {
   // positive startup hang data.
   // ReportThreadHang();
 }
-#endif  // OS_ANDROID
 
 NOINLINE void ShutdownHang() {
   volatile int inhibit_comdat = __LINE__;
@@ -44,46 +38,24 @@ NOINLINE void ShutdownHang() {
   ReportThreadHang();
 }
 
+#endif  // !defined(OS_ANDROID)
+
 NOINLINE void ThreadUnresponsive_UI() {
+  ReportThreadHang();
+  // Defining |inhibit_comdat| *after* calling ReportThreadHang() prevents tail
+  // call optimization from not putting this function's address on the stack.
+  // https://crbug.com/905288#c10
   volatile int inhibit_comdat = __LINE__;
   ALLOW_UNUSED_LOCAL(inhibit_comdat);
-  ReportThreadHang();
-}
-
-NOINLINE void ThreadUnresponsive_DB() {
-  volatile int inhibit_comdat = __LINE__;
-  ALLOW_UNUSED_LOCAL(inhibit_comdat);
-  ReportThreadHang();
-}
-
-NOINLINE void ThreadUnresponsive_FILE() {
-  volatile int inhibit_comdat = __LINE__;
-  ALLOW_UNUSED_LOCAL(inhibit_comdat);
-  ReportThreadHang();
-}
-
-NOINLINE void ThreadUnresponsive_FILE_USER_BLOCKING() {
-  volatile int inhibit_comdat = __LINE__;
-  ALLOW_UNUSED_LOCAL(inhibit_comdat);
-  ReportThreadHang();
-}
-
-NOINLINE void ThreadUnresponsive_PROCESS_LAUNCHER() {
-  volatile int inhibit_comdat = __LINE__;
-  ALLOW_UNUSED_LOCAL(inhibit_comdat);
-  ReportThreadHang();
-}
-
-NOINLINE void ThreadUnresponsive_CACHE() {
-  volatile int inhibit_comdat = __LINE__;
-  ALLOW_UNUSED_LOCAL(inhibit_comdat);
-  ReportThreadHang();
 }
 
 NOINLINE void ThreadUnresponsive_IO() {
+  ReportThreadHang();
+  // Defining |inhibit_comdat| *after* calling ReportThreadHang() prevents tail
+  // call optimization from not putting this function's address on the stack.
+  // https://crbug.com/905288#c10
   volatile int inhibit_comdat = __LINE__;
   ALLOW_UNUSED_LOCAL(inhibit_comdat);
-  ReportThreadHang();
 }
 
 NOINLINE void CrashBecauseThreadWasUnresponsive(
@@ -91,16 +63,6 @@ NOINLINE void CrashBecauseThreadWasUnresponsive(
   switch (thread_id) {
     case content::BrowserThread::UI:
       return ThreadUnresponsive_UI();
-    case content::BrowserThread::DB:
-      return ThreadUnresponsive_DB();
-    case content::BrowserThread::FILE:
-      return ThreadUnresponsive_FILE();
-    case content::BrowserThread::FILE_USER_BLOCKING:
-      return ThreadUnresponsive_FILE_USER_BLOCKING();
-    case content::BrowserThread::PROCESS_LAUNCHER:
-      return ThreadUnresponsive_PROCESS_LAUNCHER();
-    case content::BrowserThread::CACHE:
-      return ThreadUnresponsive_CACHE();
     case content::BrowserThread::IO:
       return ThreadUnresponsive_IO();
     case content::BrowserThread::ID_COUNT:
@@ -111,5 +73,3 @@ NOINLINE void CrashBecauseThreadWasUnresponsive(
 
 }  // namespace metrics
 
-MSVC_POP_WARNING()
-MSVC_ENABLE_OPTIMIZE();

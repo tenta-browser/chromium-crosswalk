@@ -8,12 +8,13 @@
 #include "base/memory/ref_counted.h"
 #include "base/memory/singleton.h"
 #include "base/sequenced_task_runner.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "chrome/browser/profiles/incognito_helpers.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/common/chrome_constants.h"
 #include "components/feature_engagement/public/tracker.h"
 #include "components/keyed_service/content/browser_context_dependency_manager.h"
+#include "components/leveldb_proto/content/proto_database_provider_factory.h"
 #include "content/public/browser/browser_context.h"
 
 namespace feature_engagement {
@@ -33,7 +34,9 @@ feature_engagement::Tracker* TrackerFactory::GetForBrowserContext(
 TrackerFactory::TrackerFactory()
     : BrowserContextKeyedServiceFactory(
           "feature_engagement::Tracker",
-          BrowserContextDependencyManager::GetInstance()) {}
+          BrowserContextDependencyManager::GetInstance()) {
+  DependsOn(leveldb_proto::ProtoDatabaseProviderFactory::GetInstance());
+}
 
 TrackerFactory::~TrackerFactory() = default;
 
@@ -43,13 +46,16 @@ KeyedService* TrackerFactory::BuildServiceInstanceFor(
 
   scoped_refptr<base::SequencedTaskRunner> background_task_runner =
       base::CreateSequencedTaskRunnerWithTraits(
-          {base::MayBlock(), base::TaskPriority::BACKGROUND});
+          {base::MayBlock(), base::TaskPriority::BEST_EFFORT});
 
   base::FilePath storage_dir = profile->GetPath().Append(
       chrome::kFeatureEngagementTrackerStorageDirname);
 
-  return feature_engagement::Tracker::Create(storage_dir,
-                                             background_task_runner);
+  leveldb_proto::ProtoDatabaseProvider* db_provider =
+      leveldb_proto::ProtoDatabaseProviderFactory::GetInstance()->GetForKey(
+          profile->GetProfileKey());
+  return feature_engagement::Tracker::Create(
+      storage_dir, background_task_runner, db_provider);
 }
 
 content::BrowserContext* TrackerFactory::GetBrowserContextToUse(

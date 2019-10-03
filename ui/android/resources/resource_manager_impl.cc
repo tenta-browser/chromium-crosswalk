@@ -21,11 +21,11 @@
 #include "base/trace_event/trace_event.h"
 #include "cc/resources/scoped_ui_resource.h"
 #include "cc/resources/ui_resource_manager.h"
-#include "jni/ResourceManager_jni.h"
 #include "third_party/skia/include/core/SkBitmap.h"
 #include "third_party/skia/include/core/SkCanvas.h"
 #include "third_party/skia/include/core/SkColorFilter.h"
 #include "ui/android/resources/ui_resource_provider.h"
+#include "ui/android/ui_android_jni_headers/ResourceManager_jni.h"
 #include "ui/android/window_android.h"
 #include "ui/gfx/android/java_bitmap.h"
 #include "ui/gfx/geometry/rect.h"
@@ -33,6 +33,27 @@
 using base::android::JavaArrayOfIntArrayToIntVector;
 using base::android::JavaParamRef;
 using base::android::JavaRef;
+
+namespace {
+
+base::trace_event::MemoryAllocatorDump* CreateMemoryDump(
+    const std::string& name,
+    size_t memory_usage,
+    base::trace_event::ProcessMemoryDump* pmd) {
+  base::trace_event::MemoryAllocatorDump* dump = pmd->CreateAllocatorDump(name);
+  dump->AddScalar(base::trace_event::MemoryAllocatorDump::kNameSize,
+                  base::trace_event::MemoryAllocatorDump::kUnitsBytes,
+                  memory_usage);
+
+  static const char* system_allocator_name =
+      base::trace_event::MemoryDumpManager::GetInstance()
+          ->system_allocator_pool_name();
+  if (system_allocator_name)
+    pmd->AddSuballocation(dump->guid(), system_allocator_name);
+  return dump;
+}
+
+}  // namespace
 
 namespace ui {
 
@@ -138,9 +159,12 @@ Resource* ResourceManagerImpl::GetStaticResourceWithTint(int res_id,
   // Build a color filter to use on the base resource. This filter multiplies
   // the RGB components by the components of the new color but retains the
   // alpha of the original image.
+  float color_matrix[20] = {0, 0, 0, 0, SkColorGetR(tint_color) * (1.0f / 255),
+                            0, 0, 0, 0, SkColorGetG(tint_color) * (1.0f / 255),
+                            0, 0, 0, 0, SkColorGetB(tint_color) * (1.0f / 255),
+                            0, 0, 0, 1, 0};
   SkPaint color_filter;
-  color_filter.setColorFilter(
-      SkColorFilter::MakeModeFilter(tint_color, SkBlendMode::kModulate));
+  color_filter.setColorFilter(SkColorFilters::Matrix(color_matrix));
 
   // Draw the resource and make it immutable.
   base_image->ui_resource()
@@ -181,6 +205,8 @@ void ResourceManagerImpl::OnResourceReady(JNIEnv* env,
                                           jint res_type,
                                           jint res_id,
                                           const JavaRef<jobject>& bitmap,
+                                          jint width,
+                                          jint height,
                                           jlong native_resource) {
   DCHECK_GE(res_type, ANDROID_RESOURCE_TYPE_FIRST);
   DCHECK_LE(res_type, ANDROID_RESOURCE_TYPE_LAST);
@@ -198,7 +224,7 @@ void ResourceManagerImpl::OnResourceReady(JNIEnv* env,
   resource->SetUIResource(
       cc::ScopedUIResource::Create(ui_resource_manager_,
                                    cc::UIResourceBitmap(skbitmap)),
-      jbitmap.size());
+      gfx::Size(width, height));
 }
 
 void ResourceManagerImpl::RemoveResource(
@@ -212,24 +238,21 @@ void ResourceManagerImpl::RemoveResource(
 bool ResourceManagerImpl::OnMemoryDump(
     const base::trace_event::MemoryDumpArgs& args,
     base::trace_event::ProcessMemoryDump* pmd) {
-  size_t memory_usage =
-      base::trace_event::EstimateMemoryUsage(resources_) +
-      base::trace_event::EstimateMemoryUsage(tinted_resources_);
-
-  base::trace_event::MemoryAllocatorDump* dump = pmd->CreateAllocatorDump(
-      base::StringPrintf("ui/resource_manager_0x%" PRIXPTR,
-                         reinterpret_cast<uintptr_t>(this)));
-  dump->AddScalar(base::trace_event::MemoryAllocatorDump::kNameSize,
-                  base::trace_event::MemoryAllocatorDump::kUnitsBytes,
-                  memory_usage);
-
-  const char* system_allocator_name =
-      base::trace_event::MemoryDumpManager::GetInstance()
-          ->system_allocator_pool_name();
-  if (system_allocator_name) {
-    pmd->AddSuballocation(dump->guid(), system_allocator_name);
+  std::string prefix = base::StringPrintf("ui/resource_manager_0x%" PRIXPTR,
+                                          reinterpret_cast<uintptr_t>(this));
+  for (uint32_t type = static_cast<uint32_t>(ANDROID_RESOURCE_TYPE_FIRST);
+       type <= static_cast<uint32_t>(ANDROID_RESOURCE_TYPE_LAST); ++type) {
+    size_t usage = base::trace_event::EstimateMemoryUsage(resources_[type]);
+    auto* dump = CreateMemoryDump(
+        prefix + base::StringPrintf("/default_resource/0x%u",
+                                    static_cast<uint32_t>(type)),
+        usage, pmd);
+    dump->AddScalar("resource_count", "objects", resources_[type].size());
   }
 
+  size_t tinted_resource_usage =
+      base::trace_event::EstimateMemoryUsage(tinted_resources_);
+  CreateMemoryDump(prefix + "/tinted_resource", tinted_resource_usage, pmd);
   return true;
 }
 

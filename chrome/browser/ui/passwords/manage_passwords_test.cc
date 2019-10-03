@@ -23,21 +23,27 @@
 #include "components/password_manager/core/browser/password_form_manager.h"
 #include "components/password_manager/core/browser/password_manager_metrics_util.h"
 #include "components/password_manager/core/browser/stub_form_saver.h"
+#include "content/public/test/test_utils.h"
 
 namespace {
 constexpr char kTestOrigin[] = "https://www.example.com";
-constexpr char kTestUsername[] = "test_username";
-constexpr char kTestPassword[] = "test_password";
 }  // namespace
 
 ManagePasswordsTest::ManagePasswordsTest() {
   fetcher_.Fetch();
 
-  // Populate |test_form_| with some dummy data.
-  test_form_.signon_realm = kTestOrigin;
-  test_form_.origin = GURL(kTestOrigin);
-  test_form_.username_value = base::ASCIIToUTF16(kTestUsername);
-  test_form_.password_value = base::ASCIIToUTF16(kTestPassword);
+  password_form_.signon_realm = kTestOrigin;
+  password_form_.origin = GURL(kTestOrigin);
+  password_form_.username_value = base::ASCIIToUTF16("test_username");
+  password_form_.password_value = base::ASCIIToUTF16("test_password");
+
+  federated_form_.signon_realm =
+      "federation://example.com/somelongeroriginurl.com";
+  federated_form_.origin = GURL(kTestOrigin);
+  federated_form_.federation_origin =
+      url::Origin::Create(GURL("https://somelongeroriginurl.com/"));
+  federated_form_.username_value =
+      base::ASCIIToUTF16("test_federation_username");
 }
 
 ManagePasswordsTest::~ManagePasswordsTest() {
@@ -61,9 +67,10 @@ void ManagePasswordsTest::ExecuteManagePasswordsCommand() {
 
 void ManagePasswordsTest::SetupManagingPasswords() {
   std::map<base::string16, const autofill::PasswordForm*> map;
-  map.insert(std::make_pair(base::ASCIIToUTF16(kTestUsername), test_form()));
-  GetController()->OnPasswordAutofilled(map, map.begin()->second->origin,
-                                        nullptr);
+  for (auto* form : {&password_form_, &federated_form_}) {
+    map.insert(std::make_pair(form->username_value, form));
+    GetController()->OnPasswordAutofilled(map, form->origin, nullptr);
+  }
 }
 
 void ManagePasswordsTest::SetupPendingPassword() {
@@ -72,7 +79,7 @@ void ManagePasswordsTest::SetupPendingPassword() {
           nullptr, &client_, driver_.AsWeakPtr(), *test_form(),
           base::WrapUnique(new password_manager::StubFormSaver), &fetcher_));
   test_form_manager->Init(nullptr);
-  fetcher_.SetNonFederated(std::vector<const autofill::PasswordForm*>(), 0u);
+  fetcher_.NotifyFetchCompleted();
   GetController()->OnPasswordSubmitted(std::move(test_form_manager));
 }
 
@@ -82,7 +89,7 @@ void ManagePasswordsTest::SetupAutomaticPassword() {
           nullptr, &client_, driver_.AsWeakPtr(), *test_form(),
           base::WrapUnique(new password_manager::StubFormSaver), &fetcher_));
   test_form_manager->Init(nullptr);
-  fetcher_.SetNonFederated(std::vector<const autofill::PasswordForm*>(), 0u);
+  fetcher_.NotifyFetchCompleted();
   GetController()->OnAutomaticPasswordSave(std::move(test_form_manager));
 }
 

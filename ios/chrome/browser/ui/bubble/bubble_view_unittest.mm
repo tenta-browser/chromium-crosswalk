@@ -4,7 +4,9 @@
 
 #import "ios/chrome/browser/ui/bubble/bubble_view.h"
 
+#include "base/ios/ios_util.h"
 #include "base/logging.h"
+#include "ios/chrome/browser/ui/util/ui_util.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/gtest_mac.h"
 #include "testing/platform_test.h"
@@ -46,8 +48,8 @@ TEST_F(BubbleViewTest, BubbleSizeShortText) {
   CGSize bubbleSize = [bubble sizeThatFits:maxSize_];
   // Since the label is shorter than the minimum line width, expect the bubble
   // to be the minimum width and accommodate one line of text.
-  EXPECT_NEAR(56.0f, bubbleSize.width, 1.0f);
-  EXPECT_NEAR(61.5f, bubbleSize.height, 1.0f);
+  EXPECT_NEAR(58.0f, bubbleSize.width, 1.0f);
+  EXPECT_NEAR(65.0f, bubbleSize.height, 1.0f);
 }
 
 // Test |sizeThatFits| given text that should wrap onto multiple lines.
@@ -56,9 +58,11 @@ TEST_F(BubbleViewTest, BubbleSizeMultipleLineText) {
                                          arrowDirection:arrowDirection_
                                               alignment:alignment_];
   CGSize bubbleSize = [bubble sizeThatFits:maxSize_];
+
   // The bubble should fit the label, which contains two lines of text.
-  EXPECT_NEAR(349.0f, bubbleSize.width, 1.0f);
-  EXPECT_NEAR(80.5f, bubbleSize.height, 1.0f);
+  EXPECT_NEAR(329.0f, bubbleSize.width, 1.0f);
+
+  EXPECT_NEAR(83.0f, bubbleSize.height, 2.0f);
 }
 
 // Test that the accessibility label matches the display text.

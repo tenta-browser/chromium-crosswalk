@@ -7,10 +7,10 @@
 #import <Foundation/Foundation.h>
 #import <UIKit/UIKit.h>
 
+#include "base/run_loop.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/sys_string_conversions.h"
 #include "base/values.h"
-#import "ios/testing/wait_util.h"
 #import "ios/web/public/test/web_view_interaction_test_util.h"
 #import "net/base/mac/url_conversions.h"
 
@@ -18,12 +18,12 @@
 #error "This file requires ARC support."
 #endif
 
-using testing::kWaitForDownloadTimeout;
-using testing::WaitUntilConditionOrTimeout;
+using base::test::ios::kWaitForDownloadTimeout;
+using base::test::ios::WaitUntilConditionOrTimeout;
 
 // A helper delegate class that allows downloading responses with invalid
 // SSL certs.
-@interface TestURLSessionDelegate : NSObject<NSURLSessionDelegate>
+@interface TestURLSessionDelegate : NSObject <NSURLSessionDelegate>
 @end
 
 @implementation TestURLSessionDelegate
@@ -77,8 +77,8 @@ UIImage* LoadImage(const GURL& image_url) {
 }
 }
 
-using testing::WaitUntilConditionOrTimeout;
-using testing::kWaitForUIElementTimeout;
+using base::test::ios::WaitUntilConditionOrTimeout;
+using base::test::ios::kWaitForUIElementTimeout;
 
 namespace web {
 namespace test {
@@ -94,9 +94,21 @@ bool IsWebViewContainingText(web::WebState* web_state,
   return false;
 }
 
-bool WaitForWebViewContainingText(web::WebState* web_state, std::string text) {
-  return WaitUntilConditionOrTimeout(kWaitForUIElementTimeout, ^{
+bool WaitForWebViewContainingText(web::WebState* web_state,
+                                  std::string text,
+                                  NSTimeInterval timeout) {
+  return WaitUntilConditionOrTimeout(timeout, ^{
+    base::RunLoop().RunUntilIdle();
     return IsWebViewContainingText(web_state, text);
+  });
+}
+
+bool WaitForWebViewNotContainingText(web::WebState* web_state,
+                                     std::string text,
+                                     NSTimeInterval timeout) {
+  return WaitUntilConditionOrTimeout(timeout, ^{
+    base::RunLoop().RunUntilIdle();
+    return !IsWebViewContainingText(web_state, text);
   });
 }
 
@@ -119,15 +131,14 @@ bool WaitForWebViewContainingImage(std::string image_id,
 
   return WaitUntilConditionOrTimeout(kWaitForUIElementTimeout, ^{
     NSString* const kGetElementAttributesScript =
-        [NSString stringWithFormat:
-                      @"var image = document.getElementById('%@');"
-                      @"var imageHeight = image.height;"
-                      @"var imageWidth = image.width;"
-                      @"JSON.stringify({"
-                      @"  height:imageHeight,"
-                      @"  width:imageWidth"
-                      @"});",
-                      base::SysUTF8ToNSString(image_id)];
+        [NSString stringWithFormat:@"var image = document.getElementById('%@');"
+                                   @"var imageHeight = image.height;"
+                                   @"var imageWidth = image.width;"
+                                   @"JSON.stringify({"
+                                   @"  height:imageHeight,"
+                                   @"  width:imageWidth"
+                                   @"});",
+                                   base::SysUTF8ToNSString(image_id)];
     std::unique_ptr<base::Value> value = web::test::ExecuteJavaScript(
         web_state, base::SysNSStringToUTF8(kGetElementAttributesScript));
     std::string result;
@@ -152,13 +163,11 @@ bool WaitForWebViewContainingImage(std::string image_id,
   });
 }
 
-bool IsWebViewContainingCssSelector(web::WebState* web_state,
-                                    const std::string& css_selector) {
-  // Script that tests presence of css selector.
-  char testCssSelectorJavaScriptTemplate[] =
-      "!!document.querySelector(\"%s\");";
-  std::string script = base::StringPrintf(testCssSelectorJavaScriptTemplate,
-                                          css_selector.c_str());
+bool IsWebViewContainingElement(web::WebState* web_state,
+                                ElementSelector* selector) {
+  // Script that tests presence of element.
+  std::string script = base::SysNSStringToUTF8(
+      [NSString stringWithFormat:@"!!(%@)", selector.selectorScript]);
 
   bool did_succeed = false;
   std::unique_ptr<base::Value> value =
@@ -167,6 +176,22 @@ bool IsWebViewContainingCssSelector(web::WebState* web_state,
     value->GetAsBoolean(&did_succeed);
   }
   return did_succeed;
+}
+
+bool WaitForWebViewContainingElement(web::WebState* web_state,
+                                     ElementSelector* selector) {
+  return WaitUntilConditionOrTimeout(kWaitForUIElementTimeout, ^{
+    base::RunLoop().RunUntilIdle();
+    return IsWebViewContainingElement(web_state, selector);
+  });
+}
+
+bool WaitForWebViewNotContainingElement(web::WebState* web_state,
+                                        ElementSelector* selector) {
+  return WaitUntilConditionOrTimeout(kWaitForUIElementTimeout, ^{
+    base::RunLoop().RunUntilIdle();
+    return !IsWebViewContainingElement(web_state, selector);
+  });
 }
 
 }  // namespace test

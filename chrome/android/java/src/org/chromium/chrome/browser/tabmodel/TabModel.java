@@ -4,88 +4,18 @@
 
 package org.chromium.chrome.browser.tabmodel;
 
+import android.support.annotation.Nullable;
+
 import org.chromium.chrome.browser.profiles.Profile;
 import org.chromium.chrome.browser.tab.Tab;
+
+import java.util.List;
 
 /**
  * TabModel organizes all the open tabs and allows you to create new ones.  Regular and Incognito
  * tabs are kept in different TabModels.
  */
 public interface TabModel extends TabList {
-    /**
-     * A list of the various ways tabs can be launched.
-     */
-    public enum TabLaunchType {
-        /**
-         * Opened from a link.  Sets up a relationship between the newly created tab and its parent.
-         */
-        FROM_LINK,
-
-        /** Opened by an external app. */
-        FROM_EXTERNAL_APP,
-
-        /**
-         * Catch-all for Tabs opened by Chrome UI not covered by more specific TabLaunchTypes.
-         * Examples include:
-         * - Tabs created by the options menu.
-         * - Tabs created via the New Tab button in the tab stack overview.
-         * - Tabs created via Push Notifications.
-         * - Tabs opened via a keyboard shortcut.
-         */
-        FROM_CHROME_UI,
-
-        /**
-         * Opened during the restoration process on startup or when merging two instances of
-         * Chrome in Android N+ multi-instance mode.
-         */
-        FROM_RESTORE,
-
-        /**
-         * Opened from the long press context menu.  Will be brought to the foreground.
-         * Like FROM_CHROME_UI, but also sets up a parent/child relationship like FROM_LINK.
-         */
-        FROM_LONGPRESS_FOREGROUND,
-
-        /**
-         * Opened from the long press context menu.  Will not be brought to the foreground.
-         * Like FROM_CHROME_UI, but also sets up a parent/child relationship like FROM_LINK.
-         */
-        FROM_LONGPRESS_BACKGROUND,
-
-        /**
-         * Changed windows by moving from one activity to another. Will be opened in the foreground.
-         */
-        FROM_REPARENTING,
-
-        /** Opened from a launcher shortcut. */
-        FROM_LAUNCHER_SHORTCUT,
-
-        /**
-         * The tab is created by CCT in the background and detached from ChromeActivity.
-         */
-        FROM_SPECULATIVE_BACKGROUND_CREATION,
-
-        /** Opened in the background from Browser Actions context menu. */
-        FROM_BROWSER_ACTIONS,
-    }
-
-    /**
-     * A list of the various ways tabs can be selected.
-     */
-    public enum TabSelectionType {
-        /** Selection of adjacent tab when the active tab is closed in foreground. */
-        FROM_CLOSE,
-
-        /** Selection of adjacent tab when the active tab is closed upon app exit. */
-        FROM_EXIT,
-
-        /** Selection of newly created tab (e.g. for a URL intent or NTP). */
-        FROM_NEW,
-
-        /** User-originated switch to existing tab or selection of main tab on app startup. */
-        FROM_USER
-    }
-
     /**
      * @return The profile associated with the current model.
      */
@@ -117,11 +47,40 @@ public interface TabModel extends TabList {
     public boolean closeTab(Tab tab, boolean animate, boolean uponExit, boolean canUndo);
 
     /**
+     * Unregisters and destroys the specified tab, and then switches to {@code recommendedNextTab}
+     * if it is not null, otherwise switches to the previous tab.
+     *
+     * @param tab The non-null tab to close.
+     * @param recommendedNextTab The tab to switch to if not null.
+     * @param animate true iff the closing animation should be displayed.
+     * @param uponExit true iff the tab is being closed upon application exit (after user presses
+     *                 the system back button).
+     * @param canUndo Whether or not this action can be undone. If this is {@code true} and
+     *                {@link #supportsPendingClosures()} is {@code true}, this {@link Tab}
+     *                will not actually be closed until {@link #commitTabClosure(int)} or
+     *                {@link #commitAllTabClosures()} is called, but it will be effectively removed
+     *                from this list. To get a comprehensive list of all tabs, including ones that
+     *                have been partially closed, use the {@link TabList} from
+     *                {@link #getComprehensiveModel()}.
+     *
+     * @return true if the tab was found.
+     */
+    public boolean closeTab(Tab tab, @Nullable Tab recommendedNextTab, boolean animate,
+            boolean uponExit, boolean canUndo);
+
+    /**
      * Returns which tab would be selected if the specified tab {@code id} were closed.
      * @param id The ID of tab which would be closed.
      * @return The id of the next tab that would be visible.
      */
     public Tab getNextTabIfClosed(int id);
+
+    /**
+     * Close multiple tabs on this model.
+     * @param tabs The tabs to be closed.
+     * @param canUndo Whether or not this action can be undone.
+     */
+    public void closeMultipleTabs(List<Tab> tabs, boolean canUndo);
 
     /**
      * Close all the tabs on this model.
@@ -179,7 +138,13 @@ public interface TabModel extends TabList {
      * @param i    The index of the tab to select.
      * @param type The type of selection.
      */
-    public void setIndex(int i, final TabSelectionType type);
+    public void setIndex(int i, final @TabSelectionType int type);
+
+    /**
+     * @return Whether this tab model is currently selected in the correspond
+     *         {@link TabModelSelector}.
+     */
+    boolean isCurrentModel();
 
     /**
      * Moves a tab to a new index.
@@ -203,7 +168,7 @@ public interface TabModel extends TabList {
      * @param index The index where the tab should be inserted. The model may override the index.
      * @param type  How the tab was opened.
      */
-    void addTab(Tab tab, int index, TabLaunchType type);
+    void addTab(Tab tab, int index, @TabLaunchType int type);
 
     /**
      * Removes the given tab from the model without destroying it. The tab should be inserted into
@@ -211,19 +176,6 @@ public interface TabModel extends TabList {
      * @param tab The tab to remove.
      */
     void removeTab(Tab tab);
-
-    /**
-     * Indicates that a new tab may be added to the model soon. Allows the model to initialize
-     * anything necessary for the creation of a tab or perform cleanup once a new tab is no longer
-     * pending addition.
-     * @param isPendingTabAdd Whether a new tab is pending addition to this model.
-     */
-    void setIsPendingTabAdd(boolean isPendingTabAdd);
-
-    /**
-     * Whether a new tab is pending addition to this model.
-     */
-    boolean isPendingTabAdd();
 
     /**
      * Subscribes a {@link TabModelObserver} to be notified about changes to this model.

@@ -34,6 +34,12 @@ var currentDeviceId = null;
 var lastFocusedElement = null;
 
 /**
+ * Stores locale set for the current browser process.
+ * @type {string}
+ */
+var locale = null;
+
+/**
  * Host window outer default width.
  * @const {number}
  */
@@ -45,6 +51,40 @@ var OUTER_WIDTH = 768;
  */
 var OUTER_HEIGHT = 640;
 
+/**
+ * Contains list of possible combination for languages and country codes. If
+ * match is found then navigate to final document directly.
+ */
+var PLAYSTORE_TOS_LOCALIZATIONS = [
+  'id_id',     'bs_ba',     'ca_es',     'cs_cz',     'da_dk',     'de_be',
+  'de_de',     'de_li',     'de_lu',     'de_at',     'de_ch',     'et_ee',
+  'en_as',     'en_ag',     'en_au',     'en_bs',     'en_bh',     'en_bz',
+  'en_bw',     'en_kh',     'en_cm',     'en_ca',     'en_cy',     'en_eg',
+  'en_fj',     'en_gu',     'en_is',     'en_in',     'en_ie',     'en_il',
+  'en_it',     'en_jo',     'en_kw',     'en_lb',     'en_mh',     'en_mu',
+  'en_na',     'en_np',     'en_nz',     'en_mp',     'en_om',     'en_pw',
+  'en_pg',     'en_ph',     'en_qa',     'en_rw',     'en_sa',     'en_sg',
+  'en_za',     'en_lk',     'en_ch',     'en_tz',     'en_tt',     'en_vi',
+  'en_ug',     'en_ae',     'en_uk',     'en_us',     'en_zm',     'en_zw',
+  'es_es',     'es_us',     'es_gu',     'es_as',     'es-419_ar', 'es-419_bo',
+  'es-419_cl', 'es-419_co', 'es-419_cr', 'es-419_cu', 'es-419_ec', 'es-419_sv',
+  'es-419_us', 'es-419_gt', 'es-419_hn', 'es-419_mx', 'es-419_ni', 'es-419_pa',
+  'es-419_py', 'es-419_pe', 'es-419_pr', 'es-419_do', 'es-419_uy', 'es-419_ve',
+  'fr_be',     'fr_bj',     'fr_bf',     'fr_kh',     'fr_cm',     'fr_ca',
+  'fr_ci',     'fr_fr',     'fr_ga',     'fr_lu',     'fr_ml',     'fr_mu',
+  'fr_ne',     'fr_sn',     'fr_ch',     'fr_tg',     'hl_in',     'hr_hr',
+  'it_it',     'it_it',     'lv_lv',     'lt_lt',     'hu_hu',     'mt_mt',
+  'nl_aw',     'nl_be',     'nl_nl',     'no_no',     'pl_pl',     'pt-BR_br',
+  'pt-PT_ao',  'pt-PT_cv',  'pt-PT_gw',  'pt-PT_mz',  'pt-PT_pt',  'ro_md',
+  'ro_ro',     'sq_al',     'sk_sk',     'sl_si',     'fi_fi',     'sv_se',
+  'vi_vn',     'tr_cy',     'tr_tr',     'el_gr',     'el_cy',     'be_by',
+  'bg_bg',     'mk_mk',     'ru_az',     'ru_am',     'ru_by',     'ru_ba',
+  'ru_kz',     'ru_kg',     'ru_ru',     'ru_tj',     'ru_tm',     'ru_uz',
+  'sr_rs',     'uk_ua',     'hy_am',     'ar_jo',     'ar_ae',     'ar_bh',
+  'ar_kw',     'ar_sa',     'ar_om',     'ar_qa',     'ar_lb',     'ar_eg',
+  'hi_in',     'th_th',     'th_la',     'ko_kr',     'zh-CN_cn',  'zh-TW_tw',
+  'zh-TW_hk',  'ja_jp',
+];
 
 /**
  * Sends a native message to ArcSupportHost.
@@ -80,6 +120,8 @@ class PreferenceCheckbox {
     this.checkbox_ = container.querySelector('.checkbox-option');
     this.label_ = container.querySelector('.checkbox-text');
 
+    this.isManaged_ = false;
+
     var learnMoreLink = this.label_.querySelector(learnMoreLinkId);
     if (learnMoreLink) {
       learnMoreLink.addEventListener(
@@ -110,12 +152,21 @@ class PreferenceCheckbox {
   }
 
   /**
+   * Returns if the checkbox reflects a managed setting, rather than a
+   * user-controlled setting.
+   */
+  isManaged() {
+    return this.isManaged_;
+  }
+
+  /**
    * Called when the preference value in native code is updated.
    */
   onPreferenceChanged(isEnabled, isManaged) {
     this.checkbox_.checked = isEnabled;
     this.checkbox_.disabled = isManaged;
     this.label_.disabled = isManaged;
+    this.isManaged_ = isManaged;
 
     if (this.policyIndicator_) {
       if (isManaged) {
@@ -175,7 +226,10 @@ class MetricsPreferenceCheckbox extends PreferenceCheckbox {
     super.onPreferenceChanged(isEnabled, isManaged);
 
     // Hide the checkbox if it is not allowed to (re-)enable.
-    var canEnable = !isEnabled && !isManaged;
+    // TODO(jhorwich) Remove checkbox functionality from the metrics notice as
+    // we've removed the ability for a device owner to enable it during ARC
+    // setup.
+    var canEnable = false;
     this.checkbox_.hidden = !canEnable;
     this.textLabel_.hidden = canEnable;
     var label = canEnable ? this.label_ : this.textLabel_;
@@ -190,20 +244,25 @@ class MetricsPreferenceCheckbox extends PreferenceCheckbox {
     // So, meanwhile, we set the link everytime we update the text.
     // TODO: fix the translation text, and main html.
     var learnMoreLink = label.querySelector(this.learnMoreLinkId_);
-    learnMoreLink.addEventListener(
-        'click', (event) => this.onLearnMoreLinkClicked(event));
-    learnMoreLink.addEventListener(
-        'keydown', (event) => this.suppressKeyDown(event));
+    if (learnMoreLink) {
+      learnMoreLink.addEventListener(
+          'click', (event) => this.onLearnMoreLinkClicked(event));
+      learnMoreLink.addEventListener(
+          'keydown', (event) => this.suppressKeyDown(event));
+    }
+    // settings-link is used only in privacy section.
     var settingsLink = label.querySelector('#settings-link');
-    settingsLink.addEventListener(
-        'click', (event) => this.onSettingsLinkClicked(event));
-    settingsLink.addEventListener(
-        'keydown', (event) => this.suppressKeyDown(event));
+    if (settingsLink) {
+      settingsLink.addEventListener(
+          'click', (event) => this.onPrivacySettingsLinkClicked(event));
+      settingsLink.addEventListener(
+          'keydown', (event) => this.suppressKeyDown(event));
+    }
   }
 
-  /** Called when "settings" link is clicked. */
-  onSettingsLinkClicked(event) {
-    sendNativeMessage('onOpenSettingsPageClicked');
+  /** Called when "privacy settings" link is clicked. */
+  onPrivacySettingsLinkClicked(event) {
+    sendNativeMessage('onOpenPrivacySettingsPageClicked');
     event.stopPropagation();
   }
 }
@@ -234,10 +293,12 @@ class TermsOfServicePage {
    *     backup-restore preference.
    * @param {PreferenceCheckbox} locationServiceCheckbox The checkbox for the
    *     location service.
+   * @param {string} learnMorePaiService. Contents of learn more link of Play
+   *     auto install service.
    */
   constructor(
       container, isManaged, countryCode, metricsCheckbox, backupRestoreCheckbox,
-      locationServiceCheckbox) {
+      locationServiceCheckbox, learnMorePaiService) {
     this.loadingContainer_ =
         container.querySelector('#terms-of-service-loading');
     this.contentContainer_ =
@@ -249,6 +310,9 @@ class TermsOfServicePage {
 
     this.isManaged_ = isManaged;
 
+    this.tosContent_ = '';
+    this.tosShown_ = false;
+
     // Set event listener for webview loading.
     this.termsView_ = container.querySelector('#terms-view');
     this.termsView_.addEventListener(
@@ -257,15 +321,20 @@ class TermsOfServicePage {
         'contentload', () => this.onTermsViewLoaded_());
     this.termsView_.addEventListener(
         'loadabort', (event) => this.onTermsViewLoadAborted_(event.reason));
+    var requestFilter = {urls: ['<all_urls>'], types: ['main_frame']};
+    this.termsView_.request.onCompleted.addListener(
+        this.onTermsViewRequestCompleted_.bind(this), requestFilter);
+    this.countryCode = countryCode.toLowerCase();
 
-    var scriptSetCountryCode =
-        'document.countryCode = \'' + countryCode.toLowerCase() + '\';';
-    scriptSetCountryCode += 'document.viewMode = \'large-view\';';
+    var scriptInitTermsView =
+        'document.countryCode = \'' + this.countryCode + '\';';
+    scriptInitTermsView += 'document.language = \'' + locale + '\';';
+    scriptInitTermsView += 'document.viewMode = \'large-view\';';
     this.termsView_.addContentScripts([
       {
         name: 'preProcess',
         matches: ['https://play.google.com/*'],
-        js: {code: scriptSetCountryCode},
+        js: {code: scriptInitTermsView},
         run_at: 'document_start'
       },
       {
@@ -285,14 +354,33 @@ class TermsOfServicePage {
     });
     this.state_ = LoadState.UNLOADED;
 
+    this.serviceContainer_ = container.querySelector('#service-container');
+    this.locationService_ =
+        container.querySelector('#location-service-preference');
+    this.paiService_ = container.querySelector('#pai-service-descirption');
+    this.googleServiceConfirmation_ =
+        container.querySelector('#google-service-confirmation');
+    this.agreeButton_ = container.querySelector('#button-agree');
+    this.nextButton_ = container.querySelector('#button-next');
+
     // On managed case, do not show TermsOfService section. Note that the
     // checkbox for the prefereces are still visible.
     var visibility = isManaged ? 'hidden' : 'visible';
     container.querySelector('#terms-container').style.visibility = visibility;
 
+    // PAI service.
+    var paiLabel = this.paiService_.querySelector('.content-text');
+    var paiLearnMoreLink = paiLabel.querySelector('#learn-more-link-pai');
+    if (paiLearnMoreLink) {
+      paiLearnMoreLink.onclick = function(event) {
+        event.stopPropagation();
+        showTextOverlay(learnMorePaiService);
+      };
+    }
+
     // Set event handler for buttons.
-    container.querySelector('#button-agree')
-        .addEventListener('click', () => this.onAgree());
+    this.agreeButton_.addEventListener('click', () => this.onAgree());
+    this.nextButton_.addEventListener('click', () => this.onNext_());
     container.querySelector('#button-cancel')
         .addEventListener('click', () => this.onCancel_());
   }
@@ -312,12 +400,30 @@ class TermsOfServicePage {
   showContent_() {
     this.loadingContainer_.hidden = true;
     this.contentContainer_.hidden = false;
+    this.locationService_.hidden = true;
+    this.paiService_.hidden = true;
+    this.googleServiceConfirmation_.hidden = true;
+    this.serviceContainer_.style.overflow = 'hidden';
+    this.agreeButton_.hidden = true;
+    this.nextButton_.hidden = false;
     this.updateTermsHeight_();
-    this.contentContainer_.querySelector('#button-agree').focus();
+    this.nextButton_.focus();
+  }
+
+  onNext_() {
+    this.locationService_.hidden = false;
+    this.paiService_.hidden = false;
+    this.googleServiceConfirmation_.hidden = false;
+    this.serviceContainer_.style.overflowY = 'auto';
+    this.serviceContainer_.scrollTop = this.serviceContainer_.scrollHeight;
+    this.agreeButton_.hidden = false;
+    this.nextButton_.hidden = true;
+    this.agreeButton_.focus();
   }
 
   /**
-   * Updates terms view height manually because webview is not automatically
+   * Updates terms view height manually because webview is not automati
+   * cally
    * resized in case parent div element gets resized.
    */
   updateTermsHeight_() {
@@ -342,13 +448,62 @@ class TermsOfServicePage {
       return;
     }
 
+    var defaultLocation = 'https://play.google.com/about/play-terms/';
     if (this.termsView_.src) {
       // This is reloading the page, typically clicked RETRY on error page.
-      this.termsView_.reload();
+      this.fastLocation_ = undefined;
+      if (this.termsView_.src == defaultLocation) {
+        this.termsView_.reload();
+      } else {
+        this.termsView_.src = defaultLocation;
+      }
     } else {
-      // This is first loading case so set the URL explicitly.
-      this.termsView_.src = 'https://play.google.com/about/play-terms.html';
+      // Try fast load first if we know location.
+      this.fastLocation_ = this.getFastLocation_();
+      if (this.fastLocation_) {
+        this.termsView_.src = 'https://play.google.com/intl/' +
+            this.fastLocation_ + '/about/play-terms/';
+      } else {
+        this.termsView_.src = defaultLocation;
+      }
     }
+  }
+
+  /**
+   * Checks the combination of the current language and country code and tries
+   * to resolve known terms location. This location is used to load terms
+   * directly in required language and zone. This prevents extra navigation to
+   * default terms page to determine this target location.
+   * Returns undefined in case the fast location cannot be found.
+   */
+  getFastLocation_() {
+    var matchByLangZone = locale + '_' + this.countryCode;
+    if (PLAYSTORE_TOS_LOCALIZATIONS.indexOf(matchByLangZone) >= 0) {
+      return matchByLangZone;
+    }
+
+    var langSegments = locale.split('-');
+    if (langSegments.length == 2) {
+      var matchByShortLangZone = langSegments[0] + '_' + this.countryCode;
+      if (PLAYSTORE_TOS_LOCALIZATIONS.indexOf(matchByShortLangZone) >= 0) {
+        return matchByShortLangZone;
+      }
+    }
+
+    return undefined;
+  }
+
+  /** Returns user choices and page configuration for processing. */
+  getPageResults_() {
+    return {
+      tosContent: this.tosContent_,
+      tosShown: this.tosShown_,
+      isMetricsEnabled: this.metricsCheckbox_.isChecked(),
+      isBackupRestoreEnabled: this.backupRestoreCheckbox_.isChecked(),
+      isBackupRestoreManaged: this.backupRestoreCheckbox_.isManaged(),
+      isLocationServiceEnabled: this.locationServiceCheckbox_.isChecked(),
+      isLocationServiceManaged: this.locationServiceCheckbox_.isManaged()
+    };
   }
 
   /** Called when the terms-view starts to be loaded. */
@@ -357,6 +512,7 @@ class TermsOfServicePage {
     // their language by selection at the bottom of the Terms Of Service
     // content.
     this.state_ = LoadState.LOADING;
+    this.tosContent_ = '';
     // Show loading page.
     this.loadingContainer_.hidden = false;
     this.contentContainer_.hidden = true;
@@ -369,8 +525,32 @@ class TermsOfServicePage {
     // state_ is set to ABORTED. Here, switch the view only for the
     // successful loading case.
     if (this.state_ == LoadState.LOADING) {
+      var getToSContent = {code: 'getToSContent();'};
+      termsPage.termsView_.executeScript(
+          getToSContent, this.onGetToSContent_.bind(this));
+    }
+  }
+
+  /** Callback for getToSContent. */
+  onGetToSContent_(results) {
+    if (this.state_ == LoadState.LOADING) {
+      if (!results || results.length != 1 || typeof results[0] !== 'string') {
+        this.onTermsViewLoadAborted_('unable to get ToS content');
+        return;
+      }
       this.state_ = LoadState.LOADED;
+      this.tosContent_ = results[0];
+      this.tosShown_ = true;
       this.showContent_();
+
+      if (this.fastLocation_) {
+        // For fast location load make sure we have right terms displayed.
+        this.fastLocation_ = undefined;
+        var checkInitialLangZoneTerms = 'processLangZoneTerms(true, \'' +
+            locale + '\', \'' + this.countryCode + '\');';
+        var details = {code: checkInitialLangZoneTerms};
+        termsPage.termsView_.executeScript(details, function(results) {});
+      }
     }
   }
 
@@ -378,22 +558,36 @@ class TermsOfServicePage {
   onTermsViewLoadAborted_(reason) {
     console.error('TermsView loading is aborted: ' + reason);
     // Mark ABORTED so that onTermsViewLoaded_() won't show the content view.
+    this.fastLocation_ = undefined;
     this.state_ = LoadState.ABORTED;
     showErrorPage(
         appWindow.contentWindow.loadTimeData.getString('serverError'));
   }
 
+  /** Called when the terms-view's load request is completed. */
+  onTermsViewRequestCompleted_(details) {
+    if (this.state_ != LoadState.LOADING || details.statusCode == 200) {
+      return;
+    }
+
+    // In case we failed with fast location let retry default scheme.
+    if (this.fastLocation_) {
+      this.fastLocation_ = undefined;
+      this.termsView_.src = 'https://play.google.com/about/play-terms/';
+      return;
+    }
+    this.onTermsViewLoadAborted_(
+        'request failed with status ' + details.statusCode);
+  }
+
   /** Called when "AGREE" button is clicked. */
   onAgree() {
-    sendNativeMessage('onAgreed', {
-      isMetricsEnabled: this.metricsCheckbox_.isChecked(),
-      isBackupRestoreEnabled: this.backupRestoreCheckbox_.isChecked(),
-      isLocationServiceEnabled: this.locationServiceCheckbox_.isChecked()
-    });
+    sendNativeMessage('onAgreed', this.getPageResults_());
   }
 
   /** Called when "CANCEL" button is clicked. */
   onCancel_() {
+    sendNativeMessage('onCanceled', this.getPageResults_());
     closeWindow();
   }
 
@@ -531,6 +725,7 @@ function initialize(data, deviceId) {
   var loadTimeData = appWindow.contentWindow.loadTimeData;
   loadTimeData.data = data;
   appWindow.contentWindow.i18nTemplate.process(doc, loadTimeData);
+  locale = loadTimeData.getString('locale');
 
   // Initialize preference connected checkboxes in terms of service page.
   termsPage = new TermsOfServicePage(
@@ -547,11 +742,15 @@ function initialize(data, deviceId) {
       new PreferenceCheckbox(
           doc.getElementById('location-service-preference'),
           data.learnMoreLocationServices, '#learn-more-link-location-service',
-          data.controlledByPolicy));
+          data.controlledByPolicy),
+      data.learnMorePaiService);
 
   // Initialize the Active Directory SAML authentication page.
   activeDirectoryAuthPage =
       new ActiveDirectoryAuthPage(doc.getElementById('active-directory-auth'));
+
+  doc.getElementById('close-button').title =
+      loadTimeData.getString('overlayClose');
 
   adjustTopMargin();
 }
@@ -695,7 +894,10 @@ function showErrorPage(errorMessage, opt_shouldShowSendFeedback) {
 function showOverlay(overlayClass) {
   var doc = appWindow.contentWindow.document;
   var overlayContainer = doc.getElementById('overlay-container');
-  overlayContainer.className = 'overlay ' + overlayClass;
+  overlayContainer.classList.remove('overlay-text');
+  overlayContainer.classList.remove('overlay-url');
+  overlayContainer.classList.add('overlay-loading');
+  overlayContainer.classList.add(overlayClass);
   overlayContainer.hidden = false;
   lastFocusedElement = doc.activeElement;
   doc.getElementById('overlay-close').focus();
@@ -728,8 +930,8 @@ function showURLOverlay(url) {
  * the content of terms view.
  */
 function showPrivacyPolicyOverlay() {
-  var defaultLink = 'https://www.google.com/intl/' + navigator.language +
-      '/policies/privacy/';
+  var defaultLink =
+      'https://www.google.com/intl/' + locale + '/policies/privacy/';
   if (termsPage.isManaged_) {
     showURLOverlay(defaultLink);
     return;
@@ -809,6 +1011,17 @@ chrome.app.runtime.onLaunched.addListener(function() {
     appWindow.contentWindow.cr.ui.overlay.setupOverlay(overlay);
     appWindow.contentWindow.cr.ui.overlay.globalInitialization();
     overlay.addEventListener('cancelOverlay', hideOverlay);
+
+    var overlayWebview = doc.getElementById('overlay-url');
+    overlayWebview.addEventListener('contentload', function() {
+      overlay.classList.remove('overlay-loading');
+    });
+    overlayWebview.addContentScripts([{
+      name: 'postProcess',
+      matches: ['https://support.google.com/*'],
+      css: {files: ['overlay.css']},
+      run_at: 'document_end'
+    }]);
 
     focusManager = new appWindow.contentWindow.ArcOptInFocusManager();
     focusManager.initialize();

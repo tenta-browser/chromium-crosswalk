@@ -7,6 +7,7 @@
 
 #include <stddef.h>
 #include <stdint.h>
+#include <string>
 
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
@@ -18,7 +19,7 @@ class GURL;
 
 namespace base {
 class FilePath;
-}  // namespace
+}  // namespace base
 
 namespace offline_pages {
 
@@ -46,11 +47,17 @@ class OfflinePageTestArchiver : public OfflinePageArchiver {
   // OfflinePageArchiver implementation:
   void CreateArchive(const base::FilePath& archives_dir,
                      const CreateArchiveParams& create_archive_params,
-                     const CreateArchiveCallback& callback) override;
+                     content::WebContents* web_contents,
+                     CreateArchiveCallback callback) override;
 
   // Completes the creation of archive. Should be used with |set_delayed| set to
   // true.
   void CompleteCreateArchive();
+
+  // Set whether to check create_archive_called_ on destruction.
+  void ExpectCreateArchiveCalled(bool expect) {
+    expect_create_archive_called_ = expect;
+  }
 
   // When set to true, |CompleteCreateArchive| should be called explicitly for
   // the process to finish.
@@ -76,6 +83,7 @@ class OfflinePageTestArchiver : public OfflinePageArchiver {
   base::FilePath filename_;
   ArchiverResult result_;
   int64_t size_to_report_;
+  bool expect_create_archive_called_;
   bool create_archive_called_;
   bool delayed_;
   base::string16 result_title_;

@@ -4,20 +4,37 @@
 
 #include "chrome/browser/ui/app_list/arc/arc_pai_starter.h"
 
+#include <algorithm>
 #include <memory>
+#include <string>
+#include <utility>
 
+#include "base/bind.h"
+#include "chrome/browser/chromeos/arc/arc_optin_uma.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/ui/app_list/arc/arc_app_utils.h"
 #include "components/arc/arc_prefs.h"
+#include "components/arc/arc_service_manager.h"
+#include "components/arc/arc_util.h"
+#include "components/arc/session/arc_bridge_service.h"
 #include "components/prefs/pref_service.h"
 #include "ui/events/event_constants.h"
 
 namespace arc {
 
-ArcPaiStarter::ArcPaiStarter(content::BrowserContext* context,
-                             PrefService* pref_service)
-    : context_(context), pref_service_(pref_service) {
-  ArcAppListPrefs* prefs = ArcAppListPrefs::Get(context_);
+namespace {
+
+constexpr base::TimeDelta kMinRetryTime = base::TimeDelta::FromMinutes(2);
+constexpr base::TimeDelta kMaxRetryTime = base::TimeDelta::FromMinutes(30);
+
+}  // namespace
+
+ArcPaiStarter::ArcPaiStarter(Profile* profile)
+    : profile_(profile),
+      pref_service_(profile->GetPrefs()),
+      retry_interval_(kMinRetryTime),
+      weak_ptr_factory_(this) {
+  ArcAppListPrefs* prefs = ArcAppListPrefs::Get(profile_);
   // Prefs may not available in some unit tests.
   if (!prefs)
     return;
@@ -26,19 +43,17 @@ ArcPaiStarter::ArcPaiStarter(content::BrowserContext* context,
 }
 
 ArcPaiStarter::~ArcPaiStarter() {
-  ArcAppListPrefs* prefs = ArcAppListPrefs::Get(context_);
+  ArcAppListPrefs* prefs = ArcAppListPrefs::Get(profile_);
   if (!prefs)
     return;
   prefs->RemoveObserver(this);
 }
 
 // static
-std::unique_ptr<ArcPaiStarter> ArcPaiStarter::CreateIfNeeded(
-    content::BrowserContext* context,
-    PrefService* pref_service) {
-  if (pref_service->GetBoolean(prefs::kArcPaiStarted))
+std::unique_ptr<ArcPaiStarter> ArcPaiStarter::CreateIfNeeded(Profile* profile) {
+  if (profile->GetPrefs()->GetBoolean(prefs::kArcPaiStarted))
     return std::unique_ptr<ArcPaiStarter>();
-  return base::MakeUnique<ArcPaiStarter>(context, pref_service);
+  return std::make_unique<ArcPaiStarter>(profile);
 }
 
 void ArcPaiStarter::AcquireLock() {
@@ -61,22 +76,55 @@ void ArcPaiStarter::AddOnStartCallback(base::OnceClosure callback) {
   onstart_callbacks_.push_back(std::move(callback));
 }
 
+void ArcPaiStarter::TriggerRetryForTesting() {
+  retry_timer_.FireNow();
+}
+
 void ArcPaiStarter::MaybeStartPai() {
-  if (started_ || locked_)
+  // Clear retry timer. It is only used to call |MaybeStartPai| in case of PAI
+  // flow failed and no condition is changed to trigger |MaybeStartPai|.
+  retry_timer_.Stop();
+
+  if (started_ || pending_ || locked_ || IsArcPlayAutoInstallDisabled())
     return;
 
-  ArcAppListPrefs* prefs = ArcAppListPrefs::Get(context_);
+  ArcAppListPrefs* const prefs = ArcAppListPrefs::Get(profile_);
   DCHECK(prefs);
+
   std::unique_ptr<ArcAppListPrefs::AppInfo> app_info =
       prefs->GetApp(kPlayStoreAppId);
   if (!app_info || !app_info->ready)
     return;
 
+  arc::mojom::AppInstance* app_instance = ARC_GET_INSTANCE_FOR_METHOD(
+      arc::ArcServiceManager::Get()->arc_bridge_service()->app(), StartPaiFlow);
+
+  if (!app_instance) {
+    app_instance = ARC_GET_INSTANCE_FOR_METHOD(
+        arc::ArcServiceManager::Get()->arc_bridge_service()->app(),
+        StartPaiFlowDeprecated);
+    // this should always be set because PAI can be started only in case Play
+    // Store app is ready which means app_instance is connected.
+    DCHECK(app_instance);
+    VLOG(1) << "Start deprecated PAI flow";
+    app_instance->StartPaiFlowDeprecated();
+    OnPaiDone();
+    return;
+  }
+
+  VLOG(1) << "Start PAI flow";
+  pending_ = true;
+  request_start_time_ = base::Time::Now();
+  app_instance->StartPaiFlow(base::BindOnce(&ArcPaiStarter::OnPaiRequested,
+                                            weak_ptr_factory_.GetWeakPtr()));
+}
+
+void ArcPaiStarter::OnPaiDone() {
+  DCHECK(!pending_);
+  ArcAppListPrefs* const prefs = ArcAppListPrefs::Get(profile_);
+  DCHECK(prefs);
+
   started_ = true;
-  StartPaiFlow();
-  // TODO(khmel): Currently PAI flow is black-box for us. We can only start it
-  // and rely that the Play Store will handle all cases. Ideally we need some
-  // callback, notifying us that PAI flow finished successfully.
   pref_service_->SetBoolean(prefs::kArcPaiStarted, true);
 
   prefs->RemoveObserver(this);
@@ -86,13 +134,35 @@ void ArcPaiStarter::MaybeStartPai() {
   onstart_callbacks_.clear();
 }
 
-void ArcPaiStarter::OnAppRegistered(const std::string& app_id,
-                                    const ArcAppListPrefs::AppInfo& app_info) {
-  OnAppReadyChanged(app_id, app_info.ready);
+void ArcPaiStarter::OnPaiRequested(mojom::PaiFlowState state) {
+  DCHECK(pending_);
+  pending_ = false;
+  VLOG(1) << "PAI flow state " << state;
+
+  UpdatePlayAutoInstallRequestState(state, profile_);
+
+  if (state != mojom::PaiFlowState::SUCCEEDED) {
+    retry_timer_.Start(
+        FROM_HERE, retry_interval_,
+        base::BindOnce(&ArcPaiStarter::MaybeStartPai, base::Unretained(this)));
+    retry_interval_ = std::min(retry_interval_ * 2, kMaxRetryTime);
+    return;
+  }
+
+  arc::UpdatePlayAutoInstallRequestTime(base::Time::Now() - request_start_time_,
+                                        profile_);
+  OnPaiDone();
 }
 
-void ArcPaiStarter::OnAppReadyChanged(const std::string& app_id, bool ready) {
-  if (app_id == kPlayStoreAppId && ready)
+void ArcPaiStarter::OnAppRegistered(const std::string& app_id,
+                                    const ArcAppListPrefs::AppInfo& app_info) {
+  OnAppStatesChanged(app_id, app_info);
+}
+
+void ArcPaiStarter::OnAppStatesChanged(
+    const std::string& app_id,
+    const ArcAppListPrefs::AppInfo& app_info) {
+  if (app_id == kPlayStoreAppId && app_info.ready)
     MaybeStartPai();
 }
 

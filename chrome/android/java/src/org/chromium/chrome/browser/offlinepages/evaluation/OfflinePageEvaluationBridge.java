@@ -4,14 +4,15 @@
 
 package org.chromium.chrome.browser.offlinepages.evaluation;
 
-import android.os.AsyncTask;
-
 import org.chromium.base.Callback;
 import org.chromium.base.Log;
 import org.chromium.base.ObserverList;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.base.task.PostTask;
+import org.chromium.base.task.TaskRunner;
+import org.chromium.base.task.TaskTraits;
 import org.chromium.chrome.browser.offlinepages.ClientId;
 import org.chromium.chrome.browser.offlinepages.OfflinePageItem;
 import org.chromium.chrome.browser.offlinepages.SavePageRequest;
@@ -64,25 +65,6 @@ public class OfflinePageEvaluationBridge {
     }
 
     /**
-     * Class used for writing logs to external log file asynchronously to prevent violating strict
-     * mode during test.
-     */
-    private class LogTask extends AsyncTask<String, Void, Void> {
-        @Override
-        protected Void doInBackground(String... strings) {
-            try {
-                synchronized (mLogOutput) {
-                    mLogOutput.write(strings[0]);
-                    mLogOutput.flush();
-                }
-            } catch (IOException e) {
-                Log.e(TAG, e.getMessage(), e);
-            }
-            return null;
-        }
-    }
-
-    /**
      * Get the instance of the evaluation bridge.
      * @param profile The profile used to get bridge.
      * @param useEvaluationScheduler True if using the evaluation scheduler instead of the
@@ -95,6 +77,10 @@ public class OfflinePageEvaluationBridge {
     }
 
     private static final String TAG = "OPEvalBridge";
+
+    private static TaskRunner sSequencedTaskRunner =
+            PostTask.createSequencedTaskRunner(TaskTraits.BEST_EFFORT_MAY_BLOCK);
+
     private long mNativeOfflinePageEvaluationBridge;
     private boolean mIsOfflinePageModelLoaded;
     private ObserverList<OfflinePageEvaluationObserver> mObservers =
@@ -199,9 +185,15 @@ public class OfflinePageEvaluationBridge {
                 new SimpleDateFormat("MM-dd HH:mm:ss.SSS", Locale.getDefault());
         String logString = formatter.format(date) + ": " + sourceTag + " | " + message
                 + System.getProperty("line.separator");
-        LogTask logTask = new LogTask();
         Log.d(TAG, logString);
-        logTask.executeOnExecutor(AsyncTask.SERIAL_EXECUTOR, logString);
+        sSequencedTaskRunner.postTask(() -> {
+            try {
+                mLogOutput.write(logString);
+                mLogOutput.flush();
+            } catch (IOException e) {
+                Log.e(TAG, e.getMessage(), e);
+            }
+        });
     }
 
     public void closeLog() {

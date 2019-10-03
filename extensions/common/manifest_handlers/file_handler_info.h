@@ -38,6 +38,18 @@ struct FileHandlerInfo {
 
 typedef std::vector<FileHandlerInfo> FileHandlersInfo;
 
+struct FileHandlerMatch {
+  FileHandlerMatch();
+  ~FileHandlerMatch();
+  const FileHandlerInfo* handler = nullptr;
+
+  // True if the handler matched on MIME type
+  bool matched_mime = false;
+
+  // True if the handler matched on file extension
+  bool matched_file_extension = false;
+};
+
 struct FileHandlers : public Extension::ManifestData {
   FileHandlers();
   ~FileHandlers() override;
@@ -56,7 +68,7 @@ class FileHandlersParser : public ManifestHandler {
   bool Parse(Extension* extension, base::string16* error) override;
 
  private:
-  const std::vector<std::string> Keys() const override;
+  base::span<const char* const> Keys() const override;
 
   DISALLOW_COPY_AND_ASSIGN(FileHandlersParser);
 };

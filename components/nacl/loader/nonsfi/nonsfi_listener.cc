@@ -4,12 +4,12 @@
 
 #include "components/nacl/loader/nonsfi/nonsfi_listener.h"
 
+#include <memory>
 #include <utility>
 
 #include "base/command_line.h"
 #include "base/file_descriptor_posix.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
 #include "base/message_loop/message_loop.h"
 #include "base/rand_util.h"
 #include "base/run_loop.h"
@@ -21,14 +21,12 @@
 #include "components/nacl/loader/nacl_trusted_listener.h"
 #include "components/nacl/loader/nonsfi/nonsfi_main.h"
 #include "content/public/common/content_descriptors.h"
-#include "content/public/common/mojo_channel_switches.h"
 #include "ipc/ipc_channel.h"
 #include "ipc/ipc_channel_handle.h"
 #include "ipc/ipc_sync_channel.h"
 #include "native_client/src/public/nonsfi/irt_random.h"
 #include "ppapi/nacl_irt/irt_manifest.h"
 #include "ppapi/nacl_irt/plugin_startup.h"
-#include "services/service_manager/public/cpp/service_context.h"
 
 #if !defined(OS_NACL_NONSFI)
 #error "This file must be built for nacl_helper_nonsfi."
@@ -51,8 +49,7 @@ NonSfiListener::~NonSfiListener() {
 
 void NonSfiListener::Listen() {
   mojo::ScopedMessagePipeHandle channel_handle;
-  std::unique_ptr<service_manager::ServiceContext> service_context =
-      CreateNaClServiceContext(io_thread_.task_runner(), &channel_handle);
+  auto service = CreateNaClService(io_thread_.task_runner(), &channel_handle);
   channel_ = IPC::SyncChannel::Create(
       channel_handle.release(), IPC::Channel::MODE_CLIENT,
       this,  // As a Listener.
@@ -108,7 +105,7 @@ void NonSfiListener::OnStart(const nacl::NaClStartParams& params) {
       params.manifest_service_channel_handle);
   ppapi::StartUpPlugin();
 
-  trusted_listener_ = base::MakeUnique<NaClTrustedListener>(
+  trusted_listener_ = std::make_unique<NaClTrustedListener>(
       mojo::MakeProxy(nacl::mojom::NaClRendererHostPtrInfo(
           mojo::ScopedMessagePipeHandle(
               params.trusted_service_channel_handle.mojo_handle),

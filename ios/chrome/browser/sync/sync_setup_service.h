@@ -5,16 +5,11 @@
 #ifndef IOS_CHROME_BROWSER_SYNC_SYNC_SETUP_SERVICE_H_
 #define IOS_CHROME_BROWSER_SYNC_SYNC_SETUP_SERVICE_H_
 
-#include <map>
 #include <memory>
 
 #include "base/macros.h"
-#include "base/strings/string16.h"
 #include "components/keyed_service/core/keyed_service.h"
 #include "components/sync/base/model_type.h"
-#include "components/sync/base/syncer_error.h"
-
-class PrefService;
 
 namespace syncer {
 class SyncService;
@@ -33,6 +28,7 @@ class SyncSetupService : public KeyedService {
     kSyncServiceServiceUnavailable,
     kSyncServiceNeedsPassphrase,
     kSyncServiceUnrecoverableError,
+    kSyncSettingsNotConfirmed,
     kLastSyncServiceError = kSyncServiceUnrecoverableError
   };
 
@@ -48,7 +44,7 @@ class SyncSetupService : public KeyedService {
     kNumberOfSyncableDatatypes
   };
 
-  SyncSetupService(syncer::SyncService* sync_service, PrefService* prefs);
+  explicit SyncSetupService(syncer::SyncService* sync_service);
   ~SyncSetupService() override;
 
   // Returns the |syncer::ModelType| associated to the given
@@ -76,8 +72,8 @@ class SyncSetupService : public KeyedService {
   void SetDataTypeEnabled(syncer::ModelType datatype, bool enabled);
 
   // Returns whether the user needs to enter a passphrase or enable sync to make
-  // sync work.
-  bool UserActionIsRequiredToHaveSyncWork();
+  // tab sync work.
+  bool UserActionIsRequiredToHaveTabSyncWork();
 
   // Returns whether all datatypes are being synced.
   virtual bool IsSyncingAllDataTypes() const;
@@ -91,14 +87,31 @@ class SyncSetupService : public KeyedService {
   // Returns true if the user has gone through the initial sync configuration.
   // This method is guaranteed not to start the sync backend so it can be
   // called at start-up.
+  // TODO(crbug.com/951313): This method has to be remove when UnifiedConsent
+  // flag is cleaned up.
   virtual bool HasFinishedInitialSetup();
 
   // Pauses sync allowing the user to configure what data to sync before
   // actually starting to sync data with the server.
   virtual void PrepareForFirstSyncSetup();
 
-  // Commit the current state of the configuration to the sync backend.
-  void CommitChanges();
+  // Sets the first setup complete flag. This method doesn't commit sync
+  // changes. PrepareForFirstSyncSetup() needs to be called before. This flag is
+  // not set if the user didn't turn on sync.
+  // This method should only be used with UnifiedConsent flag.
+  void SetFirstSetupComplete();
+
+  // Returns true if the user finished the Sync setup flow.
+  bool IsFirstSetupComplete() const;
+
+  // Commits the current state of the configuration to the sync backend.
+  // This method should only be used with UnifiedConsent flag off. This method
+  // is kept to not change the pre-Unity behavior.
+  void PreUnityCommitChanges();
+
+  // Commits all the pending configuration changes to Sync.
+  // This method should only be used with UnifiedConsent flag.
+  void CommitSyncChanges();
 
   // Returns true if there are uncommitted sync changes;
   bool HasUncommittedChanges();
@@ -110,8 +123,6 @@ class SyncSetupService : public KeyedService {
   void SetSyncEnabledWithoutChangingDatatypes(bool sync_enabled);
 
   syncer::SyncService* const sync_service_;
-  PrefService* const prefs_;
-  syncer::ModelTypeSet user_selectable_types_;
 
   // Prevents Sync from running until configuration is complete.
   std::unique_ptr<syncer::SyncSetupInProgressHandle> sync_blocker_;

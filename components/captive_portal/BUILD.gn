@@ -17,10 +17,14 @@ component("captive_portal") {
 
   deps = [
     "//base",
-    "//components/data_use_measurement/core",
     "//net",
+    "//services/network/public/cpp",
     "//url",
   ]
+
+  if (is_chromeos) {
+    deps += [ "//chromeos/network" ]
+  }
 }
 
 static_library("test_support") {
@@ -34,6 +38,7 @@ static_library("test_support") {
     ":captive_portal",
     "//base",
     "//net:test_support",
+    "//services/network:test_support",
     "//url",
   ]
 }

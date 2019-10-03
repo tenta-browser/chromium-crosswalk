@@ -6,8 +6,9 @@
 
 #import <Foundation/Foundation.h>
 
-#include "ios/web/public/app/web_main_parts.h"
-#include "ios/web/public/features.h"
+#include "ios/web/common/features.h"
+#include "ios/web/public/init/web_main_parts.h"
+#include "services/service_manager/public/cpp/service.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -36,10 +37,6 @@ std::unique_ptr<WebMainParts> WebClient::CreateWebMainParts() {
   return nullptr;
 }
 
-std::string WebClient::GetAcceptLangs(BrowserState* state) const {
-  return std::string();
-}
-
 std::string WebClient::GetApplicationLocale() const {
   return "en-US";
 }
@@ -50,10 +47,6 @@ bool WebClient::IsAppSpecificURL(const GURL& url) const {
 
 base::string16 WebClient::GetPluginNotSupportedText() const {
   return base::string16();
-}
-
-std::string WebClient::GetProduct() const {
-  return std::string();
 }
 
 std::string WebClient::GetUserAgent(UserAgentType type) const {
@@ -74,13 +67,33 @@ base::RefCountedMemory* WebClient::GetDataResourceBytes(int resource_id) const {
   return nullptr;
 }
 
-NSString* WebClient::GetEarlyPageScript(BrowserState* browser_state) const {
+bool WebClient::IsDataResourceGzipped(int resource_id) const {
+  return false;
+}
+
+NSString* WebClient::GetDocumentStartScriptForAllFrames(
+    BrowserState* browser_state) const {
   return @"";
 }
 
-std::unique_ptr<base::Value> WebClient::GetServiceManifestOverlay(
-    base::StringPiece name) {
+NSString* WebClient::GetDocumentStartScriptForMainFrame(
+    BrowserState* browser_state) const {
+  return @"";
+}
+
+std::unique_ptr<service_manager::Service> WebClient::HandleServiceRequest(
+    const std::string& service_name,
+    service_manager::mojom::ServiceRequest request) {
   return nullptr;
+}
+
+base::Optional<service_manager::Manifest> WebClient::GetServiceManifestOverlay(
+    base::StringPiece name) {
+  return base::nullopt;
+}
+
+std::vector<service_manager::Manifest> WebClient::GetExtraServiceManifests() {
+  return {};
 }
 
 void WebClient::AllowCertificateError(
@@ -95,6 +108,20 @@ void WebClient::AllowCertificateError(
 
 bool WebClient::IsSlimNavigationManagerEnabled() const {
   return base::FeatureList::IsEnabled(web::features::kSlimNavigationManager);
+}
+
+void WebClient::PrepareErrorPage(WebState* web_state,
+                                 const GURL& url,
+                                 NSError* error,
+                                 bool is_post,
+                                 bool is_off_the_record,
+                                 NSString** error_html) {
+  DCHECK(error);
+  *error_html = error.localizedDescription;
+}
+
+UIView* WebClient::GetWindowedContainer() {
+  return nullptr;
 }
 
 }  // namespace web

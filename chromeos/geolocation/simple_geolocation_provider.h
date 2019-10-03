@@ -8,19 +8,21 @@
 #include <memory>
 #include <vector>
 
+#include "base/component_export.h"
+#include "base/gtest_prod_util.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/threading/thread_checker.h"
 #include "base/time/time.h"
-#include "chromeos/chromeos_export.h"
 #include "chromeos/geolocation/simple_geolocation_request.h"
 #include "url/gurl.h"
 
-namespace net {
-class URLRequestContextGetter;
+namespace network {
+class SharedURLLoaderFactory;
 }
 
 namespace chromeos {
+class GeolocationHandler;
 
 // This class implements Google Maps Geolocation API.
 //
@@ -29,10 +31,11 @@ namespace chromeos {
 // Note: this should probably be a singleton to monitor requests rate.
 // But as it is used only diring ChromeOS Out-of-Box, it can be owned by
 // WizardController for now.
-class CHROMEOS_EXPORT SimpleGeolocationProvider {
+class COMPONENT_EXPORT(CHROMEOS_GEOLOCATION) SimpleGeolocationProvider {
  public:
-  SimpleGeolocationProvider(net::URLRequestContextGetter* url_context_getter,
-                            const GURL& url);
+  SimpleGeolocationProvider(
+      scoped_refptr<network::SharedURLLoaderFactory> factory,
+      const GURL& url);
   virtual ~SimpleGeolocationProvider();
 
   // Initiates new request. If |send_wifi_access_points|, WiFi AP information
@@ -48,7 +51,9 @@ class CHROMEOS_EXPORT SimpleGeolocationProvider {
   static GURL DefaultGeolocationProviderURL();
 
  private:
-  friend class TestGeolocationAPIURLFetcherCallback;
+  friend class TestGeolocationAPILoaderFactory;
+  FRIEND_TEST_ALL_PREFIXES(SimpleGeolocationWirelessTest, CellularExists);
+  FRIEND_TEST_ALL_PREFIXES(SimpleGeolocationWirelessTest, WiFiExists);
 
   // Geolocation response callback. Deletes request from requests_.
   void OnGeolocationResponse(
@@ -58,7 +63,11 @@ class CHROMEOS_EXPORT SimpleGeolocationProvider {
       bool server_error,
       const base::TimeDelta elapsed);
 
-  scoped_refptr<net::URLRequestContextGetter> url_context_getter_;
+  void set_geolocation_handler(GeolocationHandler* geolocation_handler) {
+    geolocation_handler_ = geolocation_handler;
+  }
+
+  scoped_refptr<network::SharedURLLoaderFactory> shared_url_loader_factory_;
 
   // URL of the Google Maps Geolocation API.
   const GURL url_;
@@ -67,6 +76,8 @@ class CHROMEOS_EXPORT SimpleGeolocationProvider {
   // SimpleGeolocationProvider owns all requests, so this vector is deleted on
   // destroy.
   std::vector<std::unique_ptr<SimpleGeolocationRequest>> requests_;
+
+  GeolocationHandler* geolocation_handler_ = nullptr;
 
   // Creation and destruction should happen on the same thread.
   base::ThreadChecker thread_checker_;

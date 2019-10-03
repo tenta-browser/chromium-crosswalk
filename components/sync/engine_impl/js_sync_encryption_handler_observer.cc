@@ -10,12 +10,12 @@
 #include "base/logging.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/values.h"
-#include "components/sync/base/cryptographer.h"
 #include "components/sync/base/model_type.h"
 #include "components/sync/base/time.h"
 #include "components/sync/engine/sync_string_conversions.h"
 #include "components/sync/js/js_event_details.h"
 #include "components/sync/js/js_event_handler.h"
+#include "components/sync/nigori/cryptographer.h"
 
 namespace syncer {
 
@@ -30,6 +30,7 @@ void JsSyncEncryptionHandlerObserver::SetJsEventHandler(
 
 void JsSyncEncryptionHandlerObserver::OnPassphraseRequired(
     PassphraseRequiredReason reason,
+    const KeyDerivationParams& key_derivation_params,
     const sync_pb::EncryptedData& pending_keys) {
   if (!event_handler_.IsInitialized()) {
     return;
@@ -103,9 +104,6 @@ void JsSyncEncryptionHandlerObserver::OnPassphraseTypeChanged(
                      TimeToProtoTime(explicit_passphrase_time));
   HandleJsEvent(FROM_HERE, "onPassphraseTypeChanged", JsEventDetails(&details));
 }
-
-void JsSyncEncryptionHandlerObserver::OnLocalSetPassphraseEncryption(
-    const SyncEncryptionHandler::NigoriState& nigori_state) {}
 
 void JsSyncEncryptionHandlerObserver::HandleJsEvent(
     const base::Location& from_here,

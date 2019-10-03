@@ -10,22 +10,22 @@
 #include <utility>
 
 #include "base/macros.h"
-#include "base/observer_list.h"
+#include "base/memory/weak_ptr.h"
+#include "base/scoped_observer.h"
 #include "base/time/time.h"
 #include "base/timer/elapsed_timer.h"
+#include "chrome/browser/ui/global_error/global_error_observer.h"
+#include "chrome/browser/ui/global_error/global_error_service.h"
 #include "components/bookmarks/browser/base_bookmark_model_observer.h"
-#include "content/public/browser/notification_observer.h"
-#include "content/public/browser/notification_registrar.h"
 #include "ui/base/models/menu_model.h"
 #include "ui/views/controls/menu/menu_delegate.h"
 
-class AppMenuObserver;
 class BookmarkMenuDelegate;
 class Browser;
 class ExtensionToolbarMenuView;
 
 namespace views {
-class MenuButton;
+class MenuButtonController;
 class MenuItemView;
 class MenuRunner;
 }
@@ -33,43 +33,38 @@ class MenuRunner;
 // AppMenu adapts the AppMenuModel to view's menu related classes.
 class AppMenu : public views::MenuDelegate,
                 public bookmarks::BaseBookmarkModelObserver,
-                public content::NotificationObserver {
+                public GlobalErrorObserver,
+                public base::SupportsWeakPtr<AppMenu> {
  public:
-  enum RunFlags {
-    // Indicates that the menu was opened for a drag-and-drop operation.
-    FOR_DROP = 1 << 0,
-  };
-
-  AppMenu(Browser* browser, int run_flags);
+  AppMenu(Browser* browser, int run_types, bool alert_reopen_tab_items);
   ~AppMenu() override;
 
   void Init(ui::MenuModel* model);
 
-  // Shows the menu relative to the specified view.
-  void RunMenu(views::MenuButton* host);
+  // Shows the menu relative to the specified controller's button.
+  void RunMenu(views::MenuButtonController* host);
 
   // Closes the menu if it is open, otherwise does nothing.
   void CloseMenu();
 
   // Whether the menu is currently visible to the user.
-  bool IsShowing();
+  bool IsShowing() const;
 
-  bool for_drop() const { return (run_flags_ & FOR_DROP) != 0; }
+  bool for_drop() const {
+    return (run_types_ & views::MenuRunner::FOR_DROP) != 0;
+  }
 
-  void AddObserver(AppMenuObserver* observer);
-  void RemoveObserver(AppMenuObserver* observer);
+  views::MenuItemView* root_menu_item() { return root_; }
 
   // MenuDelegate overrides:
-  const gfx::FontList* GetLabelFontList(int command_id) const override;
-  bool GetShouldUseNormalForegroundColor(int command_id) const override;
+  void GetLabelStyle(int command_id, LabelStyle* style) const override;
   base::string16 GetTooltipText(int command_id,
                                 const gfx::Point& p) const override;
   bool IsTriggerableEvent(views::MenuItemView* menu,
                           const ui::Event& e) override;
-  bool GetDropFormats(
-      views::MenuItemView* menu,
-      int* formats,
-      std::set<ui::Clipboard::FormatType>* format_types) override;
+  bool GetDropFormats(views::MenuItemView* menu,
+                      int* formats,
+                      std::set<ui::ClipboardFormatType>* format_types) override;
   bool AreDropTypesRequired(views::MenuItemView* menu) override;
   bool CanDrop(views::MenuItemView* menu,
                const ui::OSExchangeData& data) override;
@@ -103,10 +98,8 @@ class AppMenu : public views::MenuDelegate,
   // bookmarks::BaseBookmarkModelObserver overrides:
   void BookmarkModelChanged() override;
 
-  // content::NotificationObserver overrides:
-  void Observe(int type,
-               const content::NotificationSource& source,
-               const content::NotificationDetails& details) override;
+  // GlobalErrorObserver:
+  void OnGlobalErrorsChanged() override;
 
   ExtensionToolbarMenuView* extension_toolbar_for_testing() {
     return extension_toolbar_;
@@ -151,7 +144,7 @@ class AppMenu : public views::MenuDelegate,
   int ModelIndexFromCommandId(int command_id) const;
 
   // The views menu. Owned by |menu_runner_|.
-  views::MenuItemView* root_;
+  views::MenuItemView* root_ = nullptr;
 
   std::unique_ptr<views::MenuRunner> menu_runner_;
 
@@ -166,34 +159,36 @@ class AppMenu : public views::MenuDelegate,
   // If |selected_menu_model_| is non-null after the menu completes
   // ActivatedAt is invoked. This is done so that ActivatedAt isn't invoked
   // while the message loop is nested.
-  ui::ButtonMenuItemModel* selected_menu_model_;
-  int selected_index_;
+  ui::ButtonMenuItemModel* selected_menu_model_ = nullptr;
+  int selected_index_ = 0;
 
   // Used for managing the bookmark menu items.
   std::unique_ptr<BookmarkMenuDelegate> bookmark_menu_delegate_;
 
   // Menu corresponding to IDC_BOOKMARKS_MENU.
-  views::MenuItemView* bookmark_menu_;
+  views::MenuItemView* bookmark_menu_ = nullptr;
 
   // Menu corresponding to IDC_FEEDBACK.
-  views::MenuItemView* feedback_menu_item_;
+  views::MenuItemView* feedback_menu_item_ = nullptr;
 
   // Menu corresponding to IDC_TAKE_SCREENSHOT.
-  views::MenuItemView* screenshot_menu_item_;
+  views::MenuItemView* screenshot_menu_item_ = nullptr;
 
   // The view within the IDC_EXTENSIONS_OVERFLOW_MENU item (only present with
   // the toolbar action redesign enabled).
-  ExtensionToolbarMenuView* extension_toolbar_;
+  ExtensionToolbarMenuView* extension_toolbar_ = nullptr;
 
   // Used for managing "Recent tabs" menu items.
   std::unique_ptr<RecentTabsMenuModelDelegate> recent_tabs_menu_model_delegate_;
 
-  content::NotificationRegistrar registrar_;
+  ScopedObserver<GlobalErrorService, GlobalErrorObserver>
+      global_error_observer_{this};
 
-  // The bit mask of RunFlags.
-  const int run_flags_;
+  // The bit mask of views::MenuRunner::RunTypes.
+  const int run_types_;
 
-  base::ObserverList<AppMenuObserver> observer_list_;
+  // Whether to show items relating to reopening the last-closed tab as alerted.
+  const bool alert_reopen_tab_items_;
 
   // Records the time from when menu opens to when the user selects a menu item.
   base::ElapsedTimer menu_opened_timer_;

@@ -6,10 +6,11 @@
 #define CHROME_BROWSER_UI_PASSWORDS_MANAGE_PASSWORDS_TEST_H_
 
 #include <memory>
+#include <vector>
 
 #include "base/macros.h"
 #include "base/metrics/histogram_samples.h"
-#include "base/test/histogram_tester.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "components/autofill/core/common/password_form.h"
 #include "components/password_manager/core/browser/fake_form_fetcher.h"
@@ -25,7 +26,7 @@ class PasswordsClientUIDelegate;
 class ManagePasswordsTest : public InProcessBrowserTest {
  public:
   ManagePasswordsTest();
-  ~ManagePasswordsTest();
+  ~ManagePasswordsTest() override;
 
   // InProcessBrowserTest:
   void SetUpOnMainThread() override;
@@ -49,7 +50,7 @@ class ManagePasswordsTest : public InProcessBrowserTest {
   // Get samples for |histogram|.
   std::unique_ptr<base::HistogramSamples> GetSamples(const char* histogram);
 
-  autofill::PasswordForm* test_form() { return &test_form_; }
+  autofill::PasswordForm* test_form() { return &password_form_; }
 
   // Get the UI controller for the current WebContents.
   PasswordsClientUIDelegate* GetController();
@@ -58,7 +59,8 @@ class ManagePasswordsTest : public InProcessBrowserTest {
                void(const password_manager::CredentialInfo&));
 
  private:
-  autofill::PasswordForm test_form_;
+  autofill::PasswordForm password_form_;
+  autofill::PasswordForm federated_form_;
   base::HistogramTester histogram_tester_;
   password_manager::StubPasswordManagerClient client_;
   password_manager::StubPasswordManagerDriver driver_;

@@ -10,21 +10,21 @@
 #include <stddef.h>
 
 #include <list>
+#include <map>
 #include <memory>
+#include <string>
 #include <vector>
 
-#include "base/containers/hash_tables.h"
 #include "base/files/file_path.h"
 #include "base/gtest_prod_util.h"
 #include "base/macros.h"
-#include "base/message_loop/message_loop.h"
 #include "base/threading/thread_checker.h"
 #include "build/build_config.h"
 #include "chrome/browser/profiles/profile.h"
 #include "chrome/browser/profiles/profile_metrics.h"
 #include "chrome/browser/profiles/profile_shortcut_manager.h"
 #include "chrome/browser/ui/browser_list_observer.h"
-#include "chrome/common/features.h"
+#include "chrome/common/buildflags.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 
@@ -34,8 +34,9 @@ class ProfileInfoCache;
 class ProfileManager : public content::NotificationObserver,
                        public Profile::Delegate {
  public:
-  typedef base::Callback<void(Profile*, Profile::CreateStatus)> CreateCallback;
-  typedef base::Callback<void(Profile*)> ProfileLoadedCallback;
+  typedef base::RepeatingCallback<void(Profile*, Profile::CreateStatus)>
+      CreateCallback;
+  typedef base::OnceCallback<void(Profile*)> ProfileLoadedCallback;
 
   explicit ProfileManager(const base::FilePath& user_data_dir);
   ~ProfileManager() override;
@@ -108,10 +109,10 @@ class ProfileManager : public content::NotificationObserver,
   // as part of the callback.
   bool LoadProfile(const std::string& profile_name,
                    bool incognito,
-                   const ProfileLoadedCallback& callback);
+                   ProfileLoadedCallback callback);
   bool LoadProfileByPath(const base::FilePath& profile_path,
                          bool incognito,
-                         const ProfileLoadedCallback& callback);
+                         ProfileLoadedCallback callback);
 
   // Explicit asynchronous creation of a profile located at |profile_path|.
   // If the profile has already been created then callback is called
@@ -119,8 +120,7 @@ class ProfileManager : public content::NotificationObserver,
   void CreateProfileAsync(const base::FilePath& profile_path,
                           const CreateCallback& callback,
                           const base::string16& name,
-                          const std::string& icon_url,
-                          const std::string& supervised_user_id);
+                          const std::string& icon_url);
 
   // Returns true if the profile pointer is known to point to an existing
   // profile.
@@ -169,11 +169,9 @@ class ProfileManager : public content::NotificationObserver,
   // and CREATE_STATUS_CREATED) so binding parameters with bind::Passed() is
   // prohibited. Returns the file path to the profile that will be created
   // asynchronously.
-  static base::FilePath CreateMultiProfileAsync(
-      const base::string16& name,
-      const std::string& icon_url,
-      const CreateCallback& callback,
-      const std::string& supervised_user_id);
+  static base::FilePath CreateMultiProfileAsync(const base::string16& name,
+                                                const std::string& icon_url,
+                                                const CreateCallback& callback);
 
   // Returns the full path to be used for guest profiles.
   static base::FilePath GetGuestProfilePath();
@@ -201,14 +199,14 @@ class ProfileManager : public content::NotificationObserver,
   // profile is either scheduling or marked for deletion.
   void MaybeScheduleProfileForDeletion(
       const base::FilePath& profile_dir,
-      const CreateCallback& callback,
+      ProfileLoadedCallback callback,
       ProfileMetrics::ProfileDelete deletion_source);
 
   // Schedules the profile at the given path to be deleted on shutdown. If we're
   // deleting the last profile, a new one will be created in its place, and in
   // that case the callback will be called when profile creation is complete.
   void ScheduleProfileForDeletion(const base::FilePath& profile_dir,
-                                  const CreateCallback& callback);
+                                  ProfileLoadedCallback callback);
 #endif
 
   // Autoloads profiles if they are running background apps.
@@ -231,7 +229,7 @@ class ProfileManager : public content::NotificationObserver,
   // for testing. If |addToStorage|, adds to ProfileAttributesStorage as well.
   // If |start_deferred_task_runners|, starts the deferred task runners.
   // Use ONLY in tests.
-  void RegisterTestingProfile(Profile* profile,
+  void RegisterTestingProfile(std::unique_ptr<Profile> profile,
                               bool addToStorage,
                               bool start_deferred_task_runners);
 
@@ -264,8 +262,9 @@ class ProfileManager : public content::NotificationObserver,
   // Creates a new profile asynchronously by calling into the profile's
   // asynchronous profile creation method. Virtual so that unittests can return
   // a TestingProfile instead of the Profile's result.
-  virtual Profile* CreateProfileAsyncHelper(const base::FilePath& path,
-                                            Delegate* delegate);
+  virtual std::unique_ptr<Profile> CreateProfileAsyncHelper(
+      const base::FilePath& path,
+      Delegate* delegate);
 
  private:
   friend class TestingProfileManager;
@@ -275,7 +274,7 @@ class ProfileManager : public content::NotificationObserver,
   // This struct contains information about profiles which are being loaded or
   // were loaded.
   struct ProfileInfo {
-    ProfileInfo(Profile* profile, bool created);
+    ProfileInfo(std::unique_ptr<Profile> profile, bool created);
 
     ~ProfileInfo();
 
@@ -299,10 +298,10 @@ class ProfileManager : public content::NotificationObserver,
       const base::FilePath& user_data_dir);
 
   // Adds a pre-existing Profile object to the set managed by this
-  // ProfileManager. This ProfileManager takes ownership of the Profile.
+  // ProfileManager.
   // The Profile should not already be managed by this ProfileManager.
   // Returns true if the profile was added, false otherwise.
-  bool AddProfile(Profile* profile);
+  bool AddProfile(std::unique_ptr<Profile> profile);
 
   // Synchronously creates and returns a profile. This handles both the full
   // creation and adds it to the set managed by this ProfileManager. Returns
@@ -315,7 +314,7 @@ class ProfileManager : public content::NotificationObserver,
   // last non-supervised profile. In the Mac, loads the next non-supervised
   // profile if the profile to be deleted is the active profile.
   void EnsureActiveProfileExistsBeforeDeletion(
-      const CreateCallback& callback,
+      ProfileLoadedCallback callback,
       const base::FilePath& profile_dir);
 
   // Schedules the profile at the given path to be deleted on shutdown,
@@ -328,7 +327,7 @@ class ProfileManager : public content::NotificationObserver,
 
   // Registers profile with given info. Returns pointer to created ProfileInfo
   // entry.
-  ProfileInfo* RegisterProfile(Profile* profile, bool created);
+  ProfileInfo* RegisterProfile(std::unique_ptr<Profile> profile, bool created);
 
   // Returns ProfileInfo associated with given |path|, registered earlier with
   // RegisterProfile.
@@ -352,26 +351,31 @@ class ProfileManager : public content::NotificationObserver,
   // (desktop) Guest User profile and (desktop) System Profile.
   void SetNonPersonalProfilePrefs(Profile* profile);
 
-  // For ChromeOS, determines if profile should be otr.
+  // Determines if profile should be OTR.
   bool ShouldGoOffTheRecord(Profile* profile);
 
   void RunCallbacks(const std::vector<CreateCallback>& callbacks,
                     Profile* profile,
                     Profile::CreateStatus status);
 
+  void SaveActiveProfiles();
+
 #if !defined(OS_ANDROID)
+  void OnBrowserOpened(Browser* browser);
+  void OnBrowserClosed(Browser* browser);
+
   // Updates the last active user of the current session.
   // On Chrome OS updating this user will have no effect since when browser is
   // restored after crash there's another preference that is taken into account.
   // See kLastActiveUser in UserManagerBase.
   void UpdateLastUser(Profile* last_active);
 
-  class BrowserListObserver : public chrome::BrowserListObserver {
+  class BrowserListObserver : public ::BrowserListObserver {
    public:
     explicit BrowserListObserver(ProfileManager* manager);
     ~BrowserListObserver() override;
 
-    // chrome::BrowserListObserver implementation.
+    // ::BrowserListObserver implementation.
     void OnBrowserAdded(Browser* browser) override;
     void OnBrowserRemoved(Browser* browser) override;
     void OnBrowserSetLastActive(Browser* browser) override;
@@ -389,7 +393,7 @@ class ProfileManager : public content::NotificationObserver,
   void OnNewActiveProfileLoaded(
       const base::FilePath& profile_to_delete_path,
       const base::FilePath& last_non_supervised_profile_path,
-      const CreateCallback& original_callback,
+      ProfileLoadedCallback callback,
       Profile* loaded_profile,
       Profile::CreateStatus status);
 

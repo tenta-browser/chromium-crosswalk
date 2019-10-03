@@ -13,6 +13,7 @@
 #include "components/sessions/core/session_id.h"
 #include "third_party/metrics_proto/omnibox_event.pb.h"
 #include "third_party/metrics_proto/omnibox_input_type.pb.h"
+#include "ui/base/window_open_disposition.h"
 
 class AutocompleteResult;
 
@@ -22,10 +23,13 @@ struct OmniboxLog {
   OmniboxLog(const base::string16& text,
              bool just_deleted_text,
              metrics::OmniboxInputType input_type,
+             bool in_keyword_mode,
+             metrics::OmniboxEventProto::KeywordModeEntryMethod entry_method,
              bool is_popup_open,
              size_t selected_index,
+             WindowOpenDisposition disposition,
              bool is_paste_and_go,
-             SessionID::id_type tab_id,
+             SessionID tab_id,
              metrics::OmniboxEventProto::PageClassification
                  current_page_classification,
              base::TimeDelta elapsed_time_since_user_first_modified_omnibox,
@@ -44,6 +48,14 @@ struct OmniboxLog {
   // The detected type of the user's input.
   metrics::OmniboxInputType input_type;
 
+  // Whether the Omnibox was in keyword mode when the user selected a
+  // suggestion.
+  bool in_keyword_mode;
+
+  // Preserves the method that the user used to enter keyword mode. If
+  // |in_keyword_mode| is false, this should be INVALID.
+  metrics::OmniboxEventProto::KeywordModeEntryMethod keyword_mode_entry_method;
+
   // True if the popup is open.
   bool is_popup_open;
 
@@ -51,13 +63,17 @@ struct OmniboxLog {
   // dropdown is closed (and therefore there is only one implicit suggestion).
   size_t selected_index;
 
+  // The disposition used to open the match. Currently, only SWITCH_TO_TAB
+  // is relevant to the log; all other dispositions are treated identically.
+  WindowOpenDisposition disposition;
+
   // True if this is a paste-and-search or paste-and-go omnibox interaction.
   // (The codebase refers to both these types as paste-and-go.)
   bool is_paste_and_go;
 
-  // ID of the tab the selected autocomplete suggestion was opened in.
-  // Set to -1 if we haven't yet determined the destination tab.
-  SessionID::id_type tab_id;
+  // ID of the tab the selected autocomplete suggestion was opened in. Set to
+  // SessionID::InvalidValue() if we haven't yet determined the destination tab.
+  SessionID tab_id;
 
   // The type of page (e.g., new tab page, regular web page) that the
   // user was viewing before going somewhere with the omnibox.

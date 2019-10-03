@@ -16,10 +16,7 @@
 #include "content/public/common/content_client.h"
 #include "content/public/renderer/content_renderer_client.h"
 #include "content/public/renderer/render_thread.h"
-
-#ifndef MEDIA_EVENT_LOG_UTILITY
-#define MEDIA_EVENT_LOG_UTILITY DVLOG(1)
-#endif
+#include "media/base/logging_override_if_enabled.h"
 
 namespace {
 
@@ -30,8 +27,8 @@ void Log(media::MediaLogEvent* event) {
     LOG(ERROR) << "MediaEvent: "
                << media::MediaLog::MediaEventToLogString(*event);
   } else if (event->type != media::MediaLogEvent::PROPERTY_CHANGE) {
-    MEDIA_EVENT_LOG_UTILITY << "MediaEvent: "
-                            << media::MediaLog::MediaEventToLogString(*event);
+    DVLOG(1) << "MediaEvent: "
+             << media::MediaLog::MediaEventToLogString(*event);
   }
 }
 
@@ -39,13 +36,14 @@ void Log(media::MediaLogEvent* event) {
 
 namespace content {
 
-RenderMediaLog::RenderMediaLog(const GURL& security_origin)
+RenderMediaLog::RenderMediaLog(
+    const GURL& security_origin,
+    scoped_refptr<base::SingleThreadTaskRunner> task_runner)
     : security_origin_(security_origin),
-      task_runner_(base::ThreadTaskRunnerHandle::Get()),
+      task_runner_(std::move(task_runner)),
       tick_clock_(base::DefaultTickClock::GetInstance()),
       last_ipc_send_time_(tick_clock_->NowTicks()),
-      ipc_send_pending_(false),
-      weak_factory_(this) {
+      ipc_send_pending_(false) {
   DCHECK(RenderThread::Get())
       << "RenderMediaLog must be constructed on the render thread";
   // Pre-bind the WeakPtr on the right thread since we'll receive calls from
@@ -55,6 +53,9 @@ RenderMediaLog::RenderMediaLog(const GURL& security_origin)
 
 RenderMediaLog::~RenderMediaLog() {
   DCHECK(task_runner_->BelongsToCurrentThread());
+  // AddEvent() could be in-flight on some other thread.  Wait for it, and make
+  // sure that nobody else calls it.
+  InvalidateLog();
 
   // There's no further chance to handle this, so send them now. This should not
   // be racy since nothing should have a pointer to the media log on another
@@ -63,7 +64,8 @@ RenderMediaLog::~RenderMediaLog() {
     SendQueuedMediaEvents();
 }
 
-void RenderMediaLog::AddEvent(std::unique_ptr<media::MediaLogEvent> event) {
+void RenderMediaLog::AddEventLocked(
+    std::unique_ptr<media::MediaLogEvent> event) {
   Log(event.get());
 
   // For enforcing delay until it's been a second since the last ipc message was
@@ -72,7 +74,6 @@ void RenderMediaLog::AddEvent(std::unique_ptr<media::MediaLogEvent> event) {
 
   {
     base::AutoLock auto_lock(lock_);
-
     switch (event->type) {
       case media::MediaLogEvent::DURATION_SET:
         // Similar to the extents changed message, this may fire many times for
@@ -123,12 +124,9 @@ void RenderMediaLog::AddEvent(std::unique_ptr<media::MediaLogEvent> event) {
       base::BindOnce(&RenderMediaLog::SendQueuedMediaEvents, weak_this_));
 }
 
-std::string RenderMediaLog::GetErrorMessage() {
-  base::AutoLock auto_lock(lock_);
-
+std::string RenderMediaLog::GetErrorMessageLocked() {
   // Keep message structure in sync with
   // HTMLMediaElement::BuildElementErrorMessage().
-
   std::stringstream result;
   if (last_pipeline_error_)
     result << MediaEventToMessageString(*last_pipeline_error_);
@@ -145,8 +143,10 @@ std::string RenderMediaLog::GetErrorMessage() {
   return result.str();
 }
 
-void RenderMediaLog::RecordRapporWithSecurityOrigin(const std::string& metric) {
+void RenderMediaLog::RecordRapporWithSecurityOriginLocked(
+    const std::string& metric) {
   if (!task_runner_->BelongsToCurrentThread()) {
+    // Note that we don't post back to *Locked.
     task_runner_->PostTask(
         FROM_HERE,
         base::BindOnce(&RenderMediaLog::RecordRapporWithSecurityOrigin,
@@ -163,7 +163,6 @@ void RenderMediaLog::SendQueuedMediaEvents() {
   std::vector<media::MediaLogEvent> events_to_send;
   {
     base::AutoLock auto_lock(lock_);
-
     DCHECK(ipc_send_pending_);
     ipc_send_pending_ = false;
 
@@ -182,7 +181,7 @@ void RenderMediaLog::SendQueuedMediaEvents() {
   RenderThread::Get()->Send(new ViewHostMsg_MediaLogEvents(events_to_send));
 }
 
-void RenderMediaLog::SetTickClockForTesting(base::TickClock* tick_clock) {
+void RenderMediaLog::SetTickClockForTesting(const base::TickClock* tick_clock) {
   base::AutoLock auto_lock(lock_);
   tick_clock_ = tick_clock;
   last_ipc_send_time_ = tick_clock_->NowTicks();

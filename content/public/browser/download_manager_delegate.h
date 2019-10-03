@@ -10,24 +10,23 @@
 #include "base/callback.h"
 #include "base/files/file_path.h"
 #include "base/logging.h"
+#include "base/optional.h"
 #include "base/time/time.h"
+#include "components/download/public/common/download_danger_type.h"
+#include "components/download/public/common/download_item.h"
 #include "content/common/content_export.h"
-#include "content/public/browser/download_danger_type.h"
-#include "content/public/browser/download_item.h"
 #include "content/public/browser/resource_request_info.h"
 #include "content/public/browser/save_page_type.h"
-
-namespace download {
-class InProgressCache;
-}  // namespace download
+#include "url/origin.h"
 
 namespace content {
 
 class BrowserContext;
 class WebContents;
 
-// Called by SavePackage when it creates a DownloadItem.
-using SavePackageDownloadCreatedCallback = base::Callback<void(DownloadItem*)>;
+// Called by SavePackage when it creates a download::DownloadItem.
+using SavePackageDownloadCreatedCallback =
+    base::Callback<void(download::DownloadItem*)>;
 
 // Will be called asynchronously with the results of the ChooseSavePath
 // operation.  If the delegate wants notification of the download item created
@@ -45,7 +44,7 @@ using SavePackagePathPickedCallback =
 //     overwritten.
 //
 // |disposition| and |danger_type| are attributes associated with the download
-//     item and can be accessed via the DownloadItem accessors.
+//     item and can be accessed via the download::DownloadItem accessors.
 //
 // |intermediate_path| specifies the path to the intermediate file. The download
 //     will be written to this path until all the bytes have been written. Upon
@@ -60,10 +59,10 @@ using SavePackagePathPickedCallback =
 //     considered valid if |interrupt_reason| is NONE.
 using DownloadTargetCallback =
     base::Callback<void(const base::FilePath& target_path,
-                        DownloadItem::TargetDisposition disposition,
-                        DownloadDangerType danger_type,
+                        download::DownloadItem::TargetDisposition disposition,
+                        download::DownloadDangerType danger_type,
                         const base::FilePath& intermediate_path,
-                        DownloadInterruptReason interrupt_reason)>;
+                        download::DownloadInterruptReason interrupt_reason)>;
 
 // Called when a download delayed by the delegate has completed.
 using DownloadOpenDelayedCallback = base::Callback<void(bool)>;
@@ -71,7 +70,8 @@ using DownloadOpenDelayedCallback = base::Callback<void(bool)>;
 // Called with the result of CheckForFileExistence().
 using CheckForFileExistenceCallback = base::OnceCallback<void(bool result)>;
 
-using DownloadIdCallback = base::Callback<void(uint32_t)>;
+// On failure, |next_id| is equal to kInvalidId.
+using DownloadIdCallback = base::Callback<void(uint32_t /* next_id */)>;
 
 // Called on whether a download is allowed to continue.
 using CheckDownloadAllowedCallback = base::OnceCallback<void(bool /*allow*/)>;
@@ -83,7 +83,8 @@ class CONTENT_EXPORT DownloadManagerDelegate {
   virtual void Shutdown() {}
 
   // Runs |callback| with a new download id when possible, perhaps
-  // synchronously.
+  // synchronously. If this call fails, |callback| will be called with
+  // kInvalidId.
   virtual void GetNextId(const DownloadIdCallback& callback);
 
   // Called to notify the delegate that a new download |item| requires a
@@ -99,7 +100,7 @@ class CONTENT_EXPORT DownloadManagerDelegate {
   //
   // If the download should be canceled, |callback| should be invoked with an
   // empty |target_path| argument.
-  virtual bool DetermineDownloadTarget(DownloadItem* item,
+  virtual bool DetermineDownloadTarget(download::DownloadItem* item,
                                        const DownloadTargetCallback& callback);
 
   // Tests if a file type should be opened automatically.
@@ -111,28 +112,33 @@ class CONTENT_EXPORT DownloadManagerDelegate {
   // completion.  This routine may be called multiple times; once the callback
   // has been called or the function has returned true for a particular
   // download it should continue to return true for that download.
-  virtual bool ShouldCompleteDownload(
-      DownloadItem* item,
-      const base::Closure& complete_callback);
+  virtual bool ShouldCompleteDownload(download::DownloadItem* item,
+                                      const base::Closure& complete_callback);
 
   // Allows the delegate to override opening the download. If this function
   // returns false, the delegate needs to call callback when it's done
   // with the item, and is responsible for opening it.  This function is called
   // after the final rename, but before the download state is set to COMPLETED.
-  virtual bool ShouldOpenDownload(DownloadItem* item,
+  virtual bool ShouldOpenDownload(download::DownloadItem* item,
                                   const DownloadOpenDelayedCallback& callback);
 
-  // Returns true if we need to generate a binary hash for downloads.
-  virtual bool GenerateFileHash();
+  // Checks and hands off the downloading to be handled by another system based
+  // on mime type. Returns true if the download was intercepted.
+  virtual bool InterceptDownloadIfApplicable(
+      const GURL& url,
+      const std::string& user_agent,
+      const std::string& content_disposition,
+      const std::string& mime_type,
+      const std::string& request_origin,
+      int64_t content_length,
+      bool is_transient,
+      WebContents* web_contents);
 
   // Retrieve the directories to save html pages and downloads to.
   virtual void GetSaveDir(BrowserContext* browser_context,
                           base::FilePath* website_save_dir,
                           base::FilePath* download_save_dir,
                           bool* skip_dir_check) {}
-
-  // Returns the metadata cache for in-progress downloads.
-  virtual download::InProgressCache* GetInProgressCache();
 
   // Asks the user for the path to save a page. The delegate calls the callback
   // to give the answer.
@@ -157,17 +163,22 @@ class CONTENT_EXPORT DownloadManagerDelegate {
   virtual void SanitizeSavePackageResourceName(base::FilePath* filename) {}
 
   // Opens the file associated with this download.
-  virtual void OpenDownload(DownloadItem* download) {}
+  virtual void OpenDownload(download::DownloadItem* download) {}
+
+  // Returns whether this is the most recent download in the rare event where
+  // multiple downloads are associated with the same file path.
+  virtual bool IsMostRecentDownloadItemAtFilePath(
+      download::DownloadItem* download);
 
   // Returns whether this is the most recent download in the rare event where
   // multiple downloads are associated with the same file path.
   virtual bool IsMostRecentDownloadItemAtFilePath(DownloadItem* download);
 
   // Shows the download via the OS shell.
-  virtual void ShowDownloadInShell(DownloadItem* download) {}
+  virtual void ShowDownloadInShell(download::DownloadItem* download) {}
 
   // Checks whether a downloaded file still exists.
-  virtual void CheckForFileExistence(DownloadItem* download,
+  virtual void CheckForFileExistence(download::DownloadItem* download,
                                      CheckForFileExistenceCallback callback) {}
 
   // Return a GUID string used for identifying the application to the system AV
@@ -176,7 +187,7 @@ class CONTENT_EXPORT DownloadManagerDelegate {
   // performed manually without passing the download to the system AV function.
   //
   // This GUID is only used on Windows.
-  virtual std::string ApplicationClientIdForFileScanning() const;
+  virtual std::string ApplicationClientIdForFileScanning();
 
   // Checks whether download is allowed to continue. |check_download_allowed_cb|
   // is called with the decision on completion.
@@ -184,6 +195,7 @@ class CONTENT_EXPORT DownloadManagerDelegate {
       const ResourceRequestInfo::WebContentsGetter& web_contents_getter,
       const GURL& url,
       const std::string& request_method,
+      base::Optional<url::Origin> request_initiator,
       CheckDownloadAllowedCallback check_download_allowed_cb);
 
  protected:

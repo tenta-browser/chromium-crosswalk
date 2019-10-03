@@ -4,33 +4,34 @@
 
 #import "ios/chrome/app/application_delegate/metrics_mediator.h"
 
-#include "base/mac/bind_objc_block.h"
+#include "base/bind.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/metrics/user_metrics_action.h"
 #include "base/strings/sys_string_conversions.h"
-#include "base/task_scheduler/post_task.h"
+#include "base/task/post_task.h"
 #include "components/crash/core/common/crash_keys.h"
 #include "components/metrics/metrics_pref_names.h"
 #include "components/metrics/metrics_service.h"
 #include "components/prefs/pref_service.h"
+#include "components/ukm/ios/features.h"
 #import "ios/chrome/app/application_delegate/startup_information.h"
 #include "ios/chrome/browser/application_context.h"
 #include "ios/chrome/browser/chrome_url_constants.h"
 #include "ios/chrome/browser/crash_report/breakpad_helper.h"
-#import "ios/chrome/browser/crash_report/crash_report_background_uploader.h"
-#include "ios/chrome/browser/experimental_flags.h"
 #include "ios/chrome/browser/metrics/first_user_action_recorder.h"
 #import "ios/chrome/browser/metrics/previous_session_info.h"
 #import "ios/chrome/browser/net/connection_type_observer_bridge.h"
 #include "ios/chrome/browser/pref_names.h"
-#import "ios/chrome/browser/tabs/tab.h"
+#include "ios/chrome/browser/system_flags.h"
 #import "ios/chrome/browser/tabs/tab_model.h"
-#import "ios/chrome/browser/ui/main/browser_view_information.h"
+#import "ios/chrome/browser/ui/main/browser_interface_provider.h"
+#import "ios/chrome/browser/web_state_list/web_state_list.h"
 #include "ios/chrome/common/app_group/app_group_metrics_mainapp.h"
 #include "ios/public/provider/chrome/browser/chrome_browser_provider.h"
 #include "ios/public/provider/chrome/browser/distribution/app_distribution_provider.h"
+#include "ios/web/public/thread/web_task_traits.h"
+#include "ios/web/public/thread/web_thread.h"
 #import "ios/web/public/web_state/web_state.h"
-#include "ios/web/public/web_thread.h"
 #include "url/gurl.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
@@ -38,10 +39,6 @@
 #endif
 
 namespace {
-// The amount of time (in seconds) between two background fetch calls.
-// TODO(crbug.com/496172): Re-enable background fetch.
-const NSTimeInterval kBackgroundFetchIntervalDelay =
-    UIApplicationBackgroundFetchIntervalNever;
 // The amount of time (in seconds) to wait for the user to start a new task.
 const NSTimeInterval kFirstUserActionTimeout = 30.0;
 }  // namespace
@@ -119,9 +116,10 @@ using metrics_mediator::kAppEnteredBackgroundDateKey;
 
 + (void)logLaunchMetricsWithStartupInformation:
             (id<StartupInformation>)startupInformation
-                        browserViewInformation:
-                            (id<BrowserViewInformation>)browserViewInformation {
-  int numTabs = static_cast<int>([[browserViewInformation mainTabModel] count]);
+                             interfaceProvider:(id<BrowserInterfaceProvider>)
+                                                   interfaceProvider {
+  int numTabs =
+      static_cast<int>(interfaceProvider.mainInterface.tabModel.count);
   if (startupInformation.isColdStart) {
     [self recordNumTabAtStartup:numTabs];
   } else {
@@ -144,9 +142,10 @@ using metrics_mediator::kAppEnteredBackgroundDateKey;
     [startupInformation
         activateFirstUserActionRecorderWithBackgroundTime:interval];
 
-    Tab* currentTab = [[browserViewInformation currentTabModel] currentTab];
-    if (currentTab.webState &&
-        currentTab.webState->GetLastCommittedURL() == kChromeUINewTabURL) {
+    web::WebState* currentWebState = interfaceProvider.currentInterface.tabModel
+                                         .webStateList->GetActiveWebState();
+    if (currentWebState &&
+        currentWebState->GetLastCommittedURL() == kChromeUINewTabURL) {
       startupInformation.firstUserActionRecorder->RecordStartOnNTP();
       [startupInformation resetFirstUserActionRecorder];
     } else {
@@ -162,14 +161,17 @@ using metrics_mediator::kAppEnteredBackgroundDateKey;
 - (void)updateMetricsStateBasedOnPrefsUserTriggered:(BOOL)isUserTriggered {
   BOOL optIn = [self areMetricsEnabled];
   BOOL allowUploading = [self isUploadingEnabled];
-  BOOL wifiOnly = GetApplicationContext()->GetLocalState()->GetBoolean(
-      prefs::kMetricsReportingWifiOnly);
+  if (!base::FeatureList::IsEnabled(kUmaCellular)) {
+    BOOL wifiOnly = GetApplicationContext()->GetLocalState()->GetBoolean(
+        prefs::kMetricsReportingWifiOnly);
+    optIn = optIn && wifiOnly;
+  }
 
   if (isUserTriggered)
     [self updateMetricsPrefsOnPermissionChange:optIn];
   [self setMetricsEnabled:optIn withUploading:allowUploading];
   [self setBreakpadEnabled:optIn withUploading:allowUploading];
-  [self setWatchWWANEnabled:(optIn && wifiOnly)];
+  [self setWatchWWANEnabled:optIn];
   [self setAppGroupMetricsEnabled:optIn];
 }
 
@@ -189,6 +191,9 @@ using metrics_mediator::kAppEnteredBackgroundDateKey;
 
 - (BOOL)isUploadingEnabled {
   BOOL optIn = [self areMetricsEnabled];
+  if (base::FeatureList::IsEnabled(kUmaCellular)) {
+    return optIn;
+  }
   BOOL wifiOnly = GetApplicationContext()->GetLocalState()->GetBoolean(
       prefs::kMetricsReportingWifiOnly);
   BOOL allowUploading = optIn;
@@ -209,8 +214,6 @@ using metrics_mediator::kAppEnteredBackgroundDateKey;
   if (!metrics)
     return;
   if (enabled) {
-    [[UIApplication sharedApplication]
-        setMinimumBackgroundFetchInterval:kBackgroundFetchIntervalDelay];
     if (!metrics->recording_active())
       metrics->Start();
 
@@ -221,9 +224,6 @@ using metrics_mediator::kAppEnteredBackgroundDateKey;
   } else {
     if (metrics->recording_active())
       metrics->Stop();
-    [[UIApplication sharedApplication]
-        setMinimumBackgroundFetchInterval:
-            UIApplicationBackgroundFetchIntervalNever];
   }
 }
 
@@ -246,8 +246,8 @@ using metrics_mediator::kAppEnteredBackgroundDateKey;
     callback = ^(NSData* log_content) {
       std::string log(static_cast<const char*>([log_content bytes]),
                       static_cast<size_t>([log_content length]));
-      web::WebThread::PostTask(
-          web::WebThread::UI, FROM_HERE, base::BindBlockArc(^{
+      base::PostTaskWithTraits(
+          FROM_HERE, {web::WebThread::UI}, base::BindOnce(^{
             GetApplicationContext()->GetMetricsService()->PushExternalLog(log);
           }));
     };
@@ -257,20 +257,16 @@ using metrics_mediator::kAppEnteredBackgroundDateKey;
 
   app_group::main_app::RecordWidgetUsage();
   base::PostTaskWithTraits(
-      FROM_HERE, {base::MayBlock(), base::TaskPriority::BACKGROUND},
-      base::Bind(&app_group::main_app::ProcessPendingLogs, callback));
+      FROM_HERE, {base::MayBlock(), base::TaskPriority::BEST_EFFORT},
+      base::BindOnce(&app_group::main_app::ProcessPendingLogs, callback));
 }
 
 - (void)processCrashReportsPresentAtStartup {
   _hasProcessedCrashReportsPresentAtStartup = YES;
-
-  breakpad_helper::GetCrashReportCount(^(int crashReportCount) {
-    [[CrashReportBackgroundUploader sharedInstance]
-        setHasPendingCrashReportsToUploadAtStartup:(crashReportCount > 0)];
-  });
 }
 
 - (void)setBreakpadEnabled:(BOOL)enabled withUploading:(BOOL)allowUploading {
+  breakpad_helper::SetUserEnabledUploading(enabled);
   if (enabled) {
     breakpad_helper::SetEnabled(true);
 
@@ -389,10 +385,13 @@ using metrics_mediator::kAppEnteredBackgroundDateKey;
 }
 
 - (BOOL)isMetricsReportingEnabledWifiOnly {
-  return GetApplicationContext()->GetLocalState()->GetBoolean(
-             metrics::prefs::kMetricsReportingEnabled) &&
-         GetApplicationContext()->GetLocalState()->GetBoolean(
-             prefs::kMetricsReportingWifiOnly);
+  BOOL optIn = GetApplicationContext()->GetLocalState()->GetBoolean(
+      metrics::prefs::kMetricsReportingEnabled);
+  if (base::FeatureList::IsEnabled(kUmaCellular)) {
+    return optIn;
+  }
+  return optIn && GetApplicationContext()->GetLocalState()->GetBoolean(
+                      prefs::kMetricsReportingWifiOnly);
 }
 
 @end

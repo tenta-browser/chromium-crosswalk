@@ -20,16 +20,14 @@
 #include "components/history/core/browser/history_service.h"
 #include "components/history/core/browser/history_service_observer.h"
 #include "components/keyed_service/core/keyed_service.h"
-#include "components/ntp_snippets/breaking_news/breaking_news_gcm_app_handler.h"
 #include "components/ntp_snippets/callbacks.h"
 #include "components/ntp_snippets/category.h"
 #include "components/ntp_snippets/category_rankers/category_ranker.h"
 #include "components/ntp_snippets/category_status.h"
 #include "components/ntp_snippets/content_suggestions_provider.h"
-#include "components/ntp_snippets/logger.h"
 #include "components/ntp_snippets/remote/remote_suggestions_scheduler.h"
 #include "components/ntp_snippets/user_classifier.h"
-#include "components/signin/core/browser/signin_manager.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
 
 class PrefService;
 class PrefRegistrySimple;
@@ -50,7 +48,7 @@ class RemoteSuggestionsProvider;
 // them grouped into categories. There can be at most one provider per category.
 class ContentSuggestionsService : public KeyedService,
                                   public ContentSuggestionsProvider::Observer,
-                                  public SigninManagerBase::Observer,
+                                  public signin::IdentityManager::Observer,
                                   public history::HistoryServiceObserver {
  public:
   class Observer {
@@ -92,14 +90,15 @@ class ContentSuggestionsService : public KeyedService,
     virtual ~Observer() = default;
   };
 
-  enum State {
+  enum class State {
     ENABLED,
     DISABLED,
   };
 
   ContentSuggestionsService(
       State state,
-      SigninManagerBase* signin_manager,         // Can be nullptr in unittests.
+      signin::IdentityManager*
+          identity_manager,                      // Can be nullptr in unittests.
       history::HistoryService* history_service,  // Can be nullptr in unittests.
       // Can be nullptr in unittests.
       favicon::LargeIconService* large_icon_service,
@@ -107,8 +106,7 @@ class ContentSuggestionsService : public KeyedService,
       std::unique_ptr<CategoryRanker> category_ranker,
       std::unique_ptr<UserClassifier> user_classifier,
       std::unique_ptr<RemoteSuggestionsScheduler>
-          remote_suggestions_scheduler,  // Can be nullptr in unittests.
-      std::unique_ptr<Logger> debug_logger);
+          remote_suggestions_scheduler);  // Can be nullptr in unittests.
   ~ContentSuggestionsService() override;
 
   // Inherited from KeyedService.
@@ -141,6 +139,13 @@ class ContentSuggestionsService : public KeyedService,
   // synchronously.
   void FetchSuggestionImage(const ContentSuggestion::ID& suggestion_id,
                             ImageFetchedCallback callback);
+
+  // Fetches the image data for the suggestion with the given |suggestion_id|
+  // and runs the |callback|. If that suggestion doesn't exist or the fetch
+  // fails, the callback gets empty data. The callback will not be called
+  // synchronously.
+  void FetchSuggestionImageData(const ContentSuggestion::ID& suggestion_id,
+                                ImageDataFetchedCallback callback);
 
   // Fetches the favicon from local cache (if larger than or equal to
   // |minimum_size_in_pixel|) or from Google server (if there is no icon in the
@@ -186,9 +191,6 @@ class ContentSuggestionsService : public KeyedService,
   // meantime).
   void ReloadSuggestions();
 
-  // Must be called when Chrome Home is turned on or off.
-  void OnChromeHomeStatusChanged(bool is_chrome_home_enabled);
-
   // Observer accessors.
   void AddObserver(Observer* observer);
   void RemoveObserver(Observer* observer);
@@ -231,10 +233,6 @@ class ContentSuggestionsService : public KeyedService,
   // supports it).
   void ClearDismissedSuggestionsForDebugging(Category category);
 
-  std::string GetDebugLog() const {
-    return debug_logger_->GetHumanReadableLog();
-  }
-
   // Returns true if the remote suggestions provider is enabled.
   bool AreRemoteSuggestionsEnabled() const;
 
@@ -267,8 +265,6 @@ class ContentSuggestionsService : public KeyedService,
 
   CategoryRanker* category_ranker() { return category_ranker_.get(); }
 
-  Logger* debug_logger() { return debug_logger_.get(); }
-
  private:
   friend class ContentSuggestionsServiceTest;
 
@@ -283,18 +279,13 @@ class ContentSuggestionsService : public KeyedService,
       ContentSuggestionsProvider* provider,
       const ContentSuggestion::ID& suggestion_id) override;
 
-  // SigninManagerBase::Observer implementation
-  void GoogleSigninSucceeded(const std::string& account_id,
-                             const std::string& username) override;
-  void GoogleSignedOut(const std::string& account_id,
-                       const std::string& username) override;
+  // signin::IdentityManager::Observer implementation.
+  void OnPrimaryAccountSet(const CoreAccountInfo& account_info) override;
+  void OnPrimaryAccountCleared(const CoreAccountInfo& account_info) override;
 
   // history::HistoryServiceObserver implementation.
   void OnURLsDeleted(history::HistoryService* history_service,
-                     bool all_history,
-                     bool expired,
-                     const history::URLRows& deleted_rows,
-                     const std::set<GURL>& favicon_urls) override;
+                     const history::DeletionInfo& deletion_info) override;
   void HistoryServiceBeingDeleted(
       history::HistoryService* history_service) override;
 
@@ -315,7 +306,7 @@ class ContentSuggestionsService : public KeyedService,
   // Fires the OnCategoryStatusChanged event for the given |category|.
   void NotifyCategoryStatusChanged(Category category);
 
-  void OnSignInStateChanged();
+  void OnSignInStateChanged(bool has_signed_in);
 
   // Re-enables a dismissed category, making querying its provider possible.
   void RestoreDismissedCategory(Category category);
@@ -384,17 +375,17 @@ class ContentSuggestionsService : public KeyedService,
   std::map<Category, std::vector<ContentSuggestion>, Category::CompareByID>
       suggestions_by_category_;
 
-  // Observer for the SigninManager. All observers are notified when the signin
-  // state changes so that they can refresh their list of suggestions.
-  ScopedObserver<SigninManagerBase, SigninManagerBase::Observer>
-      signin_observer_;
+  // Observer for the IdentityManager. All observers are notified when the
+  // signin state changes so that they can refresh their list of suggestions.
+  ScopedObserver<signin::IdentityManager, signin::IdentityManager::Observer>
+      identity_manager_observer_;
 
   // Observer for the HistoryService. All providers are notified when history is
   // deleted.
   ScopedObserver<history::HistoryService, history::HistoryServiceObserver>
       history_service_observer_;
 
-  base::ObserverList<Observer> observers_;
+  base::ObserverList<Observer>::Unchecked observers_;
 
   const std::vector<ContentSuggestion> no_suggestions_;
 
@@ -418,8 +409,6 @@ class ContentSuggestionsService : public KeyedService,
 
   // Provides order for categories.
   std::unique_ptr<CategoryRanker> category_ranker_;
-
-  std::unique_ptr<Logger> debug_logger_;
 
   DISALLOW_COPY_AND_ASSIGN(ContentSuggestionsService);
 };

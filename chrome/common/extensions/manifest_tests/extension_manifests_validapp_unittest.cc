@@ -19,7 +19,7 @@ TEST_F(ValidAppManifestTest, ValidApp) {
   AddPattern(&expected_patterns, "http://www.google.com/mail/*");
   AddPattern(&expected_patterns, "http://www.google.com/foobar/*");
   EXPECT_EQ(expected_patterns, extension->web_extent());
-  EXPECT_EQ(extensions::LAUNCH_CONTAINER_TAB,
+  EXPECT_EQ(extensions::LaunchContainer::kLaunchContainerTab,
             extensions::AppLaunchInfo::GetLaunchContainer(extension.get()));
   EXPECT_EQ(GURL("http://www.google.com/mail/"),
             extensions::AppLaunchInfo::GetLaunchWebURL(extension.get()));
@@ -27,10 +27,10 @@ TEST_F(ValidAppManifestTest, ValidApp) {
 
 TEST_F(ValidAppManifestTest, AllowUnrecognizedPermissions) {
   std::string error;
-  std::unique_ptr<base::DictionaryValue> manifest(
-      LoadManifest("valid_app.json", &error));
-  base::ListValue* permissions = NULL;
-  ASSERT_TRUE(manifest->GetList("permissions", &permissions));
-  permissions->AppendString("not-a-valid-permission");
+  base::Value manifest = LoadManifest("valid_app.json", &error);
+  base::Value* permissions =
+      manifest.FindKeyOfType("permissions", base::Value::Type::LIST);
+  ASSERT_TRUE(permissions);
+  permissions->GetList().emplace_back("not-a-valid-permission");
   LoadAndExpectSuccess(ManifestData(std::move(manifest), ""));
 }

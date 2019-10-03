@@ -14,33 +14,38 @@
 
 #include "base/memory/weak_ptr.h"
 #include "base/single_thread_task_runner.h"
-#include "content/public/browser/web_contents.h"
 #include "headless/lib/browser/headless_devtools_manager_delegate.h"
-#include "headless/lib/browser/headless_web_contents_impl.h"
+#include "headless/public/headless_devtools_target.h"
 #include "headless/public/headless_export.h"
-#include "headless/public/util/moveable_auto_lock.h"
 
 namespace ui {
 class Compositor;
 }  // namespace ui
 
+namespace gfx {
+class Rect;
+}  // namespace gfx
+
 namespace headless {
 
 class HeadlessBrowserContextImpl;
 class HeadlessBrowserMainParts;
+class HeadlessRequestContextManager;
+class HeadlessWebContentsImpl;
+
+extern const base::FilePath::CharType kDefaultProfileName[];
 
 // Exported for tests.
 class HEADLESS_EXPORT HeadlessBrowserImpl : public HeadlessBrowser,
                                             public HeadlessDevToolsTarget {
  public:
   HeadlessBrowserImpl(
-      const base::Callback<void(HeadlessBrowser*)>& on_start_callback,
+      base::OnceCallback<void(HeadlessBrowser*)> on_start_callback,
       HeadlessBrowser::Options options);
   ~HeadlessBrowserImpl() override;
 
   // HeadlessBrowser implementation:
   HeadlessBrowserContext::Builder CreateBrowserContextBuilder() override;
-  scoped_refptr<base::SingleThreadTaskRunner> BrowserIOThread() const override;
   scoped_refptr<base::SingleThreadTaskRunner> BrowserMainThread()
       const override;
 
@@ -55,10 +60,10 @@ class HEADLESS_EXPORT HeadlessBrowserImpl : public HeadlessBrowser,
       HeadlessBrowserContext* browser_context) override;
   HeadlessBrowserContext* GetDefaultBrowserContext() override;
   HeadlessDevToolsTarget* GetDevToolsTarget() override;
+  std::unique_ptr<HeadlessDevToolsChannel> CreateDevToolsChannel() override;
 
   // HeadlessDevToolsTarget implementation:
-  bool AttachClient(HeadlessDevToolsClient* client) override;
-  void ForceAttachClient(HeadlessDevToolsClient* client) override;
+  void AttachClient(HeadlessDevToolsClient* client) override;
   void DetachClient(HeadlessDevToolsClient* client) override;
   bool IsAttached() override;
 
@@ -79,12 +84,6 @@ class HEADLESS_EXPORT HeadlessBrowserImpl : public HeadlessBrowser,
 
   base::WeakPtr<HeadlessBrowserImpl> GetWeakPtr();
 
-  // Returns the corresponding HeadlessBrowserContextImpl or null if one can't
-  // be found. Can be called on any thread.
-  LockedPtr<HeadlessBrowserContextImpl> GetBrowserContextForRenderFrame(
-      int render_process_id,
-      int render_frame_id) const;
-
   // All the methods that begin with Platform need to be implemented by the
   // platform specific headless implementation.
   // Helper for one time initialization of application
@@ -96,17 +95,17 @@ class HEADLESS_EXPORT HeadlessBrowserImpl : public HeadlessBrowser,
   ui::Compositor* PlatformGetCompositor(HeadlessWebContentsImpl* web_contents);
 
  protected:
-  base::Callback<void(HeadlessBrowser*)> on_start_callback_;
+  base::OnceCallback<void(HeadlessBrowser*)> on_start_callback_;
   HeadlessBrowser::Options options_;
   HeadlessBrowserMainParts* browser_main_parts_;  // Not owned.
 
-  mutable base::Lock browser_contexts_lock_;  // Protects |browser_contexts_|
   base::flat_map<std::string, std::unique_ptr<HeadlessBrowserContextImpl>>
       browser_contexts_;
   HeadlessBrowserContext* default_browser_context_;  // Not owned.
 
   scoped_refptr<content::DevToolsAgentHost> agent_host_;
-
+  std::unique_ptr<HeadlessRequestContextManager>
+      system_request_context_manager_;
   base::WeakPtrFactory<HeadlessBrowserImpl> weak_ptr_factory_;
 
  private:

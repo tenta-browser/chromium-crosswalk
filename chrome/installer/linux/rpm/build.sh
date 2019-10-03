@@ -60,6 +60,7 @@ verify_package() {
   local ACTUAL_DEPENDS="${TMPFILEDIR}/actual_rpm_depends"
   local ADDITIONAL_RPM_DEPENDS="/bin/sh, \
   rpmlib(CompressedFileNames) <= 3.0.4-1, \
+  rpmlib(FileDigests) <= 4.6.0-1, \
   rpmlib(PayloadFilesHavePrefix) <= 4.0-1, \
   /usr/sbin/update-alternatives"
   if [ ${IS_OFFICIAL_BUILD} -ne 0 ]; then
@@ -67,7 +68,7 @@ verify_package() {
       rpmlib(PayloadIsXz) <= 5.2-1"
   fi
   echo "${DEPENDS}" "${ADDITIONAL_RPM_DEPENDS}" | sed 's/,/\n/g' | \
-      sed 's/^ *//' | LANG=C sort > "${EXPECTED_DEPENDS}"
+      sed 's/^ *//' | LANG=C sort | uniq > "${EXPECTED_DEPENDS}"
   rpm -qpR "${OUTPUTDIR}/${PKGNAME}.${ARCHITECTURE}.rpm" | LANG=C sort | uniq \
       > "${ACTUAL_DEPENDS}"
   BAD_DIFF=0
@@ -126,7 +127,7 @@ cleanup() {
 
 usage() {
   echo "usage: $(basename $0) [-a target_arch] [-b 'dir'] -c channel"
-  echo "                      -d branding [-f] [-o 'dir']"
+  echo "                      -d branding [-f] [-o 'dir'] -t target_os"
   echo "-a arch     package architecture (ia32 or x64)"
   echo "-b dir      build input directory    [${BUILDDIR}]"
   echo "-c channel  the package channel (unstable, beta, stable)"
@@ -134,6 +135,7 @@ usage() {
   echo "-f          indicates that this is an official build"
   echo "-h          this help message"
   echo "-o dir      package output directory [${OUTPUTDIR}]"
+  echo "-t platform target platform"
 }
 
 # Check that the channel name is one of the allowable ones.
@@ -158,7 +160,7 @@ verify_channel() {
 }
 
 process_opts() {
-  while getopts ":a:b:c:d:fho:" OPTNAME
+  while getopts ":a:b:c:d:fho:t:" OPTNAME
   do
     case $OPTNAME in
       a )
@@ -185,7 +187,10 @@ process_opts() {
         OUTPUTDIR=$(readlink -f "${OPTARG}")
         mkdir -p "${OUTPUTDIR}"
         ;;
-      \: )
+      t )
+        TARGET_OS="$OPTARG"
+        ;;
+     \: )
         echo "'-$OPTARG' needs an argument."
         usage
         exit 1
@@ -246,6 +251,10 @@ export USR_BIN_SYMLINK_NAME="${PACKAGE}-${CHANNEL}"
 cd "${OUTPUTDIR}"
 
 case "$TARGETARCH" in
+  arm )
+    export ARCHITECTURE="armhf"
+    stage_install_rpm
+    ;;
   ia32 )
     export ARCHITECTURE="i386"
     stage_install_rpm
@@ -256,6 +265,10 @@ case "$TARGETARCH" in
     ;;
   mipsel )
     export ARCHITECTURE="mipsel"
+    stage_install_rpm
+    ;;
+  mips64el )
+    export ARCHITECTURE="mips64el"
     stage_install_rpm
     ;;
   * )

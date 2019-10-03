@@ -10,10 +10,11 @@
 #include <string>
 
 #include "base/logging.h"
-#include "base/metrics/histogram_macros.h"
+#include "base/metrics/histogram_functions.h"
 #include "base/strings/string_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/values.h"
+#include "chrome/browser/profiles/profiles_state.h"
 #include "chrome/grit/generated_resources.h"
 #include "extensions/browser/device_local_account_util.h"
 #include "extensions/common/extension.h"
@@ -52,8 +53,6 @@ const char* const kSafeManifestEntries[] = {
     // emk::kAutomation,
 
     "background",
-
-    emk::kBackgroundPageLegacy,
 
     emk::kBackgroundPersistent,
 
@@ -157,9 +156,6 @@ const char* const kSafeManifestEntries[] = {
     // Not useful since it will prevent app from running, but we don't care.
     emk::kKioskSecondaryApps,
 
-    // Whitelisted to only allow Google Now.
-    emk::kLauncherPage,
-
     // Special-cased in IsSafeForPublicSession().
     // emk::kManifestVersion,
 
@@ -211,10 +207,10 @@ const char* const kSafeManifestEntries[] = {
     // No constant in manifest_constants.cc. Declared as a feature, but unused.
     // "platforms",
 
-    // N/A on Chrome OS, so we don't care.
-    emk::kPlugins,
+    // Deprecated manifest entry, so we don't care.
+    "plugins",
 
-    // Stated 3D/WebGL/plugin requirements of an app.
+    // Stated 3D/WebGL requirements of an app.
     emk::kRequirements,
 
     // Execute some pages in a separate sandbox.  (Note: Using string literal
@@ -643,8 +639,8 @@ void LogPermissionUmaStats(const std::string& permission_string) {
   // Not a permission.
   if (!permission_info) return;
 
-  UMA_HISTOGRAM_SPARSE_SLOWLY("Enterprise.PublicSession.ExtensionPermissions",
-                              permission_info->id());
+  base::UmaHistogramSparse("Enterprise.PublicSession.ExtensionPermissions",
+                           permission_info->id());
 }
 
 // Returns true for extensions that are considered safe for Public Sessions,
@@ -653,6 +649,10 @@ void LogPermissionUmaStats(const std::string& permission_string) {
 // contained in |kSafePermissionStrings| or |kSafePermissionDicts|.  Otherwise
 // returns false and logs all reasons for failure.
 bool IsSafeForPublicSession(const extensions::Extension* extension) {
+  // If Public Session restrictions are not enabled, just return true.
+  if (!profiles::ArePublicSessionRestrictionsEnabled())
+    return true;
+
   bool safe = true;
   if (!extension->is_extension() &&
       !extension->is_hosted_app() &&
@@ -822,11 +822,10 @@ bool DeviceLocalAccountManagementPolicyProvider::IsWhitelisted(
 
 std::string DeviceLocalAccountManagementPolicyProvider::
     GetDebugPolicyProviderName() const {
-#if defined(NDEBUG)
-  NOTREACHED();
-  return std::string();
-#else
+#if DCHECK_IS_ON()
   return "whitelist for device-local accounts";
+#else
+  IMMEDIATE_CRASH();
 #endif
 }
 
@@ -834,8 +833,9 @@ bool DeviceLocalAccountManagementPolicyProvider::UserMayLoad(
     const extensions::Extension* extension,
     base::string16* error) const {
   if (account_type_ == policy::DeviceLocalAccount::TYPE_PUBLIC_SESSION) {
-    // Allow extension if it is an externally hosted component of Chrome.
-    if (extension->location() == extensions::Manifest::EXTERNAL_COMPONENT) {
+    // Allow extension if it is a component of Chrome.
+    if (extension->location() == extensions::Manifest::EXTERNAL_COMPONENT ||
+        extension->location() == extensions::Manifest::COMPONENT) {
       return true;
     }
 

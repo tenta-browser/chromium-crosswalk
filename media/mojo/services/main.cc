@@ -2,24 +2,19 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
-#include "base/at_exit.h"
-#include "base/bind.h"
 #include "base/logging.h"
-#include "base/memory/ptr_util.h"
+#include "base/task/single_thread_task_executor.h"
 #include "media/mojo/services/media_service_factory.h"
-#include "services/service_manager/public/c/main.h"
-#include "services/service_manager/public/cpp/service_runner.h"
+#include "services/service_manager/public/cpp/service_executable/service_main.h"
+#include "services/service_manager/public/mojom/service.mojom.h"
 
-MojoResult ServiceMain(MojoHandle mojo_handle) {
-  // Enable logging.
-  service_manager::ServiceRunner::InitBaseCommandLine();
-
+void ServiceMain(service_manager::mojom::ServiceRequest request) {
   logging::LoggingSettings settings;
-  settings.logging_dest = logging::LOG_TO_SYSTEM_DEBUG_LOG;
+  settings.logging_dest =
+      logging::LOG_TO_SYSTEM_DEBUG_LOG | logging::LOG_TO_STDERR;
   logging::InitLogging(settings);
 
-  std::unique_ptr<service_manager::Service> service =
-      media::CreateMediaServiceForTesting();
-  service_manager::ServiceRunner runner(service.release());
-  return runner.Run(mojo_handle, false /* init_base */);
+  base::SingleThreadTaskExecutor main_thread_task_executor;
+  media::CreateMediaServiceForTesting(std::move(request))
+      ->RunUntilTermination();
 }

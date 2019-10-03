@@ -14,12 +14,11 @@ static_library("search_provider_logos") {
     "logo_cache.h",
     "logo_common.cc",
     "logo_common.h",
+    "logo_observer.h",
     "logo_service.cc",
     "logo_service.h",
     "logo_service_impl.cc",
     "logo_service_impl.h",
-    "logo_tracker.cc",
-    "logo_tracker.h",
     "switches.cc",
     "switches.h",
   ]
@@ -30,11 +29,13 @@ static_library("search_provider_logos") {
   ]
 
   deps = [
-    "//components/data_use_measurement/core",
     "//components/image_fetcher/core",
     "//components/keyed_service/core",
     "//components/search_engines",
+    "//components/signin/public/identity_manager",
     "//net",
+    "//services/network/public/cpp",
+    "//services/network/public/mojom",
     "//ui/gfx",
     "//url",
   ]
@@ -94,7 +95,11 @@ source_set("unit_tests") {
     "//base/test:test_support",
     "//components/image_fetcher/core",
     "//components/search_engines",
+    "//components/signin/public/base:test_support",
+    "//components/signin/public/identity_manager:test_support",
+    "//components/sync_preferences:test_support",
     "//net:test_support",
+    "//services/network:test_support",
     "//testing/gmock",
     "//testing/gtest",
     "//ui/gfx",

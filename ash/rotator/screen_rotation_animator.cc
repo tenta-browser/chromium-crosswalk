@@ -12,6 +12,7 @@
 #include "ash/rotator/screen_rotation_animator_observer.h"
 #include "ash/shell.h"
 #include "ash/utility/transformer_util.h"
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/metrics/histogram_macros.h"
 #include "base/time/time.h"
@@ -19,6 +20,7 @@
 #include "components/viz/common/frame_sinks/copy_output_result.h"
 #include "third_party/khronos/GLES2/gl2.h"
 #include "ui/aura/window.h"
+#include "ui/base/class_property.h"
 #include "ui/compositor/callback_layer_animation_observer.h"
 #include "ui/compositor/layer.h"
 #include "ui/compositor/layer_animation_element.h"
@@ -26,6 +28,7 @@
 #include "ui/compositor/layer_animator.h"
 #include "ui/compositor/layer_owner.h"
 #include "ui/compositor/layer_tree_owner.h"
+#include "ui/compositor/scoped_animation_duration_scale_mode.h"
 #include "ui/display/display.h"
 #include "ui/display/manager/display_manager.h"
 #include "ui/display/manager/managed_display_info.h"
@@ -33,10 +36,12 @@
 #include "ui/gfx/animation/tween.h"
 #include "ui/gfx/geometry/point.h"
 #include "ui/gfx/geometry/rect.h"
-#include "ui/gfx/geometry/rect_f.h"
+#include "ui/gfx/geometry/size_f.h"
 #include "ui/gfx/transform.h"
 #include "ui/gfx/transform_util.h"
 #include "ui/wm/core/window_util.h"
+
+DEFINE_UI_CLASS_PROPERTY_TYPE(ash::ScreenRotationAnimator*)
 
 namespace ash {
 
@@ -51,6 +56,12 @@ const int kRotationDurationInMs = 250;
 // The rotation factors.
 const int kCounterClockWiseRotationFactor = 1;
 const int kClockWiseRotationFactor = -1;
+
+// A property key to store the ScreenRotationAnimator of the window; Used for
+// screen rotation.
+DEFINE_OWNED_UI_CLASS_PROPERTY_KEY(ScreenRotationAnimator,
+                                   kScreenRotationAnimatorKey,
+                                   nullptr)
 
 display::Display::Rotation GetCurrentScreenRotation(int64_t display_id) {
   return Shell::Get()
@@ -115,7 +126,8 @@ gfx::Transform CreateScreenRotationOldLayerTransformForDisplay(
     display::Display::Rotation new_rotation,
     const display::Display& display) {
   gfx::Transform inverse;
-  CHECK(CreateRotationTransform(old_rotation, new_rotation, display)
+  CHECK(CreateRotationTransform(old_rotation, new_rotation,
+                                gfx::SizeF(display.size()))
             .GetInverse(&inverse));
   return inverse;
 }
@@ -158,6 +170,24 @@ class ScreenRotationAnimationMetricsReporter
 
 }  // namespace
 
+// static
+ScreenRotationAnimator* ScreenRotationAnimator::GetForRootWindow(
+    aura::Window* root_window) {
+  auto* animator = root_window->GetProperty(kScreenRotationAnimatorKey);
+  if (!animator) {
+    animator = new ScreenRotationAnimator(root_window);
+    root_window->SetProperty(kScreenRotationAnimatorKey, animator);
+  }
+  return animator;
+}
+
+// static
+void ScreenRotationAnimator::SetScreenRotationAnimatorForTest(
+    aura::Window* root_window,
+    std::unique_ptr<ScreenRotationAnimator> animator) {
+  root_window->SetProperty(kScreenRotationAnimatorKey, animator.release());
+}
+
 ScreenRotationAnimator::ScreenRotationAnimator(aura::Window* root_window)
     : root_window_(root_window),
       screen_rotation_state_(IDLE),
@@ -165,12 +195,6 @@ ScreenRotationAnimator::ScreenRotationAnimator(aura::Window* root_window)
       metrics_reporter_(
           std::make_unique<ScreenRotationAnimationMetricsReporter>()),
       disable_animation_timers_for_test_(false),
-      // TODO(wutao): remove the flag. http://crbug.com/707800.
-      has_switch_ash_disable_smooth_screen_rotation_(
-          base::CommandLine::ForCurrentProcess()->HasSwitch(
-              switches::kAshDisableSmoothScreenRotation) &&
-          base::CommandLine::ForCurrentProcess()->GetSwitchValueASCII(
-              switches::kAshDisableSmoothScreenRotation) != "false"),
       weak_factory_(this) {}
 
 ScreenRotationAnimator::~ScreenRotationAnimator() {
@@ -197,11 +221,11 @@ void ScreenRotationAnimator::StartRotationAnimation(
   }
 
   rotation_request->old_rotation = current_rotation;
-  if (has_switch_ash_disable_smooth_screen_rotation_ ||
-      DisplayConfigurationController::ANIMATION_SYNC ==
-          rotation_request->mode) {
+  if (DisplayConfigurationController::ANIMATION_SYNC ==
+      rotation_request->mode) {
     StartSlowAnimation(std::move(rotation_request));
   } else {
+    current_async_rotation_request_ = ScreenRotationRequest(*rotation_request);
     RequestCopyScreenRotationContainerLayer(
         std::make_unique<viz::CopyOutputRequest>(
             viz::CopyOutputRequest::ResultFormat::RGBA_TEXTURE,
@@ -224,14 +248,17 @@ void ScreenRotationAnimator::SetRotation(
     display::Display::Rotation old_rotation,
     display::Display::Rotation new_rotation,
     display::Display::RotationSource source) {
+  // Reset the current request because its rotation must be applied if any.
+  current_async_rotation_request_.reset();
+
   // Allow compositor locks to extend timeout, so that screen rotation only
   // takes output copy after contents are properlly resized, such as wallpaper
   // and ARC apps.
   ui::Compositor* compositor = root_window_->layer()->GetCompositor();
-  compositor->set_allow_locks_to_extend_timeout(true);
+  compositor->SetAllowLocksToExtendTimeout(true);
   Shell::Get()->display_manager()->SetDisplayRotation(display_id, new_rotation,
                                                       source);
-  compositor->set_allow_locks_to_extend_timeout(false);
+  compositor->SetAllowLocksToExtendTimeout(false);
   const display::Display display =
       Shell::Get()->display_manager()->GetDisplayForId(display_id);
   old_layer_tree_owner_->root()->SetTransform(
@@ -293,6 +320,16 @@ void ScreenRotationAnimator::OnScreenRotationContainerLayerCopiedBeforeRotation(
 
   old_layer_tree_owner_ = CopyLayerTree(std::move(result));
   AddLayerAtTopOfWindowLayers(root_window_, old_layer_tree_owner_->root());
+
+  // TODO(oshima): We need a better way to control animation and other
+  // activities during system wide animation.
+  animation_scale_mode_ =
+      std::make_unique<ui::ScopedAnimationDurationScaleMode>(
+          ui::ScopedAnimationDurationScaleMode::ZERO_DURATION);
+
+  for (auto& observer : screen_rotation_animator_observers_)
+    observer.OnScreenCopiedBeforeRotation();
+
   SetRotation(rotation_request->display_id, rotation_request->old_rotation,
               rotation_request->new_rotation, rotation_request->source);
 
@@ -305,8 +342,11 @@ void ScreenRotationAnimator::OnScreenRotationContainerLayerCopiedBeforeRotation(
 void ScreenRotationAnimator::OnScreenRotationContainerLayerCopiedAfterRotation(
     std::unique_ptr<ScreenRotationRequest> rotation_request,
     std::unique_ptr<viz::CopyOutputResult> result) {
-  if (IgnoreCopyResult(rotation_request->id, rotation_request_id_))
+  animation_scale_mode_.reset();
+  if (IgnoreCopyResult(rotation_request->id, rotation_request_id_)) {
+    NotifyAnimationFinished(/*canceled=*/true);
     return;
+  }
   // In the following cases, abort animation:
   // 1) if the display was removed,
   // 2) if the |root_window| was changed for |display_id|,
@@ -338,7 +378,8 @@ std::unique_ptr<ui::LayerTreeOwner> ScreenRotationAnimator::CopyLayerTree(
   DCHECK_EQ(result->format(), viz::CopyOutputResult::Format::RGBA_TEXTURE);
   auto transfer_resource = viz::TransferableResource::MakeGL(
       result->GetTextureResult()->mailbox, GL_LINEAR, GL_TEXTURE_2D,
-      result->GetTextureResult()->sync_token);
+      result->GetTextureResult()->sync_token, result->size(),
+      false /* is_overlay_candidate */);
   std::unique_ptr<viz::SingleReleaseCallback> release_callback =
       result->TakeTextureOwnership();
   const gfx::Rect rect(
@@ -367,8 +408,7 @@ void ScreenRotationAnimator::AnimateRotation(
   ui::Layer* screen_rotation_container_layer =
       GetScreenRotationContainer(root_window_)->layer();
   ui::Layer* new_root_layer;
-  if (!new_layer_tree_owner_ ||
-      has_switch_ash_disable_smooth_screen_rotation_) {
+  if (!new_layer_tree_owner_) {
     new_root_layer = screen_rotation_container_layer;
   } else {
     new_root_layer = new_layer_tree_owner_->root();
@@ -459,9 +499,25 @@ void ScreenRotationAnimator::Rotate(
       std::make_unique<ScreenRotationRequest>(rotation_request_id_, display_id,
                                               new_rotation, source, mode);
   target_rotation_ = new_rotation;
+
+  if (mode == DisplayConfigurationController::ANIMATION_SYNC)
+    current_async_rotation_request_.reset();
+
   switch (screen_rotation_state_) {
     case IDLE:
+      DCHECK(!current_async_rotation_request_);
+      FALLTHROUGH;
     case COPY_REQUESTED:
+      if (current_async_rotation_request_ &&
+          !RootWindowChangedForDisplayId(
+              root_window_, current_async_rotation_request_->display_id)) {
+        Shell::Get()->display_manager()->SetDisplayRotation(
+            current_async_rotation_request_->display_id,
+            current_async_rotation_request_->new_rotation,
+            current_async_rotation_request_->source);
+        current_async_rotation_request_.reset();
+      }
+
       StartRotationAnimation(std::move(rotation_request));
       break;
     case ROTATING:
@@ -473,12 +529,12 @@ void ScreenRotationAnimator::Rotate(
   }
 }
 
-void ScreenRotationAnimator::AddScreenRotationAnimatorObserver(
+void ScreenRotationAnimator::AddObserver(
     ScreenRotationAnimatorObserver* observer) {
   screen_rotation_animator_observers_.AddObserver(observer);
 }
 
-void ScreenRotationAnimator::RemoveScreenRotationAnimatorObserver(
+void ScreenRotationAnimator::RemoveObserver(
     ScreenRotationAnimatorObserver* observer) {
   screen_rotation_animator_observers_.RemoveObserver(observer);
 }
@@ -488,6 +544,7 @@ void ScreenRotationAnimator::ProcessAnimationQueue() {
   old_layer_tree_owner_.reset();
   new_layer_tree_owner_.reset();
   mask_layer_tree_owner_.reset();
+  current_async_rotation_request_.reset();
   if (last_pending_request_ &&
       !RootWindowChangedForDisplayId(root_window_,
                                      last_pending_request_->display_id)) {
@@ -495,9 +552,7 @@ void ScreenRotationAnimator::ProcessAnimationQueue() {
     return;
   }
 
-  // This is only used in test to notify animator observer.
-  for (auto& observer : screen_rotation_animator_observers_)
-    observer.OnScreenRotationAnimationFinished(this);
+  NotifyAnimationFinished(/*canceled=*/false);
 }
 
 bool ScreenRotationAnimator::IsRotating() const {
@@ -516,6 +571,11 @@ void ScreenRotationAnimator::StopAnimating() {
   if (new_layer_tree_owner_)
     new_layer_tree_owner_->root()->GetAnimator()->StopAnimating();
   mask_layer_tree_owner_.reset();
+}
+
+void ScreenRotationAnimator::NotifyAnimationFinished(bool canceled) {
+  for (auto& observer : screen_rotation_animator_observers_)
+    observer.OnScreenRotationAnimationFinished(this, canceled);
 }
 
 }  // namespace ash

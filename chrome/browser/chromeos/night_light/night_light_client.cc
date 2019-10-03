@@ -6,11 +6,11 @@
 
 #include <algorithm>
 
-#include "ash/public/interfaces/constants.mojom.h"
+#include "base/bind.h"
 #include "base/logging.h"
 #include "base/time/clock.h"
-#include "content/public/common/service_manager_connection.h"
-#include "services/service_manager/public/cpp/connector.h"
+#include "content/public/browser/system_connector.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 namespace {
 
@@ -30,32 +30,30 @@ constexpr base::TimeDelta kNextRequestDelayAfterSuccess =
 }  // namespace
 
 NightLightClient::NightLightClient(
-    net::URLRequestContextGetter* url_context_getter)
+    scoped_refptr<network::SharedURLLoaderFactory> factory)
     : provider_(
-          url_context_getter,
+          std::move(factory),
           chromeos::SimpleGeolocationProvider::DefaultGeolocationProviderURL()),
-      binding_(this),
+      night_light_controller_(ash::NightLightController::GetInstance()),
       backoff_delay_(kMinimumDelayAfterFailure),
-      timer_(base::MakeUnique<base::OneShotTimer>()) {}
+      timer_(std::make_unique<base::OneShotTimer>()) {}
 
-NightLightClient::~NightLightClient() {}
+NightLightClient::~NightLightClient() {
+  if (night_light_controller_)
+    night_light_controller_->RemoveObserver(this);
+  chromeos::system::TimezoneSettings::GetInstance()->RemoveObserver(this);
+}
 
 void NightLightClient::Start() {
-  if (!night_light_controller_) {
-    service_manager::Connector* connector =
-        content::ServiceManagerConnection::GetForProcess()->GetConnector();
-    connector->BindInterface(ash::mojom::kServiceName,
-                             &night_light_controller_);
-  }
-  ash::mojom::NightLightClientPtr client;
-  binding_.Bind(mojo::MakeRequest(&client));
-  night_light_controller_->SetClient(std::move(client));
+  auto* timezone_settings = chromeos::system::TimezoneSettings::GetInstance();
+  current_timezone_id_ = timezone_settings->GetCurrentTimezoneID();
+  timezone_settings->AddObserver(this);
+  night_light_controller_->AddObserver(this);
 }
 
 void NightLightClient::OnScheduleTypeChanged(
-    ash::mojom::NightLightController::ScheduleType new_type) {
-  if (new_type !=
-      ash::mojom::NightLightController::ScheduleType::kSunsetToSunrise) {
+    ash::NightLightController::ScheduleType new_type) {
+  if (new_type != ash::NightLightController::ScheduleType::kSunsetToSunrise) {
     using_geoposition_ = false;
     timer_->Stop();
     return;
@@ -80,18 +78,24 @@ void NightLightClient::OnScheduleTypeChanged(
       last_successful_geo_request_time_ + kNextRequestDelayAfterSuccess - now));
 }
 
+void NightLightClient::TimezoneChanged(const icu::TimeZone& timezone) {
+  const base::string16 timezone_id =
+      chromeos::system::TimezoneSettings::GetTimezoneID(timezone);
+  if (current_timezone_id_ == timezone_id)
+    return;
+
+  current_timezone_id_ = timezone_id;
+
+  if (!using_geoposition_)
+    return;
+
+  // On timezone changes, request an immediate geoposition.
+  ScheduleNextRequest(base::TimeDelta::FromSeconds(0));
+}
+
 // static
 base::TimeDelta NightLightClient::GetNextRequestDelayAfterSuccessForTesting() {
   return kNextRequestDelayAfterSuccess;
-}
-
-void NightLightClient::SetNightLightControllerPtrForTesting(
-    ash::mojom::NightLightControllerPtr controller) {
-  night_light_controller_ = std::move(controller);
-}
-
-void NightLightClient::FlushNightLightControllerForTesting() {
-  night_light_controller_.FlushForTesting();
 }
 
 void NightLightClient::SetTimerForTesting(
@@ -101,6 +105,11 @@ void NightLightClient::SetTimerForTesting(
 
 void NightLightClient::SetClockForTesting(base::Clock* clock) {
   clock_ = clock;
+}
+
+void NightLightClient::SetCurrentTimezoneIdForTesting(
+    const base::string16& timezone_id) {
+  current_timezone_id_ = timezone_id;
 }
 
 void NightLightClient::OnGeoposition(const chromeos::Geoposition& position,
@@ -143,7 +152,7 @@ base::Time NightLightClient::GetNow() const {
 
 void NightLightClient::SendCurrentGeoposition() {
   night_light_controller_->SetCurrentGeoposition(
-      ash::mojom::SimpleGeoposition::New(latitude_, longitude_));
+      ash::NightLightController::SimpleGeoposition{latitude_, longitude_});
 }
 
 void NightLightClient::ScheduleNextRequest(base::TimeDelta delay) {

@@ -4,9 +4,12 @@
 
 #include "chrome/browser/ui/webui/print_preview/pdf_printer_handler.h"
 
-#include <commdlg.h>
-#include <windows.h>
+#include <windows.h>  // Must be in front of other Windows header files.
 
+#include <commdlg.h>
+
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/ref_counted_memory.h"
 #include "base/run_loop.h"
@@ -19,21 +22,29 @@
 
 using content::WebContents;
 
+namespace printing {
+
 namespace {
 
-class FakePdfPrinterHandler;
-bool GetOpenFileNameImpl(OPENFILENAME* ofn);
-bool GetSaveFileNameImpl(FakePdfPrinterHandler* handler, OPENFILENAME* ofn);
-
-void EmptyPrintCallback(const base::Value& error) {}
+void ExecuteCancelledSelectFileDialog(
+    ui::SelectFileDialog::Type type,
+    const base::string16& title,
+    const base::FilePath& default_path,
+    const std::vector<ui::FileFilterSpec>& filter,
+    int file_type_index,
+    const base::string16& default_extension,
+    HWND owner,
+    ui::OnSelectFileExecutedCallback on_select_file_executed_callback) {
+  // Send an empty result to simulate a cancelled dialog.
+  std::move(on_select_file_executed_callback).Run({}, 0);
+}
 
 class FakePdfPrinterHandler : public PdfPrinterHandler {
  public:
   FakePdfPrinterHandler(Profile* profile,
                         content::WebContents* contents,
-                        printing::StickySettings* sticky_settings)
+                        StickySettings* sticky_settings)
       : PdfPrinterHandler(profile, contents, sticky_settings),
-        init_called_(false),
         save_failed_(false) {}
 
   void FileSelected(const base::FilePath& path,
@@ -50,16 +61,11 @@ class FakePdfPrinterHandler : public PdfPrinterHandler {
   }
 
   void StartPrintToPdf(const base::string16& job_title) {
-    StartPrint("", "", job_title, "", gfx::Size(), nullptr,
-               base::Bind(&EmptyPrintCallback));
+    StartPrint(job_title, base::Value(), nullptr, base::DoNothing());
     run_loop_.Run();
   }
 
   bool save_failed() const { return save_failed_; }
-
-  bool init_called() const { return init_called_; }
-
-  void set_init_called() { init_called_ = true; }
 
  private:
   // Simplified version of select file to avoid checking preferences and sticky
@@ -72,7 +78,7 @@ class FakePdfPrinterHandler : public PdfPrinterHandler {
     file_type_info.extensions[0].push_back(FILE_PATH_LITERAL("pdf"));
     select_file_dialog_ = ui::CreateWinSelectFileDialog(
         this, nullptr /*policy already checked*/,
-        base::Bind(GetOpenFileNameImpl), base::Bind(GetSaveFileNameImpl, this));
+        base::BindRepeating(&ExecuteCancelledSelectFileDialog));
     select_file_dialog_->SelectFile(
         ui::SelectFileDialog::SELECT_SAVEAS_FILE, base::string16(),
         default_filename, &file_type_info, 0, base::FilePath::StringType(),
@@ -80,37 +86,9 @@ class FakePdfPrinterHandler : public PdfPrinterHandler {
         nullptr);
   }
 
-  bool init_called_;
   bool save_failed_;
   base::RunLoop run_loop_;
 };
-
-// Hook function to cancel the dialog when it is successfully initialized.
-UINT_PTR CALLBACK PdfPrinterHandlerTestHookFunction(HWND hdlg,
-                                                    UINT message,
-                                                    WPARAM wparam,
-                                                    LPARAM lparam) {
-  if (message != WM_INITDIALOG)
-    return 0;
-  OPENFILENAME* ofn = reinterpret_cast<OPENFILENAME*>(lparam);
-  FakePdfPrinterHandler* handler =
-      reinterpret_cast<FakePdfPrinterHandler*>(ofn->lCustData);
-  handler->set_init_called();
-  PostMessage(GetParent(hdlg), WM_COMMAND, MAKEWPARAM(IDCANCEL, 0), 0);
-  return 1;
-}
-
-bool GetOpenFileNameImpl(OPENFILENAME* ofn) {
-  return ::GetOpenFileName(ofn);
-}
-
-bool GetSaveFileNameImpl(FakePdfPrinterHandler* handler, OPENFILENAME* ofn) {
-  // Modify ofn so that the hook function will be called.
-  ofn->Flags |= OFN_ENABLEHOOK;
-  ofn->lpfnHook = PdfPrinterHandlerTestHookFunction;
-  ofn->lCustData = reinterpret_cast<LPARAM>(handler);
-  return ::GetSaveFileName(ofn);
-}
 
 }  // namespace
 
@@ -127,7 +105,7 @@ class PdfPrinterHandlerWinTest : public BrowserWithTestWindowTest {
     AddTab(browser(), GURL("chrome://print"));
 
     // Create the PDF printer
-    pdf_printer_ = base::MakeUnique<FakePdfPrinterHandler>(
+    pdf_printer_ = std::make_unique<FakePdfPrinterHandler>(
         profile(), browser()->tab_strip_model()->GetWebContentsAt(0), nullptr);
   }
 
@@ -140,7 +118,6 @@ class PdfPrinterHandlerWinTest : public BrowserWithTestWindowTest {
 
 TEST_F(PdfPrinterHandlerWinTest, TestSaveAsPdf) {
   pdf_printer_->StartPrintToPdf(L"111111111111111111111.html");
-  EXPECT_TRUE(pdf_printer_->init_called());
   EXPECT_TRUE(pdf_printer_->save_failed());
 }
 
@@ -151,6 +128,7 @@ TEST_F(PdfPrinterHandlerWinTest, TestSaveAsPdfLongFileName) {
       L"11111111111111111111111111111111111111111111111111111111111111111111111"
       L"11111111111111111111111111111111111111111111111111111111111111111111111"
       L"1111111111111111111111111111111111111111111111111.html");
-  EXPECT_TRUE(pdf_printer_->init_called());
   EXPECT_TRUE(pdf_printer_->save_failed());
 }
+
+}  // namespace printing

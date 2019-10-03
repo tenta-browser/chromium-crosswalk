@@ -8,7 +8,6 @@
 #include "base/bind_helpers.h"
 #include "base/files/file_path.h"
 #include "base/memory/ref_counted.h"
-#include "base/message_loop/message_loop.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/browsing_data/browsing_data_cache_storage_helper.h"
 #include "chrome/browser/browsing_data/browsing_data_helper_browsertest.h"
@@ -16,11 +15,12 @@
 #include "chrome/browser/ui/browser.h"
 #include "chrome/test/base/in_process_browser_test.h"
 #include "content/public/browser/storage_partition.h"
+#include "content/public/browser/storage_usage_info.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace {
-typedef BrowsingDataHelperCallback<content::CacheStorageUsageInfo>
-    TestCompletionCallback;
+using TestCompletionCallback =
+    BrowsingDataHelperCallback<content::StorageUsageInfo>;
 
 class BrowsingDataCacheStorageHelperTest : public InProcessBrowserTest {
  public:
@@ -38,20 +38,20 @@ IN_PROC_BROWSER_TEST_F(BrowsingDataCacheStorageHelperTest,
 
   scoped_refptr<CannedBrowsingDataCacheStorageHelper> helper(
       new CannedBrowsingDataCacheStorageHelper(CacheStorageContext()));
-  helper->AddCacheStorage(origin1);
-  helper->AddCacheStorage(origin2);
+  helper->Add(url::Origin::Create(origin1));
+  helper->Add(url::Origin::Create(origin2));
 
   TestCompletionCallback callback;
   helper->StartFetching(base::Bind(&TestCompletionCallback::callback,
                                    base::Unretained(&callback)));
 
-  std::list<content::CacheStorageUsageInfo> result = callback.result();
+  std::list<content::StorageUsageInfo> result = callback.result();
 
   ASSERT_EQ(2U, result.size());
-  std::list<content::CacheStorageUsageInfo>::iterator info = result.begin();
-  EXPECT_EQ(origin1, info->origin);
+  auto info = result.begin();
+  EXPECT_EQ(origin1, info->origin.GetURL());
   info++;
-  EXPECT_EQ(origin2, info->origin);
+  EXPECT_EQ(origin2, info->origin.GetURL());
 }
 
 IN_PROC_BROWSER_TEST_F(BrowsingDataCacheStorageHelperTest, CannedUnique) {
@@ -59,16 +59,16 @@ IN_PROC_BROWSER_TEST_F(BrowsingDataCacheStorageHelperTest, CannedUnique) {
 
   scoped_refptr<CannedBrowsingDataCacheStorageHelper> helper(
       new CannedBrowsingDataCacheStorageHelper(CacheStorageContext()));
-  helper->AddCacheStorage(origin);
-  helper->AddCacheStorage(origin);
+  helper->Add(url::Origin::Create(origin));
+  helper->Add(url::Origin::Create(origin));
 
   TestCompletionCallback callback;
   helper->StartFetching(base::Bind(&TestCompletionCallback::callback,
                                    base::Unretained(&callback)));
 
-  std::list<content::CacheStorageUsageInfo> result = callback.result();
+  std::list<content::StorageUsageInfo> result = callback.result();
 
   ASSERT_EQ(1U, result.size());
-  EXPECT_EQ(origin, result.begin()->origin);
+  EXPECT_EQ(origin, result.begin()->origin.GetURL());
 }
 }  // namespace

@@ -75,6 +75,7 @@ class ControllerClient {
 
   // Close the error and go back to the previous page. This applies to
   // situations where navigation is blocked before committing.
+  // TODO(crbug.com/928901) - rename this to NavigateAway or similar.
   virtual void GoBack() = 0;
   // Whether it is possible to go 'Back to safety'.
   virtual bool CanGoBack() = 0;
@@ -99,6 +100,10 @@ class ControllerClient {
   virtual PrefService* GetPrefService() = 0;
 
   virtual const std::string& GetApplicationLocale() const = 0;
+
+  // Returns true if the error page should display a message to account for the
+  // fact that the user has seen the same error multiple times.
+  virtual bool HasSeenRecurrentError();
 
   GURL GetBaseHelpCenterUrl() const;
 

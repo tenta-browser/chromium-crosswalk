@@ -11,16 +11,14 @@
 #include "base/memory/weak_ptr.h"
 #include "components/offline_pages/core/client_id.h"
 #include "components/offline_pages/core/offline_page_item.h"
-#include "components/offline_pages/core/offline_page_metadata_store_sql.h"
+#include "components/offline_pages/core/offline_page_metadata_store.h"
 #include "components/offline_pages/core/offline_page_types.h"
-#include "components/offline_pages/core/task.h"
-
-class GURL;
+#include "components/offline_pages/core/page_criteria.h"
+#include "components/offline_pages/task/task.h"
 
 namespace offline_pages {
-class ClientPolicyController;
 
-// Gets offline pages that match the list of client IDs.
+// Gets offline pages that match the criteria.
 class GetPagesTask : public Task {
  public:
   // Structure defining and intermediate read result.
@@ -29,87 +27,34 @@ class GetPagesTask : public Task {
     ReadResult(const ReadResult& other);
     ~ReadResult();
 
-    bool success;
+    bool success = false;
     std::vector<OfflinePageItem> pages;
   };
 
-  using DbWorkCallback = OfflinePageMetadataStoreSQL::RunCallback<ReadResult>;
-
-  // Creates |GetPagesTask| reading all pages from DB.
-  static std::unique_ptr<GetPagesTask> CreateTaskMatchingAllPages(
-      OfflinePageMetadataStoreSQL* store,
-      const MultipleOfflinePageItemCallback& callback);
-
-  // Creates |GetPagesTask| reading pages matching provided |client_ids| from
-  // DB.
-  static std::unique_ptr<GetPagesTask> CreateTaskMatchingClientIds(
-      OfflinePageMetadataStoreSQL* store,
-      const MultipleOfflinePageItemCallback& callback,
-      const std::vector<ClientId>& client_ids);
-
-  // Creates |GetPagesTask| reading pages belonging to provided |name_space|
-  // from DB.
-  static std::unique_ptr<GetPagesTask> CreateTaskMatchingNamespace(
-      OfflinePageMetadataStoreSQL* store,
-      const MultipleOfflinePageItemCallback& callback,
-      const std::string& name_space);
-
-  // Creates |GetPagesTask| reading pages removed on cache reset from DB.
-  static std::unique_ptr<GetPagesTask>
-  CreateTaskMatchingPagesRemovedOnCacheReset(
-      OfflinePageMetadataStoreSQL* store,
-      const MultipleOfflinePageItemCallback& callback,
-      ClientPolicyController* policy_controller);
-
-  // Creates |GetPagesTask| reading pages in namespaces supported by downloads
-  // from DB.
-  static std::unique_ptr<GetPagesTask>
-  CreateTaskMatchingPagesSupportedByDownloads(
-      OfflinePageMetadataStoreSQL* store,
-      const MultipleOfflinePageItemCallback& callback,
-      ClientPolicyController* policy_controller);
-
-  // Creates |GetPagesTask| reading pages matching provided |request_origin|
-  // from DB.
-  static std::unique_ptr<GetPagesTask> CreateTaskMatchingRequestOrigin(
-      OfflinePageMetadataStoreSQL* store,
-      const MultipleOfflinePageItemCallback& callback,
-      const std::string& request_origin);
-
-  // Creates |GetPagesTask| reading pages matching provided |url| from DB.
-  // The url will be matched against original URL and final URL. Fragments will
-  // be removed from all URLs prior to matching. Only a match on a single field
-  // is necessary.
-  static std::unique_ptr<GetPagesTask> CreateTaskMatchingUrl(
-      OfflinePageMetadataStoreSQL* store,
-      const MultipleOfflinePageItemCallback& callback,
-      const GURL& url);
-
-  // Creates |GetPagesTask| reading a single page matching provided |offline_id|
-  // from DB.
-  static std::unique_ptr<GetPagesTask> CreateTaskMatchingOfflineId(
-      OfflinePageMetadataStoreSQL* store,
-      const SingleOfflinePageItemCallback& callback,
-      int64_t offline_id);
+  GetPagesTask(OfflinePageMetadataStore* store,
+               const PageCriteria& criteria,
+               MultipleOfflinePageItemCallback callback);
 
   ~GetPagesTask() override;
 
   // Task implementation:
   void Run() override;
 
- private:
-  GetPagesTask(OfflinePageMetadataStoreSQL* store,
-               DbWorkCallback db_work_callback,
-               const MultipleOfflinePageItemCallback& callback);
+  // Reads and returns all pages matching |criteria|. This function reads
+  // from the database and should be called from within an
+  // |SqlStoreBase::Execute()| call.
+  static ReadResult ReadPagesWithCriteriaSync(
+      const PageCriteria& criteria,
+      sql::Database* db);
 
-  void ReadRequests();
+ private:
   void CompleteWithResult(ReadResult result);
 
-  OfflinePageMetadataStoreSQL* store_;
-  DbWorkCallback db_work_callback_;
+  OfflinePageMetadataStore* store_;
+  PageCriteria criteria_;
   MultipleOfflinePageItemCallback callback_;
 
-  base::WeakPtrFactory<GetPagesTask> weak_ptr_factory_;
+  base::WeakPtrFactory<GetPagesTask> weak_ptr_factory_{this};
   DISALLOW_COPY_AND_ASSIGN(GetPagesTask);
 };
 

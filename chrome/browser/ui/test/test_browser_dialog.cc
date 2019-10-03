@@ -4,185 +4,152 @@
 
 #include "chrome/browser/ui/test/test_browser_dialog.h"
 
-#include "base/command_line.h"
+#include "base/bind.h"
+#include "base/logging.h"
 #include "base/run_loop.h"
 #include "base/stl_util.h"
-#include "base/test/gtest_util.h"
-#include "base/test/scoped_feature_list.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "build/build_config.h"
-#include "chrome/browser/platform_util.h"
-#include "chrome/common/chrome_features.h"
-#include "ui/base/ui_base_features.h"
-#include "ui/views/test/widget_test.h"
-#include "ui/views/widget/widget.h"
-#include "ui/views/widget/widget_observer.h"
+#include "testing/gtest/include/gtest/gtest.h"
 
 #if defined(OS_CHROMEOS)
-#include "ash/public/cpp/config.h"
 #include "ash/shell.h"  // mash-ok
-#include "chrome/browser/chromeos/ash_config.h"
 #endif
 
 #if defined(OS_MACOSX)
 #include "chrome/browser/ui/test/test_browser_dialog_mac.h"
 #endif
 
+#if defined(TOOLKIT_VIEWS)
+#include "ui/display/display.h"
+#include "ui/display/screen.h"
+#include "ui/views/test/widget_test.h"
+#include "ui/views/widget/widget_observer.h"
+#endif
+
 namespace {
 
-// An automatic action for WidgetCloser to post to the RunLoop.
-// TODO(tapted): Explore asynchronous Widget::Close() and DialogClientView::
-// {Accept,Cancel}Window() approaches to test other dialog lifetimes.
-enum class DialogAction {
-  INTERACTIVE,  // Run interactively.
-  CLOSE_NOW,    // Call Widget::CloseNow().
-  CLOSE,        // Call Widget::Close().
-};
-
-// Helper to break out of the nested run loop that runs a test dialog.
-class WidgetCloser : public views::WidgetObserver {
+#if defined(TOOLKIT_VIEWS)
+// Helper to close a Widget.
+class WidgetCloser {
  public:
-  WidgetCloser(views::Widget* widget, DialogAction action)
-      : action_(action), widget_(widget), weak_ptr_factory_(this) {
-    widget->AddObserver(this);
-    if (action == DialogAction::INTERACTIVE)
-      return;
-
+  WidgetCloser(views::Widget* widget, bool async) : widget_(widget) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::BindOnce(&WidgetCloser::CloseAction,
-                                  weak_ptr_factory_.GetWeakPtr()));
+        FROM_HERE, base::BindOnce(&WidgetCloser::CloseWidget,
+                                  weak_ptr_factory_.GetWeakPtr(), async));
   }
-
-  // WidgetObserver:
-  void OnWidgetDestroyed(views::Widget* widget) override {
-    widget_->RemoveObserver(this);
-    widget_ = nullptr;
-    run_loop_.Quit();
-  }
-
-  void Wait() { run_loop_.Run(); }
 
  private:
-  void CloseAction() {
-    if (!widget_)
-      return;
-
-    switch (action_) {
-      case DialogAction::CLOSE_NOW:
-        widget_->CloseNow();
-        break;
-      case DialogAction::CLOSE:
-        widget_->Close();
-        break;
-      case DialogAction::INTERACTIVE:
-        NOTREACHED();
-        break;
-    }
+  void CloseWidget(bool async) {
+    if (async)
+      widget_->Close();
+    else
+      widget_->CloseNow();
   }
 
-  base::RunLoop run_loop_;
-  const DialogAction action_;
   views::Widget* widget_;
 
-  base::WeakPtrFactory<WidgetCloser> weak_ptr_factory_;
+  base::WeakPtrFactory<WidgetCloser> weak_ptr_factory_{this};
 
   DISALLOW_COPY_AND_ASSIGN(WidgetCloser);
 };
-
-// Extracts the |name| argument for ShowDialog() from the current test case.
-// E.g. for InvokeDialog_name (or DISABLED_InvokeDialog_name) returns "name".
-std::string NameFromTestCase() {
-  const std::string name = base::TestNameWithoutDisabledPrefix(
-      testing::UnitTest::GetInstance()->current_test_info()->name());
-  std::string::size_type underscore = name.find('_');
-  return underscore == std::string::npos ? std::string()
-                                         : name.substr(underscore + 1);
-}
+#endif  // defined(TOOLKIT_VIEWS)
 
 }  // namespace
 
-TestBrowserDialog::TestBrowserDialog() {}
+TestBrowserDialog::TestBrowserDialog() = default;
+TestBrowserDialog::~TestBrowserDialog() = default;
 
-void TestBrowserDialog::RunDialog() {
-#if defined(OS_MACOSX)
-  // The rest of this method assumes the child dialog is toolkit-views. So, for
-  // Mac, it will only work when MD for secondary UI is enabled. Without this, a
-  // Cocoa dialog will be created, which TestBrowserDialog doesn't support.
-  // Force kSecondaryUiMd on Mac to get coverage on the bots. Leave it optional
-  // elsewhere so that the non-MD dialog can be invoked to compare. Note that
-  // since SetUp() has already been called, some parts of the toolkit may
-  // already be initialized without MD - this is just to ensure Cocoa dialogs
-  // are not selected.
-  base::test::ScopedFeatureList enable_views_on_mac_always;
-  enable_views_on_mac_always.InitWithFeatures(
-      {features::kSecondaryUiMd, features::kShowAllDialogsWithViewsToolkit},
-      {});
+void TestBrowserDialog::PreShow() {
+  UpdateWidgets();
+}
+
+// This returns true if exactly one views widget was shown that is a dialog or
+// has a name matching the test-specified name, and if that window is in the
+// work area (if |should_verify_dialog_bounds_| is true).
+bool TestBrowserDialog::VerifyUi() {
+#if defined(TOOLKIT_VIEWS)
+  views::Widget::Widgets widgets_before = widgets_;
+  UpdateWidgets();
+
+  // Get the list of added dialog widgets. Ignore non-dialog widgets, including
+  // those added by tests to anchor dialogs and the browser's status bubble.
+  // Non-dialog widgets matching the test-specified name will also be included.
+  auto added =
+      base::STLSetDifference<views::Widget::Widgets>(widgets_, widgets_before);
+  std::string name = GetNonDialogName();
+  base::EraseIf(added, [&](views::Widget* widget) {
+    return !widget->widget_delegate()->AsDialogDelegate() &&
+           (name.empty() || widget->GetName() != name);
+  });
+  widgets_ = added;
+
+  if (added.size() != 1)
+    return false;
+
+  if (!should_verify_dialog_bounds_)
+    return true;
+
+  // Verify that the dialog's dimensions do not exceed the display's work area
+  // bounds, which may be smaller than its bounds(), e.g. in the case of the
+  // docked magnifier or Chromevox being enabled.
+  views::Widget* dialog_widget = *(added.begin());
+  const gfx::Rect dialog_bounds = dialog_widget->GetWindowBoundsInScreen();
+  gfx::NativeWindow native_window = dialog_widget->GetNativeWindow();
+  DCHECK(native_window);
+  display::Screen* screen = display::Screen::GetScreen();
+  const gfx::Rect display_work_area =
+      screen->GetDisplayNearestWindow(native_window).work_area();
+
+  return display_work_area.Contains(dialog_bounds);
+#else
+  NOTIMPLEMENTED();
+  return false;
 #endif
+}
 
-  views::Widget::Widgets widgets_before =
-      views::test::WidgetTest::GetAllWidgets();
-#if defined(OS_CHROMEOS)
-  // GetAllWidgets() uses AuraTestHelper to find the aura root window, but
-  // that's not used on browser_tests, so ask ash. Under mash the MusClient
-  // provides the list of root windows, so this isn't needed.
-  if (chromeos::GetAshConfig() != ash::Config::MASH) {
-    views::Widget::GetAllChildWidgets(ash::Shell::GetPrimaryRootWindow(),
-                                      &widgets_before);
-  }
-#endif  // OS_CHROMEOS
-
-  ShowDialog(NameFromTestCase());
-  views::Widget::Widgets widgets_after =
-      views::test::WidgetTest::GetAllWidgets();
-#if defined(OS_CHROMEOS)
-  if (chromeos::GetAshConfig() != ash::Config::MASH) {
-    views::Widget::GetAllChildWidgets(ash::Shell::GetPrimaryRootWindow(),
-                                      &widgets_after);
-  }
-#endif  // OS_CHROMEOS
-
-  auto added = base::STLSetDifference<std::vector<views::Widget*>>(
-      widgets_after, widgets_before);
-
-  if (added.size() > 1) {
-    // Some tests create a standalone window to anchor a dialog. In those cases,
-    // ignore added Widgets that are not dialogs.
-    base::EraseIf(added, [](views::Widget* widget) {
-      return !widget->widget_delegate()->AsDialogDelegate();
-    });
-  }
-
-  // This can fail if no dialog was shown, if the dialog shown wasn't a toolkit-
-  // views dialog, or if more than one child dialog was shown.
-  ASSERT_EQ(1u, added.size());
-
-  DialogAction action = DialogAction::CLOSE_NOW;
-  if (base::CommandLine::ForCurrentProcess()->HasSwitch(
-          internal::kInteractiveSwitch)) {
-    action = DialogAction::INTERACTIVE;
-  } else if (AlwaysCloseAsynchronously()) {
-    // TODO(tapted): Iterate over close methods when non-interactive for greater
-    // test coverage.
-    action = DialogAction::CLOSE;
-  }
-
-  WidgetCloser closer(added[0], action);
+void TestBrowserDialog::WaitForUserDismissal() {
 #if defined(OS_MACOSX)
   internal::TestBrowserDialogInteractiveSetUp();
 #endif
-  closer.Wait();
+
+#if defined(TOOLKIT_VIEWS)
+  ASSERT_FALSE(widgets_.empty());
+  views::test::WidgetDestroyedWaiter waiter(*widgets_.begin());
+  waiter.Wait();
+#else
+  NOTIMPLEMENTED();
+#endif
 }
 
-void TestBrowserDialog::UseMdOnly() {
-#if defined(OS_MACOSX)
-  maybe_enable_md_.InitWithFeatures(
-      {features::kSecondaryUiMd, features::kShowAllDialogsWithViewsToolkit},
-      {});
+void TestBrowserDialog::DismissUi() {
+#if defined(TOOLKIT_VIEWS)
+  ASSERT_FALSE(widgets_.empty());
+  views::test::WidgetDestroyedWaiter waiter(*widgets_.begin());
+  WidgetCloser closer(*widgets_.begin(), AlwaysCloseAsynchronously());
+  waiter.Wait();
 #else
-  maybe_enable_md_.InitWithFeatures({features::kSecondaryUiMd}, {});
+  NOTIMPLEMENTED();
 #endif
 }
 
 bool TestBrowserDialog::AlwaysCloseAsynchronously() {
+  // TODO(tapted): Iterate over close methods for greater test coverage.
   return false;
+}
+
+std::string TestBrowserDialog::GetNonDialogName() {
+  return std::string();
+}
+
+void TestBrowserDialog::UpdateWidgets() {
+  widgets_.clear();
+#if defined(OS_CHROMEOS)
+  for (aura::Window* root_window : ash::Shell::GetAllRootWindows())
+    views::Widget::GetAllChildWidgets(root_window, &widgets_);
+#elif defined(TOOLKIT_VIEWS)
+  widgets_ = views::test::WidgetTest::GetAllWidgets();
+#else
+  NOTIMPLEMENTED();
+#endif
 }

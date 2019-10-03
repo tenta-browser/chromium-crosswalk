@@ -6,43 +6,46 @@
 
 #include <stddef.h>
 
+#include "base/format_macros.h"
+#include "base/strings/string_number_conversions.h"
 #include "base/strings/string_split.h"
 #include "base/strings/string_util.h"
+#include "base/strings/stringprintf.h"
 
 namespace gcm {
 
 namespace {
-const char kInstanceIDSerializationPrefix[] = "iid-";
-const int kInstanceIDSerializationPrefixLength =
+constexpr char kInstanceIDSerializationPrefix[] = "iid-";
+constexpr char kSerializedValidationTimeSeparator = '#';
+constexpr char kSerializedKeySeparator = ',';
+constexpr int kInstanceIDSerializationPrefixLength =
     sizeof(kInstanceIDSerializationPrefix) / sizeof(char) - 1;
 }  // namespace
 
 // static
-std::unique_ptr<RegistrationInfo> RegistrationInfo::BuildFromString(
+scoped_refptr<RegistrationInfo> RegistrationInfo::BuildFromString(
     const std::string& serialized_key,
     const std::string& serialized_value,
     std::string* registration_id) {
-  std::unique_ptr<RegistrationInfo> registration;
+  scoped_refptr<RegistrationInfo> registration;
 
   if (base::StartsWith(serialized_key, kInstanceIDSerializationPrefix,
-                       base::CompareCase::SENSITIVE))
-    registration.reset(new InstanceIDTokenInfo);
-  else
-    registration.reset(new GCMRegistrationInfo);
+                       base::CompareCase::SENSITIVE)) {
+    registration = base::MakeRefCounted<InstanceIDTokenInfo>();
+  } else {
+    registration = base::MakeRefCounted<GCMRegistrationInfo>();
+  }
 
-  if (!registration->Deserialize(serialized_key,
-                                 serialized_value,
+  if (!registration->Deserialize(serialized_key, serialized_value,
                                  registration_id)) {
     registration.reset();
   }
   return registration;
 }
 
-RegistrationInfo::RegistrationInfo() {
-}
+RegistrationInfo::RegistrationInfo() = default;
 
-RegistrationInfo::~RegistrationInfo() {
-}
+RegistrationInfo::~RegistrationInfo() = default;
 
 // static
 const GCMRegistrationInfo* GCMRegistrationInfo::FromRegistrationInfo(
@@ -60,11 +63,9 @@ GCMRegistrationInfo* GCMRegistrationInfo::FromRegistrationInfo(
   return static_cast<GCMRegistrationInfo*>(registration_info);
 }
 
-GCMRegistrationInfo::GCMRegistrationInfo() {
-}
+GCMRegistrationInfo::GCMRegistrationInfo() = default;
 
-GCMRegistrationInfo::~GCMRegistrationInfo() {
-}
+GCMRegistrationInfo::~GCMRegistrationInfo() = default;
 
 RegistrationInfo::RegistrationType GCMRegistrationInfo::GetType() const {
   return GCM_REGISTRATION;
@@ -82,10 +83,9 @@ std::string GCMRegistrationInfo::GetSerializedValue(
     return std::string();
 
   // Serialize as:
-  //    sender1,sender2,...=reg_id
+  // sender1,sender2,...=reg_id#time_of_last_validation
   std::string value;
-  for (std::vector<std::string>::const_iterator iter = sender_ids.begin();
-       iter != sender_ids.end(); ++iter) {
+  for (auto iter = sender_ids.begin(); iter != sender_ids.end(); ++iter) {
     DCHECK(!iter->empty() &&
            iter->find(',') == std::string::npos &&
            iter->find('=') == std::string::npos);
@@ -94,15 +94,15 @@ std::string GCMRegistrationInfo::GetSerializedValue(
     value += *iter;
   }
 
-  value += '=';
-  value += registration_id;
-  return value;
+  return base::StringPrintf("%s=%s%c%" PRId64, value.c_str(),
+                            registration_id.c_str(),
+                            kSerializedValidationTimeSeparator,
+                            last_validated.since_origin().InMicroseconds());
 }
 
-bool GCMRegistrationInfo::Deserialize(
-    const std::string& serialized_key,
-    const std::string& serialized_value,
-    std::string* registration_id) {
+bool GCMRegistrationInfo::Deserialize(const std::string& serialized_key,
+                                      const std::string& serialized_value,
+                                      std::string* registration_id) {
   if (serialized_key.empty() || serialized_value.empty())
     return false;
 
@@ -110,12 +110,22 @@ bool GCMRegistrationInfo::Deserialize(
   app_id = serialized_key;
 
   // Sender IDs and registration ID are constructed from the serialized value.
-  size_t pos = serialized_value.find('=');
-  if (pos == std::string::npos)
+  size_t pos_equals = serialized_value.find('=');
+  if (pos_equals == std::string::npos)
     return false;
+  // Note that it's valid for pos_hash to be std::string::npos.
+  size_t pos_hash = serialized_value.find(kSerializedValidationTimeSeparator);
+  bool has_timestamp = pos_hash != std::string::npos;
 
-  std::string senders = serialized_value.substr(0, pos);
-  std::string registration_id_str = serialized_value.substr(pos + 1);
+  std::string senders = serialized_value.substr(0, pos_equals);
+  std::string registration_id_str, last_validated_str;
+  if (has_timestamp) {
+    registration_id_str =
+        serialized_value.substr(pos_equals + 1, pos_hash - pos_equals - 1);
+    last_validated_str = serialized_value.substr(pos_hash + 1);
+  } else {
+    registration_id_str = serialized_value.substr(pos_equals + 1);
+  }
 
   sender_ids = base::SplitString(
       senders, ",", base::KEEP_WHITESPACE, base::SPLIT_WANT_NONEMPTY);
@@ -127,6 +137,13 @@ bool GCMRegistrationInfo::Deserialize(
 
   if (registration_id)
     *registration_id = registration_id_str;
+  int64_t last_validated_ms = 0;
+  if (base::StringToInt64(last_validated_str, &last_validated_ms)) {
+    // It's okay for |last_validated| to be the default base::Time() value
+    // when there is no serialized timestamp value available.
+    last_validated =
+        base::Time() + base::TimeDelta::FromMicroseconds(last_validated_ms);
+  }
 
   return true;
 }
@@ -147,11 +164,9 @@ InstanceIDTokenInfo* InstanceIDTokenInfo::FromRegistrationInfo(
   return static_cast<InstanceIDTokenInfo*>(registration_info);
 }
 
-InstanceIDTokenInfo::InstanceIDTokenInfo() {
-}
+InstanceIDTokenInfo::InstanceIDTokenInfo() = default;
 
-InstanceIDTokenInfo::~InstanceIDTokenInfo() {
-}
+InstanceIDTokenInfo::~InstanceIDTokenInfo() = default;
 
 RegistrationInfo::RegistrationType InstanceIDTokenInfo::GetType() const {
   return INSTANCE_ID_TOKEN;
@@ -166,24 +181,22 @@ std::string InstanceIDTokenInfo::GetSerializedKey() const {
   // on the combination of (app_id, authorized_entity, scope).
 
   // Adds a prefix to differentiate easily with GCM registration key.
-  std::string key(kInstanceIDSerializationPrefix);
-  key += app_id;
-  key += ",";
-  key += authorized_entity;
-  key += ",";
-  key += scope;
-  return key;
+  return base::StringPrintf("%s%s%c%s%c%s", kInstanceIDSerializationPrefix,
+                            app_id.c_str(), kSerializedKeySeparator,
+                            authorized_entity.c_str(), kSerializedKeySeparator,
+                            scope.c_str());
 }
 
 std::string InstanceIDTokenInfo::GetSerializedValue(
     const std::string& registration_id) const {
-  return registration_id;
+  int64_t last_validated_ms = last_validated.since_origin().InMicroseconds();
+  return registration_id + kSerializedValidationTimeSeparator +
+         base::NumberToString(last_validated_ms);
 }
 
-bool InstanceIDTokenInfo::Deserialize(
-    const std::string& serialized_key,
-    const std::string& serialized_value,
-    std::string* registration_id) {
+bool InstanceIDTokenInfo::Deserialize(const std::string& serialized_key,
+                                      const std::string& serialized_value,
+                                      std::string* registration_id) {
   if (serialized_key.empty() || serialized_value.empty())
     return false;
 
@@ -202,16 +215,34 @@ bool InstanceIDTokenInfo::Deserialize(
   authorized_entity = fields[1];
   scope = fields[2];
 
-  // Registration ID is same as the serialized value;
+  // Get Registration ID and last_validated from serialized value
+  size_t pos_hash = serialized_value.find(kSerializedValidationTimeSeparator);
+  bool has_timestamp = (pos_hash != std::string::npos);
+
+  std::string registration_id_str, last_validated_str;
+  if (has_timestamp) {
+    registration_id_str = serialized_value.substr(0, pos_hash);
+    last_validated_str = serialized_value.substr(pos_hash + 1);
+  } else {
+    registration_id_str = serialized_value;
+  }
+
   if (registration_id)
-    *registration_id = serialized_value;
+    *registration_id = registration_id_str;
+
+  int64_t last_validated_ms = 0;
+  if (base::StringToInt64(last_validated_str, &last_validated_ms)) {
+    // It's okay for last_validated to be the default base::Time() value
+    // when there is no serialized timestamp available.
+    last_validated += base::TimeDelta::FromMicroseconds(last_validated_ms);
+  }
 
   return true;
 }
 
 bool RegistrationInfoComparer::operator()(
-    const linked_ptr<RegistrationInfo>& a,
-    const linked_ptr<RegistrationInfo>& b) const {
+    const scoped_refptr<RegistrationInfo>& a,
+    const scoped_refptr<RegistrationInfo>& b) const {
   DCHECK(a.get() && b.get());
 
   // For GCMRegistrationInfo, the comparison is based on app_id only.
@@ -247,11 +278,10 @@ bool RegistrationInfoComparer::operator()(
 
 bool ExistsGCMRegistrationInMap(const RegistrationInfoMap& map,
                                 const std::string& app_id) {
-  std::unique_ptr<GCMRegistrationInfo> gcm_registration(
-      new GCMRegistrationInfo);
+  scoped_refptr<RegistrationInfo> gcm_registration =
+      base::MakeRefCounted<GCMRegistrationInfo>();
   gcm_registration->app_id = app_id;
-  return map.count(
-      make_linked_ptr<RegistrationInfo>(gcm_registration.release())) > 0;
+  return map.find(gcm_registration) != map.end();
 }
 
 }  // namespace gcm

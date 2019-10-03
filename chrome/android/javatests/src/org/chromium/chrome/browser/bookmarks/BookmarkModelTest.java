@@ -15,15 +15,15 @@ import org.junit.Test;
 import org.junit.rules.RuleChain;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.test.BaseJUnit4ClassRunner;
 import org.chromium.base.test.util.Feature;
 import org.chromium.base.test.util.RetryOnFailure;
 import org.chromium.chrome.browser.bookmarks.BookmarkBridge.BookmarkItem;
 import org.chromium.chrome.browser.profiles.Profile;
-import org.chromium.chrome.browser.test.ChromeBrowserTestRule;
+import org.chromium.chrome.test.ChromeBrowserTestRule;
 import org.chromium.chrome.test.util.BookmarkTestUtil;
 import org.chromium.components.bookmarks.BookmarkId;
+import org.chromium.content_public.browser.test.util.TestThreadUtils;
 
 import java.util.ArrayList;
 import java.util.Arrays;
@@ -51,23 +51,17 @@ public class BookmarkModelTest {
 
     @Before
     public void setUp() throws Exception {
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                Profile profile = Profile.getLastUsedProfile();
-                mBookmarkModel = new BookmarkModel(profile);
-                mBookmarkModel.loadEmptyPartnerBookmarkShimForTesting();
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            Profile profile = Profile.getLastUsedProfile();
+            mBookmarkModel = new BookmarkModel(profile);
+            mBookmarkModel.loadEmptyPartnerBookmarkShimForTesting();
         });
 
         BookmarkTestUtil.waitForBookmarkModelLoaded();
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                mMobileNode = mBookmarkModel.getMobileFolderId();
-                mDesktopNode = mBookmarkModel.getDesktopFolderId();
-                mOtherNode = mBookmarkModel.getOtherFolderId();
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            mMobileNode = mBookmarkModel.getMobileFolderId();
+            mDesktopNode = mBookmarkModel.getDesktopFolderId();
+            mOtherNode = mBookmarkModel.getOtherFolderId();
         });
     }
 
@@ -134,6 +128,64 @@ public class BookmarkModelTest {
     @SmallTest
     @UiThreadTest
     @Feature({"Bookmark"})
+    public void testDeleteBookmarks() throws Throwable {
+        BookmarkId bookmarkA = addBookmark(mDesktopNode, 0, "a", "http://a.com");
+        BookmarkId bookmarkB = addBookmark(mOtherNode, 0, "b", "http://b.com");
+        BookmarkId bookmarkC = addBookmark(mMobileNode, 0, "c", "http://c.com");
+
+        // Dete a single bookmark
+        mBookmarkModel.deleteBookmarks(bookmarkA);
+        Assert.assertNull(mBookmarkModel.getBookmarkById(bookmarkA));
+        Assert.assertNotNull(mBookmarkModel.getBookmarkById(bookmarkB));
+        Assert.assertNotNull(mBookmarkModel.getBookmarkById(bookmarkC));
+
+        mBookmarkModel.undo();
+        Assert.assertNotNull(mBookmarkModel.getBookmarkById(bookmarkA));
+
+        // Delete and undo deletion of multiple bookmarks.
+        mBookmarkModel.deleteBookmarks(bookmarkA, bookmarkB);
+
+        Assert.assertNull(mBookmarkModel.getBookmarkById(bookmarkA));
+        Assert.assertNull(mBookmarkModel.getBookmarkById(bookmarkB));
+        Assert.assertNotNull(mBookmarkModel.getBookmarkById(bookmarkC));
+
+        mBookmarkModel.undo();
+
+        Assert.assertNotNull(mBookmarkModel.getBookmarkById(bookmarkA));
+        Assert.assertNotNull(mBookmarkModel.getBookmarkById(bookmarkB));
+        Assert.assertNotNull(mBookmarkModel.getBookmarkById(bookmarkC));
+    }
+
+    @Test
+    @SmallTest
+    @UiThreadTest
+    @Feature({"Bookmark"})
+    public void testDeleteBookmarksRepeatedly() throws Throwable {
+        BookmarkId bookmarkA = addBookmark(mDesktopNode, 0, "a", "http://a.com");
+        BookmarkId bookmarkB = addBookmark(mOtherNode, 0, "b", "http://b.com");
+        BookmarkId bookmarkC = addBookmark(mMobileNode, 0, "c", "http://c.com");
+
+        mBookmarkModel.deleteBookmarks(bookmarkA);
+
+        // This line is problematic, see: https://crbug.com/824559
+        mBookmarkModel.deleteBookmarks(bookmarkA, bookmarkB);
+
+        Assert.assertNull(mBookmarkModel.getBookmarkById(bookmarkA));
+        Assert.assertNull(mBookmarkModel.getBookmarkById(bookmarkB));
+        Assert.assertNotNull(mBookmarkModel.getBookmarkById(bookmarkC));
+
+        // Only bookmark B should be undeleted here.
+        mBookmarkModel.undo();
+
+        Assert.assertNull(mBookmarkModel.getBookmarkById(bookmarkA));
+        Assert.assertNotNull(mBookmarkModel.getBookmarkById(bookmarkB));
+        Assert.assertNotNull(mBookmarkModel.getBookmarkById(bookmarkC));
+    }
+
+    @Test
+    @SmallTest
+    @UiThreadTest
+    @Feature({"Bookmark"})
     public void testGetChildIDs() throws Throwable {
         BookmarkId folderA = mBookmarkModel.addFolder(mMobileNode, 0, "fa");
         HashSet<BookmarkId> expectedChildren = new HashSet<>();
@@ -189,12 +241,9 @@ public class BookmarkModelTest {
             final String url) {
         final AtomicReference<BookmarkId> result = new AtomicReference<BookmarkId>();
         final Semaphore semaphore = new Semaphore(0);
-        ThreadUtils.runOnUiThreadBlocking(new Runnable() {
-            @Override
-            public void run() {
-                result.set(mBookmarkModel.addBookmark(parent, index, title, url));
-                semaphore.release();
-            }
+        TestThreadUtils.runOnUiThreadBlocking(() -> {
+            result.set(mBookmarkModel.addBookmark(parent, index, title, url));
+            semaphore.release();
         });
         try {
             if (semaphore.tryAcquire(TIMEOUT_MS, TimeUnit.MILLISECONDS)) {

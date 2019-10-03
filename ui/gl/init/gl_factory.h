@@ -17,16 +17,14 @@
 #include "ui/gl/gpu_preference.h"
 #include "ui/gl/init/gl_init_export.h"
 
-namespace gfx {
-class VSyncProvider;
-}  // namespace gfx
-
 namespace gl {
 
 class GLContext;
-struct GLContextAttribs;
 class GLShareGroup;
 class GLSurface;
+
+struct GLContextAttribs;
+struct GLVersionInfo;
 
 namespace init {
 
@@ -59,6 +57,7 @@ GL_INIT_EXPORT void ShutdownGL(bool due_to_fallback);
 // Return information about the GL window system binding implementation (e.g.,
 // EGL, GLX, WGL). Returns true if the information was retrieved successfully.
 GL_INIT_EXPORT bool GetGLWindowSystemBindingInfo(
+    const GLVersionInfo& gl_info,
     GLWindowSystemBindingInfo* info);
 
 // Creates a GL context that is compatible with the given surface.
@@ -72,13 +71,6 @@ GL_INIT_EXPORT scoped_refptr<GLContext> CreateGLContext(
 // Creates a GL surface that renders directly to a view.
 GL_INIT_EXPORT scoped_refptr<GLSurface> CreateViewGLSurface(
     gfx::AcceleratedWidget window);
-
-#if defined(OS_WIN)
-// Creates a GL surface that renders directly into a native window.
-GL_INIT_EXPORT scoped_refptr<GLSurface> CreateNativeViewGLSurfaceEGL(
-    gfx::AcceleratedWidget window,
-    std::unique_ptr<gfx::VSyncProvider> sync_provider);
-#endif
 
 #if defined(USE_OZONE)
 // Creates a GL surface that renders directly into a window with surfaceless

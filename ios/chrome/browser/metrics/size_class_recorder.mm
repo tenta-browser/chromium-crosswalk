@@ -7,7 +7,7 @@
 
 #include "base/logging.h"
 #include "base/metrics/histogram_macros.h"
-#import "ios/chrome/browser/ui/ui_util.h"
+#import "ios/chrome/browser/ui/util/ui_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -79,15 +79,6 @@ void ReportHorizontalSizeClassUsed(UIUserInterfaceSizeClass sizeClass) {
   return self;
 }
 
-- (instancetype)init {
-  NOTREACHED();
-  return nil;
-}
-
-- (void)dealloc {
-  [[NSNotificationCenter defaultCenter] removeObserver:self];
-}
-
 - (void)horizontalSizeClassDidChange:(UIUserInterfaceSizeClass)newSizeClass {
   // iOS sometimes changes from Compact to Regular to Compact again when putting
   // the application in the background, to update the application screenshot.
@@ -97,7 +88,7 @@ void ReportHorizontalSizeClassUsed(UIUserInterfaceSizeClass sizeClass) {
   ReportHorizontalSizeClassUsed(newSizeClass);
 }
 
-- (void)pageLoadedWithHorizontalSizeClass:(UIUserInterfaceSizeClass)sizeClass {
++ (void)pageLoadedWithHorizontalSizeClass:(UIUserInterfaceSizeClass)sizeClass {
   SizeClassForReporting sizeClassForReporting =
       SizeClassForReporting(sizeClass);
   UMA_HISTOGRAM_ENUMERATION("Tab.PageLoadInHorizontalSizeClass",

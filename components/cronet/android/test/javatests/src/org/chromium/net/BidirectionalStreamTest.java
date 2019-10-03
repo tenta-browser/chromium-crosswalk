@@ -18,7 +18,9 @@ import static org.chromium.net.CronetTestRule.assertContains;
 import static org.chromium.net.CronetTestRule.getContext;
 
 import android.os.ConditionVariable;
+import android.os.Process;
 import android.support.test.filters.SmallTest;
+import android.support.test.runner.AndroidJUnit4;
 
 import org.junit.After;
 import org.junit.Before;
@@ -26,10 +28,11 @@ import org.junit.Rule;
 import org.junit.Test;
 import org.junit.runner.RunWith;
 
-import org.chromium.base.test.BaseJUnit4ClassRunner;
+import org.chromium.base.Log;
 import org.chromium.base.test.util.DisabledTest;
 import org.chromium.base.test.util.Feature;
 import org.chromium.net.CronetTestRule.OnlyRunNativeCronet;
+import org.chromium.net.CronetTestRule.RequiresMinApi;
 import org.chromium.net.MetricsTestUtil.TestRequestFinishedListener;
 import org.chromium.net.TestBidirectionalStreamCallback.FailureType;
 import org.chromium.net.TestBidirectionalStreamCallback.ResponseStep;
@@ -51,8 +54,10 @@ import java.util.regex.Pattern;
 /**
  * Test functionality of BidirectionalStream interface.
  */
-@RunWith(BaseJUnit4ClassRunner.class)
+@RunWith(AndroidJUnit4.class)
 public class BidirectionalStreamTest {
+    private static final String TAG = BidirectionalStreamTest.class.getSimpleName();
+
     @Rule
     public final CronetTestRule mTestRule = new CronetTestRule();
 
@@ -107,9 +112,8 @@ public class BidirectionalStreamTest {
             headersList.add(new AbstractMap.SimpleImmutableEntry<String, String>(
                     headers[i], headers[i + 1]));
         }
-        UrlResponseInfoImpl urlResponseInfo = new UrlResponseInfoImpl(
-                Arrays.asList(urls), statusCode, message, headersList, false, "h2", null);
-        urlResponseInfo.setReceivedByteCount(receivedBytes);
+        UrlResponseInfoImpl urlResponseInfo = new UrlResponseInfoImpl(Arrays.asList(urls),
+                statusCode, message, headersList, false, "h2", null, receivedBytes);
         return urlResponseInfo;
     }
 
@@ -345,7 +349,7 @@ public class BidirectionalStreamTest {
         final ConditionVariable waitOnStreamReady = new ConditionVariable();
         TestBidirectionalStreamCallback callback = new TestBidirectionalStreamCallback() {
             // Number of onWriteCompleted callbacks that have been invoked.
-            private int mNumWriteCompleted = 0;
+            private int mNumWriteCompleted;
 
             @Override
             public void onStreamReady(BidirectionalStream stream) {
@@ -1553,7 +1557,7 @@ public class BidirectionalStreamTest {
         checkSpecificErrorCode(NetError.ERR_ADDRESS_UNREACHABLE,
                 NetworkException.ERROR_ADDRESS_UNREACHABLE, false);
         // BidirectionalStream specific retryable error codes.
-        checkSpecificErrorCode(NetError.ERR_SPDY_PING_FAILED, NetworkException.ERROR_OTHER, true);
+        checkSpecificErrorCode(NetError.ERR_HTTP2_PING_FAILED, NetworkException.ERROR_OTHER, true);
         checkSpecificErrorCode(
                 NetError.ERR_QUIC_HANDSHAKE_FAILED, NetworkException.ERROR_OTHER, true);
     }
@@ -1577,5 +1581,65 @@ public class BidirectionalStreamTest {
         assertEquals(immediatelyRetryable, exception.immediatelyRetryable());
         assertEquals(netError, exception.getCronetInternalErrorCode());
         assertEquals(errorCode, exception.getErrorCode());
+    }
+
+    @Test
+    @SmallTest
+    @Feature({"Cronet"})
+    @OnlyRunNativeCronet
+    @RequiresMinApi(10) // Tagging support added in API level 10: crrev.com/c/chromium/src/+/937583
+    public void testTagging() throws Exception {
+        if (!CronetTestUtil.nativeCanGetTaggedBytes()) {
+            Log.i(TAG, "Skipping test - GetTaggedBytes unsupported.");
+            return;
+        }
+        String url = Http2TestServer.getEchoStreamUrl();
+
+        // Test untagged requests are given tag 0.
+        int tag = 0;
+        long priorBytes = CronetTestUtil.nativeGetTaggedBytes(tag);
+        TestBidirectionalStreamCallback callback = new TestBidirectionalStreamCallback();
+        callback.addWriteData(new byte[] {0});
+        mCronetEngine.newBidirectionalStreamBuilder(url, callback, callback.getExecutor())
+                .build()
+                .start();
+        callback.blockForDone();
+        assertTrue(CronetTestUtil.nativeGetTaggedBytes(tag) > priorBytes);
+
+        // Test explicit tagging.
+        tag = 0x12345678;
+        priorBytes = CronetTestUtil.nativeGetTaggedBytes(tag);
+        callback = new TestBidirectionalStreamCallback();
+        callback.addWriteData(new byte[] {0});
+        ExperimentalBidirectionalStream.Builder builder =
+                mCronetEngine.newBidirectionalStreamBuilder(url, callback, callback.getExecutor());
+        assertEquals(builder.setTrafficStatsTag(tag), builder);
+        builder.build().start();
+        callback.blockForDone();
+        assertTrue(CronetTestUtil.nativeGetTaggedBytes(tag) > priorBytes);
+
+        // Test a different tag value to make sure reused connections are retagged.
+        tag = 0x87654321;
+        priorBytes = CronetTestUtil.nativeGetTaggedBytes(tag);
+        callback = new TestBidirectionalStreamCallback();
+        callback.addWriteData(new byte[] {0});
+        builder =
+                mCronetEngine.newBidirectionalStreamBuilder(url, callback, callback.getExecutor());
+        assertEquals(builder.setTrafficStatsTag(tag), builder);
+        builder.build().start();
+        callback.blockForDone();
+        assertTrue(CronetTestUtil.nativeGetTaggedBytes(tag) > priorBytes);
+
+        // Test tagging with our UID.
+        tag = 0;
+        priorBytes = CronetTestUtil.nativeGetTaggedBytes(tag);
+        callback = new TestBidirectionalStreamCallback();
+        callback.addWriteData(new byte[] {0});
+        builder =
+                mCronetEngine.newBidirectionalStreamBuilder(url, callback, callback.getExecutor());
+        assertEquals(builder.setTrafficStatsUid(Process.myUid()), builder);
+        builder.build().start();
+        callback.blockForDone();
+        assertTrue(CronetTestUtil.nativeGetTaggedBytes(tag) > priorBytes);
     }
 }

@@ -7,49 +7,115 @@ suite('cr-drawer', function() {
     PolymerTest.clearBody();
   });
 
-  let createDrawer = (align) => {
+  function createDrawer(align) {
     document.body.innerHTML = `
-      <dialog is="cr-drawer" id="drawer" align="${align}">
+      <cr-drawer id="drawer" align="${align}">
         <div class="drawer-header">Test</div>
         <div class="drawer-content">Test content</div>
-      </dialog>
+      </cr-drawer>
     `;
     Polymer.dom.flush();
     return document.getElementById('drawer');
-  };
+  }
 
-  test('open and close', function(done) {
-    let drawer = createDrawer();
-    drawer.openDrawer('ltr');
-    assertTrue(drawer.open);
+  test('open and close', function() {
+    const drawer = createDrawer('ltr');
+    const waits = Promise.all(['cr-drawer-opening', 'cr-drawer-opened'].map(
+        eventName => test_util.eventToPromise(eventName, drawer)));
+    drawer.openDrawer();
 
-    listenOnce(drawer, 'transitionend', function() {
-      listenOnce(drawer, 'close', function() {
-        assertFalse(drawer.open);
-        done();
-      });
+    return waits
+        .then(() => {
+          assertTrue(drawer.open);
 
-      // Clicking the content does not close the drawer.
-      MockInteractions.tap(document.querySelector('.drawer-content'));
-      assertFalse(drawer.classList.contains('closing'));
+          // Clicking the content does not close the drawer.
+          MockInteractions.tap(document.querySelector('.drawer-content'));
 
-      drawer.dispatchEvent(new MouseEvent('click', {
-        bubbles: true,
-        cancelable: true,
-        clientX: 300,  // Must be larger than the drawer width (256px).
-        clientY: 300,
-      }));
+          const whenClosed = test_util.eventToPromise('close', drawer);
+          drawer.$.dialog.dispatchEvent(new MouseEvent('click', {
+            bubbles: true,
+            cancelable: true,
+            clientX: 300,  // Must be larger than the drawer width (256px).
+            clientY: 300,
+          }));
 
-      // Clicking outside the drawer does close it.
-      assertTrue(drawer.classList.contains('closing'));
-    });
+          return whenClosed;
+        })
+        .then(() => {
+          assertFalse(drawer.open);
+          drawer.openDrawer();
+          return test_util.eventToPromise('cr-drawer-opened', drawer);
+        })
+        .then(() => {
+          drawer.close();
+          return test_util.eventToPromise('close', drawer);
+        });
   });
 
   test('align=ltr', function() {
-    assertNotEquals(getComputedStyle(createDrawer('ltr')).left, 'auto');
+    const drawer = createDrawer('ltr');
+    drawer.openDrawer();
+    return test_util.eventToPromise('cr-drawer-opened', drawer).then(() => {
+      const rect = drawer.$.dialog.getBoundingClientRect();
+      assertEquals(0, rect.left);
+      assertNotEquals(0, rect.right);
+    });
   });
 
   test('align=rtl', function() {
-    assertEquals(getComputedStyle(createDrawer('rtl')).left, 'auto');
+    const drawer = createDrawer('rtl');
+    drawer.openDrawer();
+    return test_util.eventToPromise('cr-drawer-opened', drawer).then(() => {
+      const rect = drawer.$.dialog.getBoundingClientRect();
+      assertNotEquals(0, rect.left);
+      assertEquals(window.innerWidth, rect.right);
+    });
+  });
+
+  test('close and cancel', () => {
+    const drawer = createDrawer();
+    drawer.openDrawer();
+    return test_util.eventToPromise('cr-drawer-opened', drawer)
+        .then(() => {
+          assertFalse(drawer.wasCanceled());
+          drawer.cancel();
+          return test_util.eventToPromise('close', drawer);
+        })
+        .then(() => {
+          assertTrue(drawer.wasCanceled());
+          drawer.openDrawer();
+          assertFalse(drawer.wasCanceled());
+          return test_util.eventToPromise('cr-drawer-opened', drawer);
+        })
+        .then(() => {
+          drawer.close();
+          return test_util.eventToPromise('close', drawer);
+        })
+        .then(() => {
+          assertFalse(drawer.wasCanceled());
+          drawer.toggle();
+          assertFalse(drawer.wasCanceled());
+          return test_util.eventToPromise('cr-drawer-opened', drawer);
+        });
+  });
+
+  test('openDrawer/close/toggle can be called multiple times in a row', () => {
+    const drawer = createDrawer();
+    drawer.openDrawer();
+    drawer.close();
+    drawer.close();
+    drawer.openDrawer();
+    drawer.openDrawer();
+    drawer.toggle();
+    drawer.toggle();
+    drawer.toggle();
+    drawer.toggle();
+  });
+
+  test('cannot set open', () => {
+    const drawer = createDrawer();
+    assertThrows(() => {
+      drawer.open = true;
+    });
   });
 });

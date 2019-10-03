@@ -4,6 +4,7 @@
 
 #include "chrome/browser/media/protected_media_identifier_permission_context.h"
 
+#include "base/bind.h"
 #include "base/command_line.h"
 #include "base/metrics/user_metrics.h"
 #include "base/strings/string_split.h"
@@ -25,7 +26,7 @@
 #include "base/metrics/histogram_macros.h"
 #include "chrome/browser/chromeos/attestation/platform_verification_dialog.h"
 #include "chrome/browser/chromeos/settings/cros_settings.h"
-#include "chromeos/chromeos_switches.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "chromeos/settings/cros_settings_names.h"
 #include "components/pref_registry/pref_registry_syncable.h"
 #include "components/user_prefs/user_prefs.h"
@@ -42,7 +43,7 @@ ProtectedMediaIdentifierPermissionContext::
     ProtectedMediaIdentifierPermissionContext(Profile* profile)
     : PermissionContextBase(profile,
                             CONTENT_SETTINGS_TYPE_PROTECTED_MEDIA_IDENTIFIER,
-                            blink::FeaturePolicyFeature::kEncryptedMedia)
+                            blink::mojom::FeaturePolicyFeature::kEncryptedMedia)
 #if defined(OS_CHROMEOS)
       ,
       weak_factory_(this)
@@ -61,16 +62,20 @@ void ProtectedMediaIdentifierPermissionContext::DecidePermission(
     const GURL& requesting_origin,
     const GURL& embedding_origin,
     bool user_gesture,
-    const BrowserPermissionCallback& callback) {
+    BrowserPermissionCallback callback) {
   DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
 
   // Since the dialog is modal, we only support one prompt per |web_contents|.
   // Reject the new one if there is already one pending. See
   // http://crbug.com/447005
   if (pending_requests_.count(web_contents)) {
-    callback.Run(CONTENT_SETTING_ASK);
+    std::move(callback).Run(CONTENT_SETTING_ASK);
     return;
   }
+
+  // ShowDialog doesn't use the callback if it returns null.
+  auto repeating_callback =
+      base::AdaptCallbackForRepeating(std::move(callback));
 
   // On ChromeOS, we don't use PermissionContextBase::RequestPermission() which
   // uses the standard permission infobar/bubble UI. See http://crbug.com/454847
@@ -78,15 +83,15 @@ void ProtectedMediaIdentifierPermissionContext::DecidePermission(
   // TODO(xhwang): Remove when http://crbug.com/454847 is fixed.
   views::Widget* widget = PlatformVerificationDialog::ShowDialog(
       web_contents, requesting_origin,
-      base::Bind(&ProtectedMediaIdentifierPermissionContext::
-                     OnPlatformVerificationConsentResponse,
-                 weak_factory_.GetWeakPtr(), web_contents, id,
-                 requesting_origin, embedding_origin, callback));
+      base::BindOnce(&ProtectedMediaIdentifierPermissionContext::
+                         OnPlatformVerificationConsentResponse,
+                     weak_factory_.GetWeakPtr(), web_contents, id,
+                     requesting_origin, embedding_origin, repeating_callback));
 
   // This could happen when the permission is requested from an extension. See
   // http://crbug.com/728534
   if (!widget) {
-    callback.Run(CONTENT_SETTING_ASK);
+    std::move(repeating_callback).Run(CONTENT_SETTING_ASK);
     return;
   }
 
@@ -142,31 +147,6 @@ bool ProtectedMediaIdentifierPermissionContext::IsOriginWhitelisted(
   }
 
   return false;
-}
-
-void ProtectedMediaIdentifierPermissionContext::CancelPermissionRequest(
-    content::WebContents* web_contents,
-    const PermissionRequestID& id) {
-  DCHECK_CURRENTLY_ON(content::BrowserThread::UI);
-
-#if defined(OS_CHROMEOS)
-  PendingRequestMap::iterator request = pending_requests_.find(web_contents);
-  if (request == pending_requests_.end() || (request->second.second != id))
-    return;
-
-  views::Widget* widget = request->second.first;
-  pending_requests_.erase(request);
-
-  // If |web_contents| is being destroyed, |widget| could be invalid. No need to
-  // manually close it here. Otherwise, close the |widget| here.
-  // OnPlatformVerificationConsentResponse() will be fired during this process,
-  // but since |web_contents| is removed from |pending_requests_|, the callback
-  // will simply be dropped.
-  if (!web_contents->IsBeingDestroyed())
-    widget->Close();
-#else
-  PermissionContextBase::CancelPermissionRequest(web_contents, id);
-#endif
 }
 
 void ProtectedMediaIdentifierPermissionContext::UpdateTabContext(
@@ -241,7 +221,7 @@ void ProtectedMediaIdentifierPermissionContext::
         const PermissionRequestID& id,
         const GURL& requesting_origin,
         const GURL& embedding_origin,
-        const BrowserPermissionCallback& callback,
+        BrowserPermissionCallback callback,
         PlatformVerificationDialog::ConsentResponse response) {
   // The request may have been canceled. Drop the callback in that case.
   // This can happen if the tab is closed.
@@ -284,8 +264,7 @@ void ProtectedMediaIdentifierPermissionContext::
       break;
   }
 
-  NotifyPermissionSet(
-      id, requesting_origin, embedding_origin, callback,
-      persist, content_setting);
+  NotifyPermissionSet(id, requesting_origin, embedding_origin,
+                      std::move(callback), persist, content_setting);
 }
 #endif

@@ -5,16 +5,18 @@
 #ifndef IOS_WEB_WEB_STATE_UI_WK_WEB_VIEW_CONFIGURATION_PROVIDER_H_
 #define IOS_WEB_WEB_STATE_UI_WK_WEB_VIEW_CONFIGURATION_PROVIDER_H_
 
-#import "base/mac/scoped_nsobject.h"
 #include "base/macros.h"
+#include "base/observer_list.h"
 #include "base/supports_user_data.h"
 
+@class CRWWebUISchemeHandler;
 @class CRWWKScriptMessageRouter;
 @class WKWebViewConfiguration;
 
 namespace web {
 
 class BrowserState;
+class WKWebViewConfigurationProviderObserver;
 
 // A provider class associated with a single web::BrowserState object. Manages
 // the lifetime and performs setup of WKWebViewConfiguration and
@@ -29,9 +31,10 @@ class WKWebViewConfigurationProvider : public base::SupportsUserData::Data {
   static web::WKWebViewConfigurationProvider& FromBrowserState(
       web::BrowserState* browser_state);
 
-  // Returns an autoreleased copy of WKWebViewConfiguration associated with
-  // browser state. Lazily creates the config. Configuration's |preferences|
-  // will have scriptCanOpenWindowsAutomatically property set to YES.
+  // Returns an autoreleased shallow copy of WKWebViewConfiguration associated
+  // with browser state. Lazily creates the config. Configuration's
+  // |preferences| will have scriptCanOpenWindowsAutomatically property set to
+  // YES.
   // Must be used instead of [[WKWebViewConfiguration alloc] init].
   // Callers must not retain the returned object.
   WKWebViewConfiguration* GetWebViewConfiguration();
@@ -46,13 +49,26 @@ class WKWebViewConfigurationProvider : public base::SupportsUserData::Data {
   // be enforced in debug builds).
   void Purge();
 
+  // Adds |observer| to monitor changes to the ConfigurationProvider.
+  void AddObserver(WKWebViewConfigurationProviderObserver* observer);
+
+  // Stop |observer| from monitoring changes to the ConfigurationProvider.
+  void RemoveObserver(WKWebViewConfigurationProviderObserver* observer);
+
  private:
   explicit WKWebViewConfigurationProvider(BrowserState* browser_state);
   WKWebViewConfigurationProvider() = delete;
-
-  base::scoped_nsobject<WKWebViewConfiguration> configuration_;
-  base::scoped_nsobject<CRWWKScriptMessageRouter> router_;
+  CRWWebUISchemeHandler* scheme_handler_ = nil;
+  WKWebViewConfiguration* configuration_;
+  CRWWKScriptMessageRouter* router_;
   BrowserState* browser_state_;
+
+  // A list of observers notified when WKWebViewConfiguration changes.
+  // This observer list has its' check_empty flag set to false, because
+  // observers need to remove them selves from the list in the UI Thread which
+  // will add more complixity if they are destructed on the IO thread.
+  base::ObserverList<WKWebViewConfigurationProviderObserver, false>::Unchecked
+      observers_;
 
   DISALLOW_COPY_AND_ASSIGN(WKWebViewConfigurationProvider);
 };

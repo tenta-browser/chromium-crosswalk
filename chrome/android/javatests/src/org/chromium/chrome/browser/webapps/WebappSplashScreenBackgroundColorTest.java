@@ -19,16 +19,14 @@ import org.chromium.base.test.util.CommandLineFlags;
 import org.chromium.base.test.util.Feature;
 import org.chromium.chrome.browser.ChromeSwitches;
 import org.chromium.chrome.browser.ShortcutHelper;
-import org.chromium.chrome.browser.metrics.WebappUma;
-import org.chromium.chrome.test.ChromeActivityTestRule;
+import org.chromium.chrome.browser.metrics.WebappSplashUmaCache;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 
 /**
  * Tests for splash screens with EXTRA_BACKGROND_COLOR specified in the Intent.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class WebappSplashScreenBackgroundColorTest {
     @Rule
     public final WebappActivityTestRule mActivityTestRule = new WebappActivityTestRule();
@@ -49,7 +47,7 @@ public class WebappSplashScreenBackgroundColorTest {
 
         Assert.assertEquals(1,
                 RecordHistogram.getHistogramValueCountForTesting(
-                        WebappUma.HISTOGRAM_SPLASHSCREEN_BACKGROUNDCOLOR,
-                        WebappUma.SPLASHSCREEN_COLOR_STATUS_CUSTOM));
+                        WebappSplashUmaCache.HISTOGRAM_SPLASHSCREEN_BACKGROUNDCOLOR,
+                        WebappSplashUmaCache.SplashColorStatus.CUSTOM));
     }
 }

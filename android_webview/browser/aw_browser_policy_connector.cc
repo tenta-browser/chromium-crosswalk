@@ -4,9 +4,10 @@
 
 #include "android_webview/browser/aw_browser_policy_connector.h"
 
-#include "android_webview/browser/aw_browser_context.h"
+#include <memory>
+
+#include "android_webview/browser/aw_browser_process.h"
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "components/policy/core/browser/android/android_combined_policy_provider.h"
 #include "components/policy/core/browser/configuration_policy_handler_list.h"
 #include "components/policy/core/browser/url_blacklist_policy_handler.h"
@@ -33,27 +34,22 @@ std::unique_ptr<policy::ConfigurationPolicyHandlerList> BuildHandlerList(
     const policy::Schema& chrome_schema) {
   std::unique_ptr<policy::ConfigurationPolicyHandlerList> handlers(
       new policy::ConfigurationPolicyHandlerList(
-          base::Bind(&PopulatePolicyHandlerParameters),
-          base::Bind(&GetChromePolicyDetails)));
+          base::BindRepeating(&PopulatePolicyHandlerParameters),
+          base::BindRepeating(&GetChromePolicyDetails)));
 
   // URL Filtering
-  handlers->AddHandler(base::MakeUnique<policy::SimplePolicyHandler>(
+  handlers->AddHandler(std::make_unique<policy::SimplePolicyHandler>(
       policy::key::kURLWhitelist, policy::policy_prefs::kUrlWhitelist,
       base::Value::Type::LIST));
-  handlers->AddHandler(base::MakeUnique<policy::URLBlacklistPolicyHandler>());
+  handlers->AddHandler(std::make_unique<policy::URLBlacklistPolicyHandler>());
 
   // HTTP Negotiate authentication
-  handlers->AddHandler(base::MakeUnique<policy::SimplePolicyHandler>(
+  handlers->AddHandler(std::make_unique<policy::SimplePolicyHandler>(
       policy::key::kAuthServerWhitelist, prefs::kAuthServerWhitelist,
       base::Value::Type::STRING));
-  handlers->AddHandler(base::MakeUnique<policy::SimplePolicyHandler>(
+  handlers->AddHandler(std::make_unique<policy::SimplePolicyHandler>(
       policy::key::kAuthAndroidNegotiateAccountType,
       prefs::kAuthAndroidNegotiateAccountType, base::Value::Type::STRING));
-
-  // Web restrictions
-  handlers->AddHandler(base::WrapUnique(new policy::SimplePolicyHandler(
-      policy::key::kWebRestrictionsAuthority, prefs::kWebRestrictionsAuthority,
-      base::Value::Type::STRING)));
 
   return handlers;
 }
@@ -61,13 +57,17 @@ std::unique_ptr<policy::ConfigurationPolicyHandlerList> BuildHandlerList(
 }  // namespace
 
 AwBrowserPolicyConnector::AwBrowserPolicyConnector()
-   : BrowserPolicyConnectorBase(base::Bind(&BuildHandlerList)) {
-  SetPlatformPolicyProvider(
-      base::MakeUnique<policy::android::AndroidCombinedPolicyProvider>(
-          GetSchemaRegistry()));
-  InitPolicyProviders();
-}
+    : BrowserPolicyConnectorBase(base::BindRepeating(&BuildHandlerList)) {}
 
-AwBrowserPolicyConnector::~AwBrowserPolicyConnector() {}
+AwBrowserPolicyConnector::~AwBrowserPolicyConnector() = default;
+
+std::vector<std::unique_ptr<policy::ConfigurationPolicyProvider>>
+AwBrowserPolicyConnector::CreatePolicyProviders() {
+  std::vector<std::unique_ptr<policy::ConfigurationPolicyProvider>> providers;
+  providers.push_back(
+      std::make_unique<policy::android::AndroidCombinedPolicyProvider>(
+          GetSchemaRegistry()));
+  return providers;
+}
 
 }  // namespace android_webview

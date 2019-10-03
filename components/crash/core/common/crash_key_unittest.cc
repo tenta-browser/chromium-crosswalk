@@ -6,6 +6,7 @@
 
 #include "base/debug/crash_logging.h"
 #include "base/debug/stack_trace.h"
+#include "base/stl_util.h"
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -14,7 +15,9 @@ namespace {
 
 class CrashKeyStringTest : public testing::Test {
  public:
-  void SetUp() override { InitializeCrashKeys(); }
+  void SetUp() override { InitializeCrashKeysForTesting(); }
+
+  void TearDown() override { ResetCrashKeysForTesting(); }
 };
 
 TEST_F(CrashKeyStringTest, ScopedCrashKeyString) {
@@ -35,7 +38,7 @@ TEST_F(CrashKeyStringTest, FormatStackTrace) {
       0x0badbeef, 0x77778888, 0xabc, 0x000ddeeff, 0x12345678,
   };
   base::debug::StackTrace trace(reinterpret_cast<const void* const*>(addresses),
-                                arraysize(addresses));
+                                base::size(addresses));
 
   std::string too_small = internal::FormatStackTrace(trace, 3);
   EXPECT_EQ(0u, too_small.size());
@@ -56,7 +59,7 @@ TEST_F(CrashKeyStringTest, FormatStackTrace64) {
       0xbaaaabaaaaba, 0x1000000000000000,
   };
   base::debug::StackTrace trace(reinterpret_cast<const void* const*>(addresses),
-                                arraysize(addresses));
+                                base::size(addresses));
 
   std::string too_small = internal::FormatStackTrace(trace, 8);
   EXPECT_EQ(0u, too_small.size());
@@ -69,6 +72,9 @@ TEST_F(CrashKeyStringTest, FormatStackTrace64) {
 }
 #endif
 
+// In certain build configurations, StackTrace will produce an
+// empty result, which will cause the test to fail.
+#if !defined(OFFICIAL_BUILD) && !defined(NO_UNWIND_TABLES)
 TEST_F(CrashKeyStringTest, SetStackTrace) {
   static CrashKeyString<1024> key("test-trace");
 
@@ -78,6 +84,7 @@ TEST_F(CrashKeyStringTest, SetStackTrace) {
 
   EXPECT_TRUE(key.is_set());
 }
+#endif
 
 TEST_F(CrashKeyStringTest, BaseSupport) {
   static base::debug::CrashKeyString* crash_key =
@@ -92,6 +99,24 @@ TEST_F(CrashKeyStringTest, BaseSupport) {
 
   base::debug::SetCrashKeyString(crash_key, std::string(128, 'b'));
   base::debug::SetCrashKeyString(crash_key, std::string(64, 'a'));
+}
+
+TEST_F(CrashKeyStringTest, CArrayInitializer) {
+  static CrashKeyString<8> keys[] = {
+      {"test-1", CrashKeyString<8>::Tag::kArray},
+      {"test-2", CrashKeyString<8>::Tag::kArray},
+      {"test-3", CrashKeyString<8>::Tag::kArray},
+  };
+
+  EXPECT_FALSE(keys[0].is_set());
+  EXPECT_FALSE(keys[1].is_set());
+  EXPECT_FALSE(keys[2].is_set());
+
+  keys[1].Set("test");
+
+  EXPECT_FALSE(keys[0].is_set());
+  EXPECT_TRUE(keys[1].is_set());
+  EXPECT_FALSE(keys[2].is_set());
 }
 
 }  // namespace

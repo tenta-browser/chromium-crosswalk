@@ -5,8 +5,8 @@
 #ifndef CHROME_BROWSER_UI_VIEWS_CONTENT_SETTING_BUBBLE_CONTENTS_H_
 #define CHROME_BROWSER_UI_VIEWS_CONTENT_SETTING_BUBBLE_CONTENTS_H_
 
-#include <list>
 #include <map>
+#include <memory>
 
 #include "base/compiler_specific.h"
 #include "base/macros.h"
@@ -14,17 +14,12 @@
 #include "chrome/browser/ui/content_settings/content_setting_bubble_model.h"
 #include "components/content_settings/core/common/content_settings_types.h"
 #include "content/public/browser/web_contents_observer.h"
-#include "content/public/common/media_stream_request.h"
-#include "ui/base/models/combobox_model.h"
-#include "ui/views/bubble/bubble_dialog_delegate.h"
+#include "ui/views/bubble/bubble_dialog_delegate_view.h"
 #include "ui/views/controls/button/button.h"
 #include "ui/views/controls/button/checkbox.h"
+#include "ui/views/controls/button/radio_button.h"
 #include "ui/views/controls/combobox/combobox_listener.h"
 #include "ui/views/controls/link_listener.h"
-
-namespace chrome {
-class ContentSettingBubbleViewsBridge;
-}
 
 namespace views {
 class ImageButton;
@@ -49,7 +44,7 @@ class ContentSettingBubbleContents : public content::WebContentsObserver,
                                      public ContentSettingBubbleModel::Owner {
  public:
   ContentSettingBubbleContents(
-      ContentSettingBubbleModel* content_setting_bubble_model,
+      std::unique_ptr<ContentSettingBubbleModel> content_setting_bubble_model,
       content::WebContents* web_contents,
       views::View* anchor_view,
       views::BubbleBorder::Arrow arrow);
@@ -57,11 +52,13 @@ class ContentSettingBubbleContents : public content::WebContentsObserver,
 
   // views::BubbleDialogDelegateView:
   gfx::Size CalculatePreferredSize() const override;
+  void WindowClosing() override;
 
   // ContentSettingBubbleModel::Owner:
   void OnListItemAdded(
       const ContentSettingBubbleModel::ListItem& item) override;
   void OnListItemRemovedAt(int index) override;
+  int GetSelectedRadioOption() override;
 
  protected:
   // views::WidgetDelegate:
@@ -70,47 +67,24 @@ class ContentSettingBubbleContents : public content::WebContentsObserver,
 
   // views::BubbleDialogDelegateView:
   void Init() override;
-  View* CreateExtraView() override;
+  std::unique_ptr<View> CreateExtraView() override;
   bool Accept() override;
   bool Close() override;
   int GetDialogButtons() const override;
   base::string16 GetDialogButtonLabel(ui::DialogButton button) const override;
-  void OnNativeThemeChanged(const ui::NativeTheme* theme) override;
+  void OnThemeChanged() override;
 
  private:
-  // A combobox model that builds the contents of the media capture devices menu
-  // in the content setting bubble.
-  class MediaComboboxModel : public ui::ComboboxModel {
-   public:
-    explicit MediaComboboxModel(content::MediaStreamType type);
-    ~MediaComboboxModel() override;
-
-    content::MediaStreamType type() const { return type_; }
-    const content::MediaStreamDevices& GetDevices() const;
-    int GetDeviceIndex(const content::MediaStreamDevice& device) const;
-
-    // ui::ComboboxModel:
-    int GetItemCount() const override;
-    base::string16 GetItemAt(int index) override;
-
-   private:
-    content::MediaStreamType type_;
-
-    DISALLOW_COPY_AND_ASSIGN(MediaComboboxModel);
-  };
-
-  class Favicon;
   class ListItemContainer;
 
-  // This allows ContentSettingBubbleViewsBridge to call SetAnchorRect().
-  friend class chrome::ContentSettingBubbleViewsBridge;
-
-  // Applies the colors appropriate for |theme| to the learn more button.
-  void StyleLearnMoreButton(const ui::NativeTheme* theme);
+  // Applies coloring to the learn more button.
+  void StyleLearnMoreButton();
 
   // content::WebContentsObserver:
   void DidFinishNavigation(
       content::NavigationHandle* navigation_handle) override;
+  void OnVisibilityChanged(content::Visibility visibility) override;
+  void WebContentsDestroyed() override;
 
   // views::ButtonListener:
   void ButtonPressed(views::Button* sender, const ui::Event& event) override;
@@ -124,17 +98,14 @@ class ContentSettingBubbleContents : public content::WebContentsObserver,
   // Provides data for this bubble.
   std::unique_ptr<ContentSettingBubbleModel> content_setting_bubble_model_;
 
-  ListItemContainer* list_item_container_;
+  ListItemContainer* list_item_container_ = nullptr;
 
   typedef std::vector<views::RadioButton*> RadioGroup;
   RadioGroup radio_group_;
-  views::Link* custom_link_;
-  views::LabelButton* manage_button_;
-  views::Checkbox* manage_checkbox_;
-  views::ImageButton* learn_more_button_;
-
-  // Combobox models the bubble owns.
-  std::list<MediaComboboxModel> combobox_models_;
+  views::Link* custom_link_ = nullptr;
+  views::LabelButton* manage_button_ = nullptr;
+  views::Checkbox* manage_checkbox_ = nullptr;
+  views::ImageButton* learn_more_button_ = nullptr;
 
   DISALLOW_IMPLICIT_CONSTRUCTORS(ContentSettingBubbleContents);
 };

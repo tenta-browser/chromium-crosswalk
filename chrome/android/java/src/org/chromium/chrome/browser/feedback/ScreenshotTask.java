@@ -8,15 +8,17 @@ import android.app.Activity;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.Rect;
+import android.support.annotation.Nullable;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.annotations.CalledByNative;
 import org.chromium.base.annotations.JNINamespace;
+import org.chromium.base.task.PostTask;
 import org.chromium.chrome.browser.ChromeActivity;
+import org.chromium.chrome.browser.tab.SadTab;
 import org.chromium.chrome.browser.tab.Tab;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 import org.chromium.ui.UiUtils;
-
-import javax.annotation.Nullable;
+import org.chromium.ui.base.WindowAndroid;
 
 /**
  * A utility class to take a feedback-formatted screenshot of an {@link Activity}.
@@ -53,7 +55,7 @@ final class ScreenshotTask implements ScreenshotSource {
 
         // If neither the compositor nor the Android view screenshot tasks were kicked off, admit
         // defeat and return a {@code null} screenshot.
-        ThreadUtils.postOnUiThread(new Runnable() {
+        PostTask.postTask(UiThreadTaskTraits.DEFAULT, new Runnable() {
             @Override
             public void run() {
                 onBitmapReceived(null);
@@ -91,9 +93,8 @@ final class ScreenshotTask implements ScreenshotSource {
 
         Rect rect = new Rect();
         activity.getWindow().getDecorView().getRootView().getWindowVisibleDisplayFrame(rect);
-        nativeGrabWindowSnapshotAsync(this,
-                ((ChromeActivity) activity).getWindowAndroid().getNativePointer(), rect.width(),
-                rect.height());
+        nativeGrabWindowSnapshotAsync(
+                this, ((ChromeActivity) activity).getWindowAndroid(), rect.width(), rect.height());
 
         return true;
     }
@@ -101,7 +102,7 @@ final class ScreenshotTask implements ScreenshotSource {
     private boolean takeAndroidViewScreenshot(@Nullable final Activity activity) {
         if (activity == null) return false;
 
-        ThreadUtils.postOnUiThread(new Runnable() {
+        PostTask.postTask(UiThreadTaskTraits.DEFAULT, new Runnable() {
             @Override
             public void run() {
                 Bitmap bitmap = UiUtils.generateScaledScreenshot(
@@ -121,13 +122,22 @@ final class ScreenshotTask implements ScreenshotSource {
         ChromeActivity chromeActivity = (ChromeActivity) activity;
         Tab currentTab = chromeActivity.getActivityTab();
 
+        // If the bottom sheet is currently open, then do not use the Compositor based screenshot
+        // so that the Android View for the bottom sheet will be captured.
+        // TODO(https://crbug.com/835862): When the sheet is partially opened both the compositor
+        // and Android views should be captured in the screenshot.
+        if (chromeActivity.getBottomSheet() != null
+                && chromeActivity.getBottomSheet().isSheetOpen()) {
+            return false;
+        }
+
         // If the tab is null, assume in the tab switcher so a Compositor snapshot is good.
         if (currentTab == null) return true;
         // If the tab is not interactable, also assume in the tab switcher.
         if (!currentTab.isUserInteractable()) return true;
         // If the tab focused and not showing Android widget based content, then use the Compositor
         // based screenshot.
-        if (currentTab.getNativePage() == null && !currentTab.isShowingSadTab()) return true;
+        if (currentTab.getNativePage() == null && !SadTab.isShowing(currentTab)) return true;
 
         // Assume the UI is drawn primarily by Android widgets, so do not use the Compositor
         // screenshot.
@@ -135,5 +145,5 @@ final class ScreenshotTask implements ScreenshotSource {
     }
 
     private static native void nativeGrabWindowSnapshotAsync(
-            ScreenshotTask callback, long nativeWindowAndroid, int width, int height);
+            ScreenshotTask callback, WindowAndroid window, int width, int height);
 }

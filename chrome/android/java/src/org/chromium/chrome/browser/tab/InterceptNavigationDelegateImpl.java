@@ -4,39 +4,45 @@
 
 package org.chromium.chrome.browser.tab;
 
-import org.chromium.base.ThreadUtils;
+import org.chromium.base.UserData;
 import org.chromium.base.VisibleForTesting;
 import org.chromium.base.metrics.RecordHistogram;
+import org.chromium.base.task.PostTask;
 import org.chromium.chrome.R;
 import org.chromium.chrome.browser.AppHooks;
 import org.chromium.chrome.browser.ChromeActivity;
-import org.chromium.chrome.browser.datausage.DataUseTabUIManager;
-import org.chromium.chrome.browser.externalnav.ExternalNavigationDelegateImpl;
 import org.chromium.chrome.browser.externalnav.ExternalNavigationHandler;
 import org.chromium.chrome.browser.externalnav.ExternalNavigationHandler.OverrideUrlLoadingResult;
 import org.chromium.chrome.browser.externalnav.ExternalNavigationParams;
-import org.chromium.chrome.browser.tabmodel.TabModel.TabLaunchType;
+import org.chromium.chrome.browser.tabmodel.TabLaunchType;
+import org.chromium.chrome.browser.tabmodel.TabModelSelector;
 import org.chromium.components.navigation_interception.InterceptNavigationDelegate;
 import org.chromium.components.navigation_interception.NavigationParams;
 import org.chromium.content_public.browser.NavigationController;
+import org.chromium.content_public.browser.NavigationHandle;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 import org.chromium.content_public.browser.WebContents;
 import org.chromium.content_public.common.ConsoleMessageLevel;
 
 /**
  * Class that controls navigations and allows to intercept them. It is used on Android to 'convert'
- * certain navigations to Intents to 3rd party applications and to "pause" navigations when data use
- * tracking has ended.
- * Note the Intent is often created together with a new empty tab which then shoud be closed
+ * certain navigations to Intents to 3rd party applications.
+ * Note the Intent is often created together with a new empty tab which then should be closed
  * immediately. Closing the tab will cancel the navigation that this delegate is running for,
  * hence can cause UAF error. It should be done in an asynchronous fashion to avoid it.
  * See https://crbug.com/732260.
  */
-public class InterceptNavigationDelegateImpl implements InterceptNavigationDelegate {
+public class InterceptNavigationDelegateImpl implements InterceptNavigationDelegate, UserData {
+    private static final Class<InterceptNavigationDelegateImpl> USER_DATA_KEY =
+            InterceptNavigationDelegateImpl.class;
+
     private final Tab mTab;
-    private final ExternalNavigationHandler mExternalNavHandler;
     private final AuthenticatorNavigationInterceptor mAuthenticatorHelper;
-    private ExternalNavigationHandler.OverrideUrlLoadingResult mLastOverrideUrlLoadingResult =
-            ExternalNavigationHandler.OverrideUrlLoadingResult.NO_OVERRIDE;
+    private @OverrideUrlLoadingResult int mLastOverrideUrlLoadingResult =
+            OverrideUrlLoadingResult.NO_OVERRIDE;
+    private final TabObserver mDelegateObserver;
+    private WebContents mWebContents;
+    private ExternalNavigationHandler mExternalNavHandler;
 
     /**
      * Whether forward history should be cleared after navigation is committed.
@@ -44,29 +50,72 @@ public class InterceptNavigationDelegateImpl implements InterceptNavigationDeleg
     private boolean mClearAllForwardHistoryRequired;
     private boolean mShouldClearRedirectHistoryForTabClobbering;
 
+    public static void createForTab(Tab tab) {
+        assert get(tab) == null;
+        tab.getUserDataHost().setUserData(USER_DATA_KEY, new InterceptNavigationDelegateImpl(tab));
+    }
+
+    public static InterceptNavigationDelegateImpl get(Tab tab) {
+        return tab.getUserDataHost().getUserData(USER_DATA_KEY);
+    }
+
     /**
      * Default constructor of {@link InterceptNavigationDelegateImpl}.
      */
-    public InterceptNavigationDelegateImpl(Tab tab) {
-        this(new ExternalNavigationHandler(tab), tab);
-    }
-
-    /**
-     * Constructs a new instance of {@link InterceptNavigationDelegateImpl} with the given
-     * {@link ExternalNavigationDelegate}.
-     */
-    public InterceptNavigationDelegateImpl(ExternalNavigationDelegateImpl delegate, Tab tab) {
-        this(new ExternalNavigationHandler(delegate), tab);
-    }
-
-    /**
-     * Constructs a new instance of {@link InterceptNavigationDelegateImpl} with the given
-     * {@link ExternalNavigationHandler}.
-     */
-    public InterceptNavigationDelegateImpl(ExternalNavigationHandler externalNavHandler, Tab tab) {
+    @VisibleForTesting
+    InterceptNavigationDelegateImpl(Tab tab) {
         mTab = tab;
-        mExternalNavHandler = externalNavHandler;
         mAuthenticatorHelper = AppHooks.get().createAuthenticatorNavigationInterceptor(mTab);
+        mDelegateObserver = new EmptyTabObserver() {
+            @Override
+            public void onContentChanged(Tab tab) {
+                associateWithWebContents(tab.getWebContents());
+            }
+
+            @Override
+            public void onActivityAttachmentChanged(Tab tab, boolean attached) {
+                if (attached) {
+                    setExternalNavigationHandler(
+                            tab.getDelegateFactory().createExternalNavigationHandler(tab));
+                }
+            }
+
+            @Override
+            public void onDidFinishNavigation(Tab tab, NavigationHandle navigation) {
+                if (!navigation.hasCommitted() || !navigation.isInMainFrame()) return;
+                maybeUpdateNavigationHistory();
+            }
+
+            @Override
+            public void onDestroyed(Tab tab) {
+                associateWithWebContents(null);
+            }
+        };
+        mTab.addObserver(mDelegateObserver);
+        associateWithWebContents(mTab.getWebContents());
+    }
+
+    @Override
+    public void destroy() {
+        mTab.removeObserver(mDelegateObserver);
+    }
+
+    @VisibleForTesting
+    void setExternalNavigationHandler(ExternalNavigationHandler handler) {
+        mExternalNavHandler = handler;
+    }
+
+    private void associateWithWebContents(WebContents webContents) {
+        if (mWebContents == webContents) return;
+        mWebContents = webContents;
+        if (mWebContents == null) return;
+
+        // Lazily initialize the external navigation handler.
+        if (mExternalNavHandler == null) {
+            setExternalNavigationHandler(
+                    mTab.getDelegateFactory().createExternalNavigationHandler(mTab));
+        }
+        nativeAssociateWithWebContents(this, mWebContents);
     }
 
     public boolean shouldIgnoreNewTab(String url, boolean incognito) {
@@ -83,7 +132,7 @@ public class InterceptNavigationDelegateImpl implements InterceptNavigationDeleg
     }
 
     @VisibleForTesting
-    public OverrideUrlLoadingResult getLastOverrideUrlLoadingResultForTests() {
+    public @OverrideUrlLoadingResult int getLastOverrideUrlLoadingResultForTests() {
         return mLastOverrideUrlLoadingResult;
     }
 
@@ -100,7 +149,7 @@ public class InterceptNavigationDelegateImpl implements InterceptNavigationDeleg
 
         TabRedirectHandler tabRedirectHandler = null;
         if (navigationParams.isMainFrame) {
-            tabRedirectHandler = mTab.getTabRedirectHandler();
+            tabRedirectHandler = TabRedirectHandler.from(mTab);
         } else if (navigationParams.isExternalProtocol) {
             // Only external protocol navigations are intercepted for iframe navigations.  Since
             // we do not see all previous navigations for the iframe, we can not build a complete
@@ -112,7 +161,7 @@ public class InterceptNavigationDelegateImpl implements InterceptNavigationDeleg
             // not covering the case where a gesture is carried over via a redirect.  This is
             // currently not feasible because we do not see all navigations for iframes and it is
             // better to error on the side of caution and require direct user gestures for iframes.
-            tabRedirectHandler = new TabRedirectHandler(associatedActivity);
+            tabRedirectHandler = TabRedirectHandler.create(associatedActivity);
         } else {
             assert false;
             return false;
@@ -126,34 +175,32 @@ public class InterceptNavigationDelegateImpl implements InterceptNavigationDeleg
         ExternalNavigationParams params = buildExternalNavigationParams(navigationParams,
                 tabRedirectHandler,
                 shouldCloseTab).build();
-        OverrideUrlLoadingResult result = mExternalNavHandler.shouldOverrideUrlLoading(params);
+        @OverrideUrlLoadingResult
+        int result = mExternalNavHandler.shouldOverrideUrlLoading(params);
         mLastOverrideUrlLoadingResult = result;
 
-        RecordHistogram.recordEnumeratedHistogram("Android.TabNavigationInterceptResult",
-                result.ordinal(), OverrideUrlLoadingResult.values().length);
+        RecordHistogram.recordEnumeratedHistogram("Android.TabNavigationInterceptResult", result,
+                OverrideUrlLoadingResult.NUM_ENTRIES);
         switch (result) {
-            case OVERRIDE_WITH_EXTERNAL_INTENT:
+            case OverrideUrlLoadingResult.OVERRIDE_WITH_EXTERNAL_INTENT:
                 assert mExternalNavHandler.canExternalAppHandleUrl(url);
-                if (navigationParams.isMainFrame) {
-                    onOverrideUrlLoadingAndLaunchIntent();
-                }
+                if (navigationParams.isMainFrame) onOverrideUrlLoadingAndLaunchIntent();
                 return true;
-            case OVERRIDE_WITH_CLOBBERING_TAB:
+            case OverrideUrlLoadingResult.OVERRIDE_WITH_CLOBBERING_TAB:
                 mShouldClearRedirectHistoryForTabClobbering = true;
                 return true;
-            case OVERRIDE_WITH_ASYNC_ACTION:
+            case OverrideUrlLoadingResult.OVERRIDE_WITH_ASYNC_ACTION:
                 if (!shouldCloseTab && navigationParams.isMainFrame) {
                     onOverrideUrlLoadingAndLaunchIntent();
                 }
                 return true;
-            case NO_OVERRIDE:
+            case OverrideUrlLoadingResult.NO_OVERRIDE:
             default:
                 if (navigationParams.isExternalProtocol) {
                     logBlockedNavigationToDevToolsConsole(url);
                     return true;
                 }
-                return DataUseTabUIManager.shouldOverrideUrlLoading(mTab.getActivity(), mTab, url,
-                        navigationParams.pageTransitionType, navigationParams.referrer);
+                return false;
         }
     }
 
@@ -204,8 +251,9 @@ public class InterceptNavigationDelegateImpl implements InterceptNavigationDeleg
             // redirect history to be consistent.
             NavigationController navigationController =
                     webContents.getNavigationController();
-            int indexBeforeRedirection = mTab.getTabRedirectHandler()
-                    .getLastCommittedEntryIndexBeforeStartingNavigation();
+            int indexBeforeRedirection =
+                    TabRedirectHandler.from(mTab)
+                            .getLastCommittedEntryIndexBeforeStartingNavigation();
             int lastCommittedEntryIndex = getLastCommittedEntryIndex();
             for (int i = lastCommittedEntryIndex - 1; i > indexBeforeRedirection; --i) {
                 boolean ret = navigationController.removeEntryAtIndex(i);
@@ -216,7 +264,8 @@ public class InterceptNavigationDelegateImpl implements InterceptNavigationDeleg
         mShouldClearRedirectHistoryForTabClobbering = false;
     }
 
-    AuthenticatorNavigationInterceptor getAuthenticatorNavigationInterceptor() {
+    @VisibleForTesting
+    public AuthenticatorNavigationInterceptor getAuthenticatorNavigationInterceptor() {
         return mAuthenticatorHelper;
     }
 
@@ -225,7 +274,7 @@ public class InterceptNavigationDelegateImpl implements InterceptNavigationDeleg
         return mTab.getWebContents().getNavigationController().getLastCommittedEntryIndex();
     }
 
-    protected boolean shouldCloseContentsOnOverrideUrlLoadingAndLaunchIntent() {
+    private boolean shouldCloseContentsOnOverrideUrlLoadingAndLaunchIntent() {
         if (mTab.getWebContents() == null) return false;
         if (!mTab.getWebContents().getNavigationController().canGoToOffset(0)) return true;
 
@@ -233,8 +282,9 @@ public class InterceptNavigationDelegateImpl implements InterceptNavigationDeleg
         // navigation is invalid, it means that this navigation is the first one since this tab was
         // created.
         // In such case, we would like to close this tab.
-        if (mTab.getTabRedirectHandler().isOnNavigation()) {
-            return mTab.getTabRedirectHandler().getLastCommittedEntryIndexBeforeStartingNavigation()
+        if (TabRedirectHandler.from(mTab).isOnNavigation()) {
+            return TabRedirectHandler.from(mTab)
+                           .getLastCommittedEntryIndexBeforeStartingNavigation()
                     == TabRedirectHandler.INVALID_ENTRY_INDEX;
         }
         return false;
@@ -244,7 +294,7 @@ public class InterceptNavigationDelegateImpl implements InterceptNavigationDeleg
      * Called when Chrome decides to override URL loading and launch an intent or an asynchronous
      * action.
      */
-    protected void onOverrideUrlLoadingAndLaunchIntent() {
+    private void onOverrideUrlLoadingAndLaunchIntent() {
         if (mTab.getWebContents() == null) return;
 
         // Before leaving Chrome, close the empty child tab.
@@ -260,15 +310,16 @@ public class InterceptNavigationDelegateImpl implements InterceptNavigationDeleg
             }
             // Defer closing a tab (and the associated WebContents) till the navigation
             // request and the throttle finishes the job with it.
-            ThreadUtils.postOnUiThread(new Runnable() {
+            PostTask.postTask(UiThreadTaskTraits.DEFAULT, new Runnable() {
                 @Override
                 public void run() {
-                    mTab.getTabModelSelector().closeTab(mTab);
+                    TabModelSelector.from(mTab).closeTab(mTab);
                 }
             });
-        } else if (mTab.getTabRedirectHandler().isOnNavigation()) {
-            int lastCommittedEntryIndexBeforeNavigation = mTab.getTabRedirectHandler()
-                    .getLastCommittedEntryIndexBeforeStartingNavigation();
+        } else if (TabRedirectHandler.from(mTab).isOnNavigation()) {
+            int lastCommittedEntryIndexBeforeNavigation =
+                    TabRedirectHandler.from(mTab)
+                            .getLastCommittedEntryIndexBeforeStartingNavigation();
             if (getLastCommittedEntryIndex() > lastCommittedEntryIndexBeforeNavigation) {
                 // http://crbug/426679 : we want to go back to the last committed entry index which
                 // was saved before this navigation, and remove the empty entries from the
@@ -287,4 +338,14 @@ public class InterceptNavigationDelegateImpl implements InterceptNavigationDeleg
         mTab.getWebContents().addMessageToDevToolsConsole(
                 ConsoleMessageLevel.WARNING, mTab.getApplicationContext().getString(resId, url));
     }
+
+    @VisibleForTesting
+    static void initDelegateForTesting(Tab tab, InterceptNavigationDelegateImpl delegate) {
+        delegate.associateWithWebContents(tab.getWebContents());
+        tab.getUserDataHost().setUserData(USER_DATA_KEY, delegate);
+    }
+
+    private static native void nativeAssociateWithWebContents(
+            InterceptNavigationDelegateImpl nativeInterceptNavigationDelegateImpl,
+            WebContents webContents);
 }

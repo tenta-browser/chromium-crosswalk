@@ -11,6 +11,10 @@
 // synchronize with the header, containing the fake omnibox and the logo.
 @protocol ContentSuggestionsHeaderSynchronizing
 
+// |YES| if its view is visible.  When set to |NO| various UI updates are
+// ignored.
+@property(nonatomic, assign, getter=isShowing) BOOL showing;
+
 // Handles the scroll of the collection and unfocus the omnibox if needed.
 // Updates the fake omnibox to adapt to the current scrolling.
 - (void)updateFakeOmniboxOnCollectionScroll;
@@ -20,6 +24,9 @@
 
 // Unfocuses the omnibox.
 - (void)unfocusOmnibox;
+
+// Update any dynamic constraints.
+- (void)updateConstraints;
 
 // Returns the Y value to use for the scroll view's contentOffset when scrolling
 // the omnibox to the top of the screen.

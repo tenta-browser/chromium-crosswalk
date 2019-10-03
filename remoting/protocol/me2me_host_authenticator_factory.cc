@@ -15,6 +15,7 @@
 #include "remoting/protocol/rejecting_authenticator.h"
 #include "remoting/protocol/token_validator.h"
 #include "remoting/signaling/jid_util.h"
+#include "remoting/signaling/signaling_address.h"
 #include "third_party/libjingle_xmpp/xmllite/xmlelement.h"
 
 namespace remoting {
@@ -33,7 +34,7 @@ Me2MeHostAuthenticatorFactory::CreateWithPin(
   std::unique_ptr<Me2MeHostAuthenticatorFactory> result(
       new Me2MeHostAuthenticatorFactory());
   result->use_service_account_ = use_service_account;
-  result->host_owner_ = host_owner;
+  result->canonical_host_owner_email_ = GetCanonicalEmail(host_owner);
   result->local_cert_ = local_cert;
   result->key_pair_ = key_pair;
   result->required_client_domain_list_ = std::move(required_client_domain_list);
@@ -41,7 +42,6 @@ Me2MeHostAuthenticatorFactory::CreateWithPin(
   result->pairing_registry_ = pairing_registry;
   return std::move(result);
 }
-
 
 // static
 std::unique_ptr<AuthenticatorFactory>
@@ -55,7 +55,7 @@ Me2MeHostAuthenticatorFactory::CreateWithThirdPartyAuth(
   std::unique_ptr<Me2MeHostAuthenticatorFactory> result(
       new Me2MeHostAuthenticatorFactory());
   result->use_service_account_ = use_service_account;
-  result->host_owner_ = host_owner;
+  result->canonical_host_owner_email_ = GetCanonicalEmail(host_owner);
   result->local_cert_ = local_cert;
   result->key_pair_ = key_pair;
   result->required_client_domain_list_ = std::move(required_client_domain_list);
@@ -69,8 +69,11 @@ Me2MeHostAuthenticatorFactory::~Me2MeHostAuthenticatorFactory() = default;
 
 std::unique_ptr<Authenticator>
 Me2MeHostAuthenticatorFactory::CreateAuthenticator(
-    const std::string& local_jid,
-    const std::string& remote_jid) {
+    const std::string& original_local_jid,
+    const std::string& original_remote_jid) {
+  std::string local_jid = NormalizeJid(original_local_jid);
+  std::string remote_jid = NormalizeJid(original_remote_jid);
+
   std::string remote_jid_prefix;
 
   if (!use_service_account_) {
@@ -84,9 +87,7 @@ Me2MeHostAuthenticatorFactory::CreateAuthenticator(
           new RejectingAuthenticator(Authenticator::INVALID_CREDENTIALS));
     }
   } else {
-    // TODO(rmsousa): This only works for cases where the JID prefix matches
-    // the host owner email. Figure out a way to verify the JID in other cases.
-    remote_jid_prefix = host_owner_;
+    remote_jid_prefix = canonical_host_owner_email_;
   }
 
   // Verify that the client's jid is an ASCII string, and then check that the
@@ -118,7 +119,7 @@ Me2MeHostAuthenticatorFactory::CreateAuthenticator(
     if (!matched) {
       LOG(ERROR) << "Rejecting incoming connection from " << remote_jid
                  << ": Domain not allowed.";
-      return base::MakeUnique<RejectingAuthenticator>(
+      return std::make_unique<RejectingAuthenticator>(
           Authenticator::INVALID_ACCOUNT);
     }
   }

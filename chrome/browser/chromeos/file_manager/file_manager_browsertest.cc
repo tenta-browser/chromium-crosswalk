@@ -1,565 +1,1098 @@
-// Copyright (c) 2013 The Chromium Authors. All rights reserved.
+// Copyright 2018 The Chromium Authors. All rights reserved.
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
 #include <stddef.h>
 
-#include "base/macros.h"
+#include "ash/public/cpp/keyboard/keyboard_switches.h"
+#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
+#include "base/test/metrics/histogram_tester.h"
 #include "base/threading/thread_restrictions.h"
-#include "chrome/browser/chromeos/drive/file_system_util.h"
 #include "chrome/browser/chromeos/file_manager/file_manager_browsertest_base.h"
 #include "chrome/browser/chromeos/profiles/profile_helper.h"
-#include "chrome/browser/signin/signin_manager_factory.h"
-#include "chromeos/chromeos_switches.h"
+#include "chrome/browser/signin/identity_manager_factory.h"
+#include "chromeos/constants/chromeos_switches.h"
 #include "components/session_manager/core/session_manager.h"
-#include "components/signin/core/browser/signin_manager.h"
+#include "components/signin/public/identity_manager/identity_manager.h"
+#include "components/signin/public/identity_manager/identity_test_utils.h"
 #include "components/user_manager/user_manager.h"
+#include "components/user_manager/user_manager_base.h"
 
 namespace file_manager {
 
-// Parameter of FileManagerBrowserTest.
-// The second value is the case name of JavaScript.
-typedef std::tr1::tuple<GuestMode, const char*> TestParameter;
-
-// Test fixture class for normal (not multi-profile related) tests.
-class FileManagerBrowserTest :
-      public FileManagerBrowserTestBase,
-      public ::testing::WithParamInterface<TestParameter> {
-  GuestMode GetGuestModeParam() const override {
-    return std::tr1::get<0>(GetParam());
+// TestCase: FilesAppBrowserTest parameters.
+struct TestCase {
+  explicit TestCase(const char* name) : test_case_name(name) {
+    CHECK(name) << "FATAL: no test case name";
   }
-  const char* GetTestManifestName() const override {
+
+  TestCase& InGuestMode() {
+    guest_mode = IN_GUEST_MODE;
+    return *this;
+  }
+
+  TestCase& InIncognito() {
+    guest_mode = IN_INCOGNITO;
+    return *this;
+  }
+
+  TestCase& TabletMode() {
+    tablet_mode = true;
+    return *this;
+  }
+
+  TestCase& EnableDriveFs() {
+    enable_drivefs.emplace(true);
+    return *this;
+  }
+
+  TestCase& EnableMyFilesVolume() {
+    enable_myfiles_volume.emplace(true);
+    return *this;
+  }
+
+  TestCase& DisableMyFilesVolume() {
+    enable_myfiles_volume.emplace(false);
+    return *this;
+  }
+
+  TestCase& DisableDriveFs() {
+    enable_drivefs.emplace(false);
+    return *this;
+  }
+
+  TestCase& EnableDocumentsProvider() {
+    enable_arc = true;
+    enable_documents_provider.emplace(true);
+    return *this;
+  }
+
+  TestCase& DisableDocumentsProvider() {
+    enable_documents_provider.emplace(false);
+    return *this;
+  }
+
+  TestCase& EnableFormatDialog() {
+    enable_format_dialog.emplace(true);
+    return *this;
+  }
+
+  TestCase& EnableArc() {
+    enable_arc = true;
+    return *this;
+  }
+
+  TestCase& Offline() {
+    offline = true;
+    return *this;
+  }
+
+  TestCase& DisableNativeSmb() {
+    enable_native_smb = false;
+    return *this;
+  }
+
+  TestCase& DontMountVolumes() {
+    mount_no_volumes = true;
+    return *this;
+  }
+
+  // Show the startup browser. Some tests invoke the file picker dialog during
+  // the test. Requesting a file picker from a background page is forbidden by
+  // the apps platform, and it's a bug that these tests do so.
+  // FindRuntimeContext() in select_file_dialog_extension.cc will use the last
+  // active browser in this case, which requires a Browser to be present. See
+  // https://crbug.com/736930.
+  TestCase& WithBrowser() {
+    with_browser = true;
+    return *this;
+  }
+
+  static std::string GetFullTestCaseName(const TestCase& test) {
+    std::string name(test.test_case_name);
+
+    CHECK(!name.empty()) << "FATAL: no test case name.";
+
+    if (test.guest_mode == IN_GUEST_MODE)
+      name.append("_GuestMode");
+    else if (test.guest_mode == IN_INCOGNITO)
+      name.append("_Incognito");
+
+    if (test.tablet_mode)
+      name.append("_TabletMode");
+
+    if (test.enable_drivefs.value_or(false))
+      name.append("_DriveFs");
+
+    if (!test.enable_native_smb)
+      name.append("_DisableNativeSmb");
+
+    if (test.enable_myfiles_volume.value_or(false))
+      name.append("_MyFilesVolume");
+
+    if (test.enable_documents_provider.value_or(false))
+      name.append("_DocumentsProvider");
+
+    return name;
+  }
+
+  const char* test_case_name = nullptr;
+  GuestMode guest_mode = NOT_IN_GUEST_MODE;
+  bool tablet_mode = false;
+  base::Optional<bool> enable_drivefs;
+  base::Optional<bool> enable_myfiles_volume;
+  base::Optional<bool> enable_documents_provider;
+  base::Optional<bool> enable_format_dialog;
+  bool enable_arc = false;
+  bool with_browser = false;
+  bool needs_zip = false;
+  bool offline = false;
+  bool enable_native_smb = true;
+  bool mount_no_volumes = false;
+};
+
+// ZipCase: FilesAppBrowserTest with zip/unzip support.
+struct ZipCase : public TestCase {
+  explicit ZipCase(const char* name) : TestCase(name) { needs_zip = true; }
+};
+
+// FilesApp browser test.
+class FilesAppBrowserTest : public FileManagerBrowserTestBase,
+                            public ::testing::WithParamInterface<TestCase> {
+ public:
+  FilesAppBrowserTest() = default;
+
+ protected:
+  void SetUpCommandLine(base::CommandLine* command_line) override {
+    FileManagerBrowserTestBase::SetUpCommandLine(command_line);
+    // Default mode is clamshell: force Ash into tablet mode if requested,
+    // and enable the Ash virtual keyboard sub-system therein.
+    if (GetParam().tablet_mode) {
+      command_line->AppendSwitchASCII("force-tablet-mode", "touch_view");
+      command_line->AppendSwitch(keyboard::switches::kEnableVirtualKeyboard);
+    }
+  }
+
+  GuestMode GetGuestMode() const override { return GetParam().guest_mode; }
+
+  const char* GetTestCaseName() const override {
+    return GetParam().test_case_name;
+  }
+
+  std::string GetFullTestCaseName() const override {
+    return TestCase::GetFullTestCaseName(GetParam());
+  }
+
+  const char* GetTestExtensionManifestName() const override {
     return "file_manager_test_manifest.json";
   }
-  const char* GetTestCaseNameParam() const override {
-    return std::tr1::get<1>(GetParam());
+
+  bool GetTabletMode() const override { return GetParam().tablet_mode; }
+
+  bool GetEnableMyFilesVolume() const override {
+    return GetParam().enable_myfiles_volume.value_or(
+        FileManagerBrowserTestBase::GetEnableMyFilesVolume());
   }
+
+  bool GetEnableDriveFs() const override {
+    return GetParam().enable_drivefs.value_or(
+        FileManagerBrowserTestBase::GetEnableDriveFs());
+  }
+
+  bool GetEnableDocumentsProvider() const override {
+    return GetParam().enable_documents_provider.value_or(
+        FileManagerBrowserTestBase::GetEnableDocumentsProvider());
+  }
+
+  bool GetEnableFormatDialog() const override {
+    return GetParam().enable_format_dialog.value_or(
+        FileManagerBrowserTestBase::GetEnableFormatDialog());
+  }
+
+  bool GetEnableArc() const override { return GetParam().enable_arc; }
+
+  bool GetRequiresStartupBrowser() const override {
+    return GetParam().with_browser;
+  }
+
+  bool GetNeedsZipSupport() const override { return GetParam().needs_zip; }
+
+  bool GetIsOffline() const override { return GetParam().offline; }
+
+  bool GetEnableNativeSmb() const override {
+    return GetParam().enable_native_smb;
+  }
+
+  bool GetStartWithNoVolumesMounted() const override {
+    return GetParam().mount_no_volumes;
+  }
+
+ private:
+  DISALLOW_COPY_AND_ASSIGN(FilesAppBrowserTest);
 };
 
-IN_PROC_BROWSER_TEST_P(FileManagerBrowserTest, Test) {
+IN_PROC_BROWSER_TEST_P(FilesAppBrowserTest, Test) {
   StartTest();
 }
 
-// Test fixture class for tests that rely on deprecated event dispatch that send
-// tests.
-class FileManagerBrowserTestWithLegacyEventDispatch
-    : public FileManagerBrowserTest {
-  void SetUpCommandLine(base::CommandLine* command_line) override {
-    FileManagerBrowserTest::SetUpCommandLine(command_line);
-    command_line->AppendSwitchASCII("disable-blink-features",
-                                    "TrustedEventsDefaultAction");
-  }
-};
+// INSTANTIATE_TEST_SUITE_P expands to code that stringizes the arguments. Thus
+// macro parameters such as |prefix| and |test_class| won't be expanded by the
+// macro pre-processor. To work around this, indirect INSTANTIATE_TEST_SUITE_P,
+// as WRAPPED_INSTANTIATE_TEST_SUITE_P here, so the pre-processor expands macro
+// defines used to disable tests, MAYBE_prefix for example.
+#define WRAPPED_INSTANTIATE_TEST_SUITE_P(prefix, test_class, generator) \
+  INSTANTIATE_TEST_SUITE_P(prefix, test_class, generator, &PostTestCaseName)
 
-IN_PROC_BROWSER_TEST_P(FileManagerBrowserTestWithLegacyEventDispatch, Test) {
-  StartTest();
+std::string PostTestCaseName(const ::testing::TestParamInfo<TestCase>& test) {
+  return TestCase::GetFullTestCaseName(test.param);
 }
 
-// Unlike TEST/TEST_F, which are macros that expand to further macros,
-// INSTANTIATE_TEST_CASE_P is a macro that expands directly to code that
-// stringizes the arguments. As a result, macros passed as parameters (such as
-// prefix or test_case_name) will not be expanded by the preprocessor. To work
-// around this, indirect the macro for INSTANTIATE_TEST_CASE_P, so that the
-// pre-processor will expand macros such as MAYBE_test_name before
-// instantiating the test.
-#define WRAPPED_INSTANTIATE_TEST_CASE_P(prefix, test_case_name, generator) \
-  INSTANTIATE_TEST_CASE_P(prefix, test_case_name, generator)
-
-// Fails on official build. http://crbug.com/429294
-#if defined(DISABLE_SLOW_FILESAPP_TESTS) || defined(OFFICIAL_BUILD)
-#define MAYBE_FileDisplay DISABLED_FileDisplay
-#else
-#define MAYBE_FileDisplay FileDisplay
-#endif
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    MAYBE_FileDisplay,
-    FileManagerBrowserTest,
-    ::testing::Values(TestParameter(NOT_IN_GUEST_MODE, "fileDisplayDownloads"),
-                      TestParameter(IN_GUEST_MODE, "fileDisplayDownloads"),
-                      TestParameter(NOT_IN_GUEST_MODE, "fileDisplayDrive"),
-                      TestParameter(NOT_IN_GUEST_MODE, "fileDisplayMtp"),
-                      TestParameter(NOT_IN_GUEST_MODE, "searchNormal"),
-                      TestParameter(NOT_IN_GUEST_MODE, "searchCaseInsensitive"),
-                      TestParameter(NOT_IN_GUEST_MODE, "searchNotFound")));
-
-// Fails on official build. http://crbug.com/429294
-// Disabled due to flakiness. https://crbug.com/701451
-#if defined(DISABLE_SLOW_FILESAPP_TESTS) || defined(OFFICIAL_BUILD)
-#define MAYBE_OpenVideoFiles DISABLED_OpenVideoFiles
-#else
-#define MAYBE_OpenVideoFiles OpenVideoFiles
-#endif
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    DISABLED_OpenVideoFiles,
-    FileManagerBrowserTest,
-    ::testing::Values(TestParameter(IN_GUEST_MODE, "videoOpenDownloads"),
-                      TestParameter(NOT_IN_GUEST_MODE, "videoOpenDownloads"),
-                      TestParameter(NOT_IN_GUEST_MODE, "videoOpenDrive")));
-
-// Fails on official build. http://crbug.com/429294
-#if defined(DISABLE_SLOW_FILESAPP_TESTS) || defined(OFFICIAL_BUILD)
-#define MAYBE_OpenAudioFiles DISABLED_OpenAudioFiles
-#else
-#define MAYBE_OpenAudioFiles OpenAudioFiles
-#endif
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    MAYBE_OpenAudioFiles,
-    FileManagerBrowserTest,
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    FileDisplay, /* file_display.js */
+    FilesAppBrowserTest,
     ::testing::Values(
-        TestParameter(IN_GUEST_MODE, "audioOpenDownloads"),
-        TestParameter(NOT_IN_GUEST_MODE, "audioOpenDownloads"),
-        TestParameter(NOT_IN_GUEST_MODE, "audioOpenDrive"),
-        TestParameter(NOT_IN_GUEST_MODE, "audioAutoAdvanceDrive"),
-        TestParameter(NOT_IN_GUEST_MODE, "audioRepeatAllModeSingleFileDrive"),
-        TestParameter(NOT_IN_GUEST_MODE, "audioNoRepeatModeSingleFileDrive"),
-        TestParameter(NOT_IN_GUEST_MODE, "audioRepeatOneModeSingleFileDrive"),
-        // TODO(crbug.com/701922) Revive this flaky test.
-        // TestParameter(NOT_IN_GUEST_MODE,
-        //               "audioRepeatAllModeMultipleFileDrive"),
-        TestParameter(NOT_IN_GUEST_MODE, "audioNoRepeatModeMultipleFileDrive"),
-        TestParameter(NOT_IN_GUEST_MODE,
-                      "audioRepeatOneModeMultipleFileDrive")));
+        TestCase("fileDisplayDownloads"),
+        TestCase("fileDisplayDownloads").InGuestMode(),
+        TestCase("fileDisplayDownloads").TabletMode(),
+        TestCase("fileDisplayDownloads").EnableMyFilesVolume(),
+        TestCase("fileDisplayDownloads").InGuestMode().EnableMyFilesVolume(),
+        TestCase("fileDisplayDownloads").TabletMode().EnableMyFilesVolume(),
+        TestCase("fileDisplayDrive").DisableDriveFs(),
+        TestCase("fileDisplayDrive").TabletMode().DisableDriveFs(),
+        TestCase("fileDisplayDrive").EnableDriveFs(),
+        TestCase("fileDisplayDrive").TabletMode().EnableDriveFs(),
+        TestCase("fileDisplayDrive").EnableDriveFs().EnableMyFilesVolume(),
+        TestCase("fileDisplayDriveOffline").Offline().EnableDriveFs(),
+        TestCase("fileDisplayDriveOnline").EnableDriveFs(),
+        TestCase("fileDisplayDriveOnline").DisableDriveFs(),
+        TestCase("fileDisplayComputers").EnableDriveFs(),
+        TestCase("fileDisplayMtp"),
+        TestCase("fileDisplayUsb"),
+        TestCase("fileDisplayUsbPartition"),
+        TestCase("fileDisplayUsbToast"),
+        TestCase("fileDisplayUsbNoToast"),
+        TestCase("fileDisplayPartitionFileTable"),
+        TestCase("fileSearch"),
+        TestCase("fileSearch").EnableMyFilesVolume(),
+        TestCase("fileDisplayWithoutDownloadsVolume").DontMountVolumes(),
+        TestCase("fileDisplayWithoutDownloadsVolume")
+            .DontMountVolumes()
+            .EnableMyFilesVolume(),
+        TestCase("fileDisplayWithoutVolumes").DontMountVolumes(),
+        TestCase("fileDisplayWithoutVolumes")
+            .DontMountVolumes()
+            .EnableMyFilesVolume(),
+        TestCase("fileDisplayWithoutVolumesThenMountDownloads")
+            .DisableMyFilesVolume()
+            .DontMountVolumes(),
+        TestCase("fileDisplayWithoutVolumesThenMountDrive")
+            .DontMountVolumes()
+            .EnableDriveFs(),
+        TestCase("fileDisplayWithoutVolumesThenMountDrive")
+            .DontMountVolumes()
+            .EnableDriveFs()
+            .EnableMyFilesVolume(),
+        TestCase("fileDisplayWithoutDrive").DontMountVolumes(),
+        TestCase("fileDisplayWithoutDriveThenDisable").DontMountVolumes(),
+        TestCase("fileDisplayWithoutDriveThenDisable")
+            .DontMountVolumes()
+            .EnableMyFilesVolume(),
+        TestCase("fileDisplayMountWithFakeItemSelected"),
+        TestCase("fileDisplayMountWithFakeItemSelected").EnableMyFilesVolume(),
+        TestCase("fileDisplayUnmountDriveWithSharedWithMeSelected"),
+        TestCase("fileDisplayUnmountDriveWithSharedWithMeSelected")
+            .EnableMyFilesVolume(),
+        TestCase("fileDisplayUnmountRemovableRoot"),
+        TestCase("fileDisplayUnmountFirstPartition"),
+        TestCase("fileDisplayUnmountLastPartition"),
+        TestCase("fileSearchCaseInsensitive"),
+        TestCase("fileSearchNotFound"),
+        TestCase("fileDisplayDownloadsWithBlockedFileTaskRunner"),
+        TestCase("fileDisplayCheckSelectWithFakeItemSelected"),
+        TestCase("fileDisplayCheckReadOnlyIconOnFakeDirectory"),
+        TestCase("fileDisplayCheckNoReadOnlyIconOnDownloads")));
 
-// Fails on official build. http://crbug.com/429294
-// Flaky: http://crbug.com/711290
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    DISABLED_OpenImageFiles,
-    FileManagerBrowserTest,
-    ::testing::Values(TestParameter(IN_GUEST_MODE, "imageOpenDownloads"),
-                      TestParameter(NOT_IN_GUEST_MODE, "imageOpenDownloads"),
-                      TestParameter(NOT_IN_GUEST_MODE, "imageOpenDrive")));
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    OpenVideoFiles, /* open_video_files.js */
+    FilesAppBrowserTest,
+    ::testing::Values(TestCase("videoOpenDownloads").InGuestMode(),
+                      TestCase("videoOpenDownloads"),
+                      TestCase("videoOpenDrive").DisableDriveFs(),
+                      TestCase("videoOpenDrive").EnableDriveFs()));
 
-// Flaky: crbug.com/715963
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    CreateNewFolder,
-    FileManagerBrowserTest,
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    OpenAudioFiles, /* open_audio_files.js */
+    FilesAppBrowserTest,
+    ::testing::Values(TestCase("audioOpenCloseDownloads"),
+                      TestCase("audioOpenCloseDownloads").InGuestMode(),
+                      TestCase("audioOpenCloseDrive"),
+                      TestCase("audioOpenDownloads").InGuestMode(),
+                      TestCase("audioOpenDownloads"),
+                      TestCase("audioOpenDrive").DisableDriveFs(),
+                      TestCase("audioOpenDrive").EnableDriveFs(),
+                      TestCase("audioAutoAdvanceDrive"),
+                      TestCase("audioRepeatAllModeSingleFileDrive"),
+                      TestCase("audioNoRepeatModeSingleFileDrive"),
+                      TestCase("audioRepeatOneModeSingleFileDrive"),
+                      TestCase("audioRepeatAllModeMultipleFileDrive"),
+                      TestCase("audioNoRepeatModeMultipleFileDrive"),
+                      TestCase("audioRepeatOneModeMultipleFileDrive")));
+
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    OpenImageFiles, /* open_image_files.js */
+    FilesAppBrowserTest,
+    ::testing::Values(TestCase("imageOpenDownloads").InGuestMode(),
+                      TestCase("imageOpenDownloads"),
+                      TestCase("imageOpenDrive").DisableDriveFs(),
+                      TestCase("imageOpenDrive").EnableDriveFs(),
+                      TestCase("imageOpenGalleryOpenDownloads"),
+                      TestCase("imageOpenGalleryOpenDrive").DisableDriveFs(),
+                      TestCase("imageOpenGalleryOpenDrive").EnableDriveFs()));
+
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    OpenSniffedFiles, /* open_sniffed_files.js */
+    FilesAppBrowserTest,
+    ::testing::Values(TestCase("pdfOpenDownloads"),
+                      TestCase("pdfOpenDrive").EnableDriveFs(),
+                      TestCase("textOpenDownloads"),
+                      TestCase("textOpenDrive").EnableDriveFs()));
+
+// NaCl fails to compile zip plugin.pexe too often on ASAN, crbug.com/867738
+// The tests are flaky on the debug bot and always time out first and then pass
+// on retry. Disabled for debug as per crbug.com/936429.
+#if defined(ADDRESS_SANITIZER) || !defined(NDEBUG)
+#define MAYBE_ZipFiles DISABLED_ZipFiles
+#else
+#define MAYBE_ZipFiles ZipFiles
+#endif
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    MAYBE_ZipFiles, /* zip_files.js */
+    FilesAppBrowserTest,
+    ::testing::Values(ZipCase("zipFileOpenDownloads").InGuestMode(),
+                      ZipCase("zipFileOpenDownloads"),
+                      ZipCase("zipFileOpenDownloadsShiftJIS"),
+                      ZipCase("zipFileOpenDownloadsMacOs"),
+                      ZipCase("zipFileOpenDownloadsWithAbsolutePaths"),
+                      ZipCase("zipFileOpenDownloadsEncryptedCancelPassphrase"),
+                      ZipCase("zipFileOpenDrive").DisableDriveFs(),
+                      ZipCase("zipFileOpenDrive").EnableDriveFs(),
+                      ZipCase("zipFileOpenUsb"),
+                      ZipCase("zipCreateFileDownloads").InGuestMode(),
+                      ZipCase("zipCreateFileDownloads"),
+                      ZipCase("zipCreateFileDrive").DisableDriveFs(),
+                      ZipCase("zipCreateFileDrive").EnableDriveFs(),
+                      ZipCase("zipCreateFileUsb")));
+
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    CreateNewFolder, /* create_new_folder.js */
+    FilesAppBrowserTest,
     ::testing::Values(
-        TestParameter(NOT_IN_GUEST_MODE, "createNewFolderAfterSelectFile"),
-        TestParameter(IN_GUEST_MODE, "createNewFolderDownloads"),
-        TestParameter(NOT_IN_GUEST_MODE, "createNewFolderDownloads"),
-        TestParameter(NOT_IN_GUEST_MODE, "createNewFolderDrive")));
+        TestCase("selectCreateFolderDownloads")
+            .InGuestMode()
+            .EnableMyFilesVolume(),
+        TestCase("selectCreateFolderDownloads"),
+        TestCase("selectCreateFolderDownloads").EnableMyFilesVolume(),
+        TestCase("createFolderDownloads").InGuestMode(),
+        TestCase("createFolderDownloads"),
+        TestCase("createFolderDownloads").EnableMyFilesVolume(),
+        TestCase("createFolderNestedDownloads"),
+        TestCase("createFolderNestedDownloads").EnableMyFilesVolume(),
+        TestCase("createFolderDrive").DisableDriveFs(),
+        TestCase("createFolderDrive").EnableDriveFs().EnableMyFilesVolume(),
+        TestCase("createFolderDrive").EnableDriveFs()));
 
-// Fails on official build. http://crbug.com/429294
-#if defined(DISABLE_SLOW_FILESAPP_TESTS) || defined(OFFICIAL_BUILD)
-#define MAYBE_KeyboardOperations DISABLED_KeyboardOperations
-#else
-#define MAYBE_KeyboardOperations KeyboardOperations
-#endif
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    MAYBE_KeyboardOperations,
-    FileManagerBrowserTest,
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    KeyboardOperations, /* keyboard_operations.js */
+    FilesAppBrowserTest,
+    ::testing::Values(TestCase("keyboardDeleteDownloads").InGuestMode(),
+                      TestCase("keyboardDeleteDownloads"),
+                      TestCase("keyboardDeleteDrive").DisableDriveFs(),
+                      TestCase("keyboardDeleteDrive").EnableDriveFs(),
+                      TestCase("keyboardDeleteFolderDownloads").InGuestMode(),
+                      TestCase("keyboardDeleteFolderDownloads"),
+                      TestCase("keyboardDeleteFolderDrive").DisableDriveFs(),
+                      TestCase("keyboardDeleteFolderDrive").EnableDriveFs(),
+                      TestCase("keyboardCopyDownloads").InGuestMode(),
+                      TestCase("keyboardCopyDownloads"),
+                      TestCase("keyboardCopyDrive").DisableDriveFs(),
+                      TestCase("keyboardCopyDrive").EnableDriveFs(),
+                      TestCase("keyboardSelectDriveDirectoryTree"),
+                      TestCase("keyboardDisableCopyWhenDialogDisplayed"),
+                      TestCase("keyboardOpenNewWindow"),
+                      TestCase("keyboardOpenNewWindow").InGuestMode(),
+                      TestCase("renameFileDownloads").InGuestMode(),
+                      TestCase("renameFileDownloads"),
+                      TestCase("renameFileDrive").DisableDriveFs(),
+                      TestCase("renameFileDrive").EnableDriveFs(),
+                      TestCase("renameNewFolderDownloads").InGuestMode(),
+                      TestCase("renameNewFolderDownloads"),
+                      TestCase("renameNewFolderDrive").DisableDriveFs(),
+                      TestCase("renameNewFolderDrive").EnableDriveFs()));
+
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    ContextMenu, /* context_menu.js for file list */
+    FilesAppBrowserTest,
     ::testing::Values(
-        TestParameter(IN_GUEST_MODE, "keyboardDeleteDownloads"),
-        TestParameter(NOT_IN_GUEST_MODE, "keyboardDeleteDownloads"),
-        TestParameter(NOT_IN_GUEST_MODE, "keyboardDeleteDrive"),
-        TestParameter(IN_GUEST_MODE, "keyboardCopyDownloads"),
-        TestParameter(NOT_IN_GUEST_MODE, "keyboardCopyDownloads"),
-        TestParameter(NOT_IN_GUEST_MODE, "keyboardCopyDrive"),
-        TestParameter(IN_GUEST_MODE, "renameFileDownloads"),
-        TestParameter(NOT_IN_GUEST_MODE, "renameFileDownloads"),
-        TestParameter(NOT_IN_GUEST_MODE, "renameFileDrive"),
-        TestParameter(IN_GUEST_MODE, "renameNewDirectoryDownloads"),
-        TestParameter(NOT_IN_GUEST_MODE, "renameNewDirectoryDownloads"),
-        TestParameter(NOT_IN_GUEST_MODE, "renameNewDirectoryDrive")));
+        TestCase("checkDeleteEnabledForReadWriteFile").DisableDriveFs(),
+        TestCase("checkDeleteDisabledForReadOnlyDocument").DisableDriveFs(),
+        TestCase("checkDeleteDisabledForReadOnlyFile").DisableDriveFs(),
+        TestCase("checkDeleteDisabledForReadOnlyFolder").DisableDriveFs(),
+        TestCase("checkRenameEnabledForReadWriteFile").DisableDriveFs(),
+        TestCase("checkRenameDisabledForReadOnlyDocument").DisableDriveFs(),
+        TestCase("checkRenameDisabledForReadOnlyFile").DisableDriveFs(),
+        TestCase("checkRenameDisabledForReadOnlyFolder").DisableDriveFs(),
+        TestCase("checkShareEnabledForReadWriteFile").DisableDriveFs(),
+        TestCase("checkShareEnabledForReadOnlyDocument").DisableDriveFs(),
+        TestCase("checkShareDisabledForStrictReadOnlyDocument")
+            .DisableDriveFs(),
+        TestCase("checkShareEnabledForReadOnlyFile").DisableDriveFs(),
+        TestCase("checkShareEnabledForReadOnlyFolder").DisableDriveFs(),
+        TestCase("checkCopyEnabledForReadWriteFile").DisableDriveFs(),
+        TestCase("checkCopyEnabledForReadOnlyDocument").DisableDriveFs(),
+        TestCase("checkCopyDisabledForStrictReadOnlyDocument").DisableDriveFs(),
+        TestCase("checkCopyEnabledForReadOnlyFile").DisableDriveFs(),
+        TestCase("checkCopyEnabledForReadOnlyFolder").DisableDriveFs(),
+        TestCase("checkCutEnabledForReadWriteFile").DisableDriveFs(),
+        TestCase("checkCutDisabledForReadOnlyDocument").DisableDriveFs(),
+        TestCase("checkCutDisabledForReadOnlyFile").DisableDriveFs(),
+        TestCase("checkCutDisabledForReadOnlyFolder").DisableDriveFs(),
+        TestCase("checkPasteIntoFolderEnabledForReadWriteFolder")
+            .DisableDriveFs(),
+        TestCase("checkPasteIntoFolderDisabledForReadOnlyFolder")
+            .DisableDriveFs(),
+        TestCase("checkContextMenusForInputElements"),
+        TestCase("checkNewFolderEnabledInsideReadWriteFolder").DisableDriveFs(),
+        TestCase("checkNewFolderDisabledInsideReadOnlyFolder").DisableDriveFs(),
+        TestCase("checkPasteEnabledInsideReadWriteFolder").DisableDriveFs(),
+        TestCase("checkPasteDisabledInsideReadOnlyFolder").DisableDriveFs()));
 
-#if defined(DISABLE_SLOW_FILESAPP_TESTS)
-#define MAYBE_Delete DISABLED_Delete
-#else
-#define MAYBE_Delete Delete
-#endif
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    MAYBE_Delete,
-    FileManagerBrowserTest,
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    ContextMenu2, /* context_menu.js for file list */
+    FilesAppBrowserTest,
     ::testing::Values(
-        TestParameter(NOT_IN_GUEST_MODE,
-                      "deleteMenuItemIsDisabledWhenNoItemIsSelected"),
-        TestParameter(NOT_IN_GUEST_MODE, "deleteOneItemFromToolbar")));
+        TestCase("checkDeleteEnabledForReadWriteFile").EnableDriveFs(),
+        TestCase("checkDeleteDisabledForReadOnlyDocument").EnableDriveFs(),
+        TestCase("checkDeleteDisabledForReadOnlyFile").EnableDriveFs(),
+        TestCase("checkDeleteDisabledForReadOnlyFolder").EnableDriveFs(),
+        TestCase("checkRenameEnabledForReadWriteFile").EnableDriveFs(),
+        TestCase("checkRenameDisabledForReadOnlyDocument").EnableDriveFs(),
+        TestCase("checkRenameDisabledForReadOnlyFile").EnableDriveFs(),
+        TestCase("checkRenameDisabledForReadOnlyFolder").EnableDriveFs(),
+        TestCase("checkShareEnabledForReadWriteFile").EnableDriveFs(),
+        TestCase("checkShareEnabledForReadOnlyDocument").EnableDriveFs(),
+        TestCase("checkShareDisabledForStrictReadOnlyDocument").EnableDriveFs(),
+        TestCase("checkShareEnabledForReadOnlyFile").EnableDriveFs(),
+        TestCase("checkShareEnabledForReadOnlyFolder").EnableDriveFs(),
+        TestCase("checkCopyEnabledForReadWriteFile").EnableDriveFs(),
+        TestCase("checkCopyEnabledForReadOnlyDocument").EnableDriveFs(),
+        TestCase("checkCopyDisabledForStrictReadOnlyDocument").EnableDriveFs(),
+        TestCase("checkCopyEnabledForReadOnlyFile").EnableDriveFs(),
+        TestCase("checkCopyEnabledForReadOnlyFolder").EnableDriveFs(),
+        TestCase("checkCutEnabledForReadWriteFile").EnableDriveFs(),
+        TestCase("checkCutDisabledForReadOnlyDocument").EnableDriveFs(),
+        TestCase("checkCutDisabledForReadOnlyFile").EnableDriveFs(),
+        TestCase("checkCutDisabledForReadOnlyFolder").EnableDriveFs(),
+        TestCase("checkPasteIntoFolderEnabledForReadWriteFolder")
+            .EnableDriveFs(),
+        TestCase("checkPasteIntoFolderDisabledForReadOnlyFolder")
+            .EnableDriveFs(),
+        TestCase("checkNewFolderEnabledInsideReadWriteFolder").EnableDriveFs(),
+        TestCase("checkNewFolderDisabledInsideReadOnlyFolder").EnableDriveFs(),
+        TestCase("checkPasteEnabledInsideReadWriteFolder").EnableDriveFs(),
+        TestCase("checkPasteDisabledInsideReadOnlyFolder").EnableDriveFs(),
+        TestCase("checkDownloadsContextMenu").EnableMyFilesVolume(),
+        TestCase("checkPlayFilesContextMenu"),
+        TestCase("checkPlayFilesContextMenu").EnableMyFilesVolume(),
+        TestCase("checkLinuxFilesContextMenu"),
+        TestCase("checkLinuxFilesContextMenu").EnableMyFilesVolume(),
+        TestCase("checkDeleteDisabledInDocProvider").EnableDocumentsProvider(),
+        TestCase("checkDeleteEnabledInDocProvider").EnableDocumentsProvider(),
+        TestCase("checkRenameDisabledInDocProvider").EnableDocumentsProvider(),
+        TestCase("checkRenameEnabledInDocProvider").EnableDocumentsProvider(),
+        TestCase("checkContextMenuFocus").EnableMyFilesVolume()));
 
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    QuickView,
-    FileManagerBrowserTest,
-    ::testing::Values(TestParameter(NOT_IN_GUEST_MODE, "openQuickView"),
-                      TestParameter(NOT_IN_GUEST_MODE, "closeQuickView"),
-                      TestParameter(NOT_IN_GUEST_MODE,
-                                    "openQuickViewForFoldersAfterClose")));
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    Toolbar, /* toolbar.js */
+    FilesAppBrowserTest,
+    ::testing::Values(TestCase("toolbarDeleteWithMenuItemNoEntrySelected"),
+                      TestCase("toolbarDeleteEntry").InGuestMode(),
+                      TestCase("toolbarDeleteEntry"),
+                      TestCase("toolbarRefreshButtonWithSelection").EnableArc(),
+                      TestCase("toolbarRefreshButtonHiddenInRecents")));
 
-#if defined(DISABLE_SLOW_FILESAPP_TESTS)
-#define MAYBE_DirectoryTreeContextMenu DISABLED_DirectoryTreeContextMenu
-#else
-#define MAYBE_DirectoryTreeContextMenu DirectoryTreeContextMenu
-#endif
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    MAYBE_DirectoryTreeContextMenu,
-    FileManagerBrowserTest,
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    QuickView, /* quick_view.js */
+    FilesAppBrowserTest,
     ::testing::Values(
-        TestParameter(NOT_IN_GUEST_MODE,
-                      "copyFromDirectoryTreeWithContextMenu"),
-        TestParameter(IN_GUEST_MODE, "copyFromDirectoryTreeWithContextMenu"),
-        TestParameter(NOT_IN_GUEST_MODE,
-                      "copyFromDirectoryTreeWithKeyboardShortcut"),
-        TestParameter(IN_GUEST_MODE,
-                      "copyFromDirectoryTreeWithKeyboardShortcut"),
-        TestParameter(NOT_IN_GUEST_MODE,
-                      "copyFromDirectoryTreeWithoutChaningCurrentDirectory"),
-        TestParameter(NOT_IN_GUEST_MODE, "cutFromDirectoryTreeWithContextMenu"),
-        TestParameter(IN_GUEST_MODE, "cutFromDirectoryTreeWithContextMenu"),
-        TestParameter(NOT_IN_GUEST_MODE,
-                      "cutFromDirectoryTreeWithKeyboardShortcut"),
-        TestParameter(IN_GUEST_MODE,
-                      "cutFromDirectoryTreeWithKeyboardShortcut"),
-        TestParameter(NOT_IN_GUEST_MODE,
-                      "cutFromDirectoryTreeWithoutChaningCurrentDirectory"),
-        TestParameter(NOT_IN_GUEST_MODE,
-                      "pasteIntoFolderFromDirectoryTreeWithContextMenu"),
-        TestParameter(IN_GUEST_MODE,
-                      "pasteIntoFolderFromDirectoryTreeWithContextMenu"),
-        TestParameter(
-            NOT_IN_GUEST_MODE,
-            "pasteIntoFolderFromDirectoryTreeWithoutChaningCurrentDirectory"),
-        TestParameter(NOT_IN_GUEST_MODE,
-                      "renameDirectoryFromDirectoryTreeWithContextMenu"),
-        TestParameter(IN_GUEST_MODE,
-                      "renameDirectoryFromDirectoryTreeWithContextMenu"),
-        TestParameter(NOT_IN_GUEST_MODE,
-                      "renameDirectoryFromDirectoryTreeWithKeyboardShortcut"),
-        TestParameter(IN_GUEST_MODE,
-                      "renameDirectoryFromDirectoryTreeWithKeyboardShortcut"),
-        TestParameter(
-            NOT_IN_GUEST_MODE,
-            "renameDirectoryFromDirectoryTreeWithoutChangingCurrentDirectory"),
-        TestParameter(NOT_IN_GUEST_MODE,
-                      "renameDirectoryToEmptyStringFromDirectoryTree"),
-        TestParameter(IN_GUEST_MODE,
-                      "renameDirectoryToEmptyStringFromDirectoryTree"),
-        TestParameter(NOT_IN_GUEST_MODE,
-                      "renameDirectoryToExistingOneFromDirectoryTree"),
-        TestParameter(IN_GUEST_MODE,
-                      "renameDirectoryToExistingOneFromDirectoryTree"),
-        TestParameter(NOT_IN_GUEST_MODE,
-                      "createDirectoryFromDirectoryTreeWithContextMenu"),
-        TestParameter(NOT_IN_GUEST_MODE,
-                      "createDirectoryFromDirectoryTreeWithKeyboardShortcut"),
-        TestParameter(NOT_IN_GUEST_MODE,
-                      "createDirectoryFromDirectoryTreeWithoutChangingCurrentDi"
-                      "rectory")));
-
-// Fails on official build. http://crbug.com/429294
-#if defined(DISABLE_SLOW_FILESAPP_TESTS) || defined(OFFICIAL_BUILD)
-#define MAYBE_DriveSpecific DISABLED_DriveSpecific
-#else
-#define MAYBE_DriveSpecific DriveSpecific
+        TestCase("openQuickView"),
+        TestCase("openQuickViewAndEscape"),
+        TestCase("openQuickView").InGuestMode(),
+        TestCase("openQuickView").TabletMode(),
+        TestCase("openQuickViewAudio"),
+        TestCase("openQuickViewImage"),
+        TestCase("openQuickViewImageExif"),
+        TestCase("openQuickViewImageRaw"),
+        TestCase("openQuickViewVideo"),
+// QuickView PDF test fails on MSAN, crbug.com/768070
+#if !defined(MEMORY_SANITIZER)
+        TestCase("openQuickViewPdf"),
 #endif
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    MAYBE_DriveSpecific,
-    FileManagerBrowserTest,
+        TestCase("openQuickViewKeyboardUpDownChangesView"),
+        TestCase("openQuickViewKeyboardLeftRightChangesView"),
+        TestCase("openQuickViewSniffedText"),
+        TestCase("openQuickViewScrollText"),
+        TestCase("openQuickViewScrollHtml"),
+        TestCase("openQuickViewBackgroundColorText"),
+        TestCase("openQuickViewBackgroundColorHtml"),
+        TestCase("openQuickViewDrive").DisableDriveFs(),
+        TestCase("openQuickViewDrive").EnableDriveFs(),
+        TestCase("openQuickViewAndroid"),
+        TestCase("openQuickViewDocumentsProvider").EnableDocumentsProvider(),
+        TestCase("openQuickViewCrostini"),
+        TestCase("openQuickViewUsb"),
+        TestCase("openQuickViewRemovablePartitions"),
+        TestCase("openQuickViewMtp"),
+        TestCase("pressEnterOnInfoBoxToOpenClose"),
+        TestCase("closeQuickView"),
+        TestCase("cantOpenQuickViewWithMultipleFiles"),
+        TestCase("openQuickViewFromDirectoryTree")));
+
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    DirectoryTreeContextMenu, /* directory_tree_context_menu.js */
+    FilesAppBrowserTest,
     ::testing::Values(
-        TestParameter(NOT_IN_GUEST_MODE, "openSidebarOffline"),
-        TestParameter(NOT_IN_GUEST_MODE, "openSidebarSharedWithMe"),
-        TestParameter(NOT_IN_GUEST_MODE, "autocomplete"),
-        TestParameter(NOT_IN_GUEST_MODE, "pinFileOnMobileNetwork"),
-        TestParameter(NOT_IN_GUEST_MODE, "clickFirstSearchResult"),
-        TestParameter(NOT_IN_GUEST_MODE, "pressEnterToSearch")));
-
-// Fails on official build. http://crbug.com/429294
-#if defined(DISABLE_SLOW_FILESAPP_TESTS) || defined(OFFICIAL_BUILD)
-#define MAYBE_Transfer DISABLED_Transfer
-#else
-#define MAYBE_Transfer Transfer
+        TestCase("dirCopyWithContextMenu"),
+        TestCase("dirCopyWithContextMenu").InGuestMode(),
+        TestCase("dirCopyWithContextMenu").EnableMyFilesVolume(),
+        TestCase("dirCopyWithKeyboard"),
+        TestCase("dirCopyWithKeyboard").InGuestMode(),
+        TestCase("dirCopyWithKeyboard").EnableMyFilesVolume(),
+        TestCase("dirCopyWithoutChangingCurrent"),
+        TestCase("dirCopyWithoutChangingCurrent").EnableMyFilesVolume(),
+        TestCase("dirCutWithContextMenu"),
+        TestCase("dirCutWithContextMenu").InGuestMode(),
+        TestCase("dirCutWithContextMenu").EnableMyFilesVolume(),
+        TestCase("dirCutWithKeyboard"),
+        TestCase("dirCutWithKeyboard").InGuestMode(),
+        TestCase("dirCutWithKeyboard").EnableMyFilesVolume(),
+        TestCase("dirPasteWithContextMenu"),
+        TestCase("dirPasteWithContextMenu").InGuestMode(),
+        TestCase("dirPasteWithContextMenu").EnableMyFilesVolume(),
+        TestCase("dirPasteWithoutChangingCurrent"),
+        TestCase("dirPasteWithoutChangingCurrent").EnableMyFilesVolume(),
+        TestCase("dirRenameWithContextMenu"),
+        TestCase("dirRenameWithContextMenu").InGuestMode(),
+        TestCase("dirRenameWithContextMenu").EnableMyFilesVolume(),
+        TestCase("dirRenameUpdateChildrenBreadcrumbs"),
+        TestCase("dirRenameUpdateChildrenBreadcrumbs").EnableMyFilesVolume(),
+        TestCase("dirRenameWithKeyboard"),
+        TestCase("dirRenameWithKeyboard").InGuestMode(),
+        TestCase("dirRenameWithKeyboard").EnableMyFilesVolume(),
+        TestCase("dirRenameWithoutChangingCurrent"),
+        TestCase("dirRenameWithoutChangingCurrent").EnableMyFilesVolume(),
+        TestCase("dirRenameToEmptyString"),
+        TestCase("dirRenameToEmptyString").InGuestMode(),
+        TestCase("dirRenameToEmptyString").EnableMyFilesVolume(),
+        TestCase("dirRenameToExisting"),
+        TestCase("dirRenameToExisting").InGuestMode(),
+        TestCase("dirRenameToExisting").EnableDriveFs(),
+        TestCase("dirRenameRemovableWithKeyboard"),
+        TestCase("dirRenameRemovableWithKeyboard").InGuestMode(),
+        TestCase("dirRenameRemovableWithKeyboard").EnableDriveFs(),
+        TestCase("dirRenameRemovableWithContentMenu"),
+        TestCase("dirRenameRemovableWithContentMenu").InGuestMode(),
+        TestCase("dirRenameRemovableWithContentMenu").EnableDriveFs(),
+        TestCase("dirCreateWithContextMenu"),
+        TestCase("dirCreateWithContextMenu").EnableMyFilesVolume(),
+        TestCase("dirCreateWithKeyboard"),
+        TestCase("dirCreateWithKeyboard").EnableMyFilesVolume(),
+        TestCase("dirCreateWithoutChangingCurrent").EnableMyFilesVolume(),
+        TestCase("dirCreateWithoutChangingCurrent"),
+#if !(defined(ADDRESS_SANITIZER) || defined(DEBUG))
+        // Zip tests times out too often on ASAN and DEBUG.
+        ZipCase("dirContextMenuZip"),
+        ZipCase("dirEjectContextMenuZip"),
 #endif
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    MAYBE_Transfer,
-    FileManagerBrowserTest,
+        TestCase("dirContextMenuRecent"),
+        TestCase("dirContextMenuMyFiles").EnableMyFilesVolume(),
+        TestCase("dirContextMenuMyFilesWithPaste").EnableMyFilesVolume(),
+        TestCase("dirContextMenuCrostini"),
+        TestCase("dirContextMenuPlayFiles"),
+        TestCase("dirContextMenuUsbs"),
+        TestCase("dirContextMenuFsp"),
+        TestCase("dirContextMenuDocumentsProvider").EnableDocumentsProvider(),
+        TestCase("dirContextMenuUsbDcim"),
+        TestCase("dirContextMenuMtp"),
+        TestCase("dirContextMenuMediaView").EnableArc(),
+        TestCase("dirContextMenuMyDrive"),
+        TestCase("dirContextMenuSharedDrive"),
+        TestCase("dirContextMenuSharedWithMe"),
+        TestCase("dirContextMenuOffline"),
+        TestCase("dirContextMenuComputers"),
+        TestCase("dirContextMenuShortcut"),
+        TestCase("dirContextMenuFocus")));
+
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    DriveSpecific, /* drive_specific.js */
+    FilesAppBrowserTest,
     ::testing::Values(
-        TestParameter(NOT_IN_GUEST_MODE, "transferFromDriveToDownloads"),
-        TestParameter(NOT_IN_GUEST_MODE, "transferFromDownloadsToDrive"),
-        TestParameter(NOT_IN_GUEST_MODE, "transferFromSharedToDownloads"),
-        TestParameter(NOT_IN_GUEST_MODE, "transferFromSharedToDrive"),
-        TestParameter(NOT_IN_GUEST_MODE, "transferFromOfflineToDownloads"),
-        TestParameter(NOT_IN_GUEST_MODE, "transferFromOfflineToDrive")));
+        TestCase("driveOpenSidebarOffline").DisableDriveFs(),
+        TestCase("driveOpenSidebarOffline").EnableDriveFs(),
+        TestCase("driveOpenSidebarSharedWithMe").DisableDriveFs(),
+        TestCase("driveOpenSidebarSharedWithMe").EnableDriveFs(),
+        TestCase("driveAutoCompleteQuery").DisableDriveFs(),
+        TestCase("driveAutoCompleteQuery").EnableDriveFs(),
+        TestCase("drivePinFileMobileNetwork").DisableDriveFs(),
+        TestCase("drivePinFileMobileNetwork").EnableDriveFs(),
+        TestCase("driveClickFirstSearchResult").DisableDriveFs(),
+        TestCase("driveClickFirstSearchResult").EnableDriveFs(),
+        TestCase("drivePressEnterToSearch").DisableDriveFs(),
+        TestCase("drivePressEnterToSearch").EnableDriveFs(),
+        TestCase("drivePressClearSearch").EnableDriveFs(),
+        TestCase("drivePressCtrlAFromSearch").DisableDriveFs(),
+        TestCase("drivePressCtrlAFromSearch").EnableDriveFs(),
+        TestCase("driveBackupPhotos").DisableDriveFs(),
+        TestCase("driveBackupPhotos").EnableDriveFs(),
+        TestCase("driveAvailableOfflineGearMenu").DisableDriveFs(),
+        TestCase("driveAvailableOfflineGearMenu").EnableDriveFs(),
+        TestCase("driveAvailableOfflineDirectoryGearMenu"),
+        TestCase("driveLinkToDirectory").EnableDriveFs(),
+        TestCase("driveLinkOpenFileThroughLinkedDirectory").EnableDriveFs(),
+        TestCase("driveLinkOpenFileThroughTransitiveLink").EnableDriveFs()));
 
-// Fails on official build. http://crbug.com/429294
-// Disabled due to flakiness. https://crbug.com/701924
-#if defined(DISABLE_SLOW_FILESAPP_TESTS) || defined(OFFICIAL_BUILD)
-#define MAYBE_RestorePrefs DISABLED_RestorePrefs
-#else
-#define MAYBE_RestorePrefs RestorePrefs
-#endif
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    DISABLED_RestorePrefs,
-    FileManagerBrowserTest,
-    ::testing::Values(TestParameter(IN_GUEST_MODE, "restoreSortColumn"),
-                      TestParameter(NOT_IN_GUEST_MODE, "restoreSortColumn"),
-                      TestParameter(IN_GUEST_MODE, "restoreCurrentView"),
-                      TestParameter(NOT_IN_GUEST_MODE, "restoreCurrentView")));
-
-#if defined(DISABLE_SLOW_FILESAPP_TESTS)
-#define MAYBE_ShareDialog DISABLED_ShareDialog
-#else
-#define MAYBE_ShareDialog ShareDialog
-#endif
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    DISABLED_ShareDialog,
-    FileManagerBrowserTest,
-    ::testing::Values(TestParameter(NOT_IN_GUEST_MODE, "shareFile"),
-                      TestParameter(NOT_IN_GUEST_MODE, "shareDirectory")));
-
-#if defined(DISABLE_SLOW_FILESAPP_TESTS)
-#define MAYBE_RestoreGeometry DISABLED_RestoreGeometry
-#else
-#define MAYBE_RestoreGeometry RestoreGeometry
-#endif
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    MAYBE_RestoreGeometry,
-    FileManagerBrowserTest,
-    ::testing::Values(TestParameter(NOT_IN_GUEST_MODE, "restoreGeometry"),
-                      TestParameter(IN_GUEST_MODE, "restoreGeometry"),
-                      TestParameter(NOT_IN_GUEST_MODE,
-                                    "restoreGeometryMaximizedState")));
-
-#if defined(DISABLE_SLOW_FILESAPP_TESTS)
-#define MAYBE_Traverse DISABLED_Traverse
-#else
-#define MAYBE_Traverse Traverse
-#endif
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    MAYBE_Traverse,
-    FileManagerBrowserTest,
-    ::testing::Values(TestParameter(IN_GUEST_MODE, "traverseDownloads"),
-                      TestParameter(NOT_IN_GUEST_MODE, "traverseDownloads"),
-                      TestParameter(NOT_IN_GUEST_MODE, "traverseDrive")));
-
-#if defined(DISABLE_SLOW_FILESAPP_TESTS)
-#define MAYBE_SuggestAppDialog DISABLED_SuggestAppDialog
-#else
-#define MAYBE_SuggestAppDialog SuggestAppDialog
-#endif
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    DISABLED_SuggestAppDialog,
-    FileManagerBrowserTest,
-    ::testing::Values(TestParameter(NOT_IN_GUEST_MODE, "suggestAppDialog")));
-
-#if defined(DISABLE_SLOW_FILESAPP_TESTS)
-#define MAYBE_ExecuteDefaultTaskOnDownloads \
-  DISABLED_ExecuteDefaultTaskOnDownloads
-#else
-#define MAYBE_ExecuteDefaultTaskOnDownloads ExecuteDefaultTaskOnDownloads
-#endif
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    MAYBE_ExecuteDefaultTaskOnDownloads,
-    FileManagerBrowserTest,
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    Transfer, /* transfer.js */
+    FilesAppBrowserTest,
     ::testing::Values(
-        TestParameter(NOT_IN_GUEST_MODE, "executeDefaultTaskOnDownloads"),
-        TestParameter(IN_GUEST_MODE, "executeDefaultTaskOnDownloads")));
+        TestCase("transferFromDriveToDownloads").DisableDriveFs(),
+        TestCase("transferFromDriveToDownloads").EnableDriveFs(),
+        TestCase("transferFromDownloadsToMyFiles").EnableMyFilesVolume(),
+        TestCase("transferFromDownloadsToMyFilesMove").EnableMyFilesVolume(),
+        TestCase("transferFromDownloadsToDrive").DisableDriveFs(),
+        TestCase("transferFromDownloadsToDrive").EnableDriveFs(),
+        TestCase("transferFromSharedToDownloads").DisableDriveFs(),
+        TestCase("transferFromSharedToDownloads").EnableDriveFs(),
+        TestCase("transferFromSharedToDrive").DisableDriveFs(),
+        TestCase("transferFromSharedToDrive").EnableDriveFs(),
+        TestCase("transferFromOfflineToDownloads").DisableDriveFs(),
+        TestCase("transferFromOfflineToDownloads").EnableDriveFs(),
+        TestCase("transferFromOfflineToDrive").DisableDriveFs(),
+        TestCase("transferFromOfflineToDrive").EnableDriveFs(),
+        TestCase("transferFromTeamDriveToDrive").DisableDriveFs(),
+        TestCase("transferFromTeamDriveToDrive").EnableDriveFs(),
+        TestCase("transferFromDriveToTeamDrive").DisableDriveFs(),
+        TestCase("transferFromDriveToTeamDrive").EnableDriveFs(),
+        TestCase("transferFromTeamDriveToDownloads").DisableDriveFs(),
+        TestCase("transferFromTeamDriveToDownloads").EnableDriveFs(),
+        TestCase("transferHostedFileFromTeamDriveToDownloads").DisableDriveFs(),
+        TestCase("transferHostedFileFromTeamDriveToDownloads").EnableDriveFs(),
+        TestCase("transferFromDownloadsToTeamDrive").DisableDriveFs(),
+        TestCase("transferFromDownloadsToTeamDrive").EnableDriveFs(),
+        TestCase("transferBetweenTeamDrives").DisableDriveFs(),
+        TestCase("transferBetweenTeamDrives").EnableDriveFs(),
+        TestCase("transferDragAndDrop"),
+        TestCase("transferDragAndHover"),
+        TestCase("transferFromDownloadsToDownloads"),
+        TestCase("transferDeletedFile")));
 
-#if defined(DISABLE_SLOW_FILESAPP_TESTS)
-#define MAYBE_ExecuteDefaultTaskOnDrive DISABLED_ExecuteDefaultTaskOnDrive
-#else
-#define MAYBE_ExecuteDefaultTaskOnDrive ExecuteDefaultTaskOnDrive
-#endif
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    MAYBE_ExecuteDefaultTaskOnDrive,
-    FileManagerBrowserTest,
-    ::testing::Values(TestParameter(NOT_IN_GUEST_MODE,
-                                    "executeDefaultTaskOnDrive")));
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    RestorePrefs, /* restore_prefs.js */
+    FilesAppBrowserTest,
+    ::testing::Values(TestCase("restoreSortColumn").InGuestMode(),
+                      TestCase("restoreSortColumn"),
+                      TestCase("restoreCurrentView").InGuestMode(),
+                      TestCase("restoreCurrentView")));
 
-#if defined(DISABLE_SLOW_FILESAPP_TESTS)
-#define MAYBE_DefaultTaskDialog DISABLED_DefaultTaskDialog
-#else
-#define MAYBE_DefaultTaskDialog DefaultTaskDialog
-#endif
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    MAYBE_DefaultTaskDialog,
-    FileManagerBrowserTest,
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    RestoreGeometry, /* restore_geometry.js */
+    FilesAppBrowserTest,
+    ::testing::Values(TestCase("restoreGeometry"),
+                      TestCase("restoreGeometry").InGuestMode(),
+                      TestCase("restoreGeometryMaximized")));
+
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    ShareAndManageDialog, /* share_and_manage_dialog.js */
+    FilesAppBrowserTest,
+    ::testing::Values(TestCase("shareFileDrive").DisableDriveFs(),
+                      TestCase("shareFileDrive").EnableDriveFs(),
+                      TestCase("shareDirectoryDrive").DisableDriveFs(),
+                      TestCase("shareDirectoryDrive").EnableDriveFs(),
+                      TestCase("shareHostedFileDrive"),
+                      TestCase("manageHostedFileDrive").DisableDriveFs(),
+                      TestCase("manageHostedFileDrive").EnableDriveFs(),
+                      TestCase("manageFileDrive").DisableDriveFs(),
+                      TestCase("manageFileDrive").EnableDriveFs(),
+                      TestCase("manageDirectoryDrive").DisableDriveFs(),
+                      TestCase("manageDirectoryDrive").EnableDriveFs(),
+                      TestCase("shareFileTeamDrive"),
+                      TestCase("shareDirectoryTeamDrive"),
+                      TestCase("shareHostedFileTeamDrive"),
+                      TestCase("shareTeamDrive"),
+                      TestCase("manageHostedFileTeamDrive"),
+                      TestCase("manageFileTeamDrive"),
+                      TestCase("manageDirectoryTeamDrive"),
+                      TestCase("manageTeamDrive")));
+
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    SuggestAppDialog, /* suggest_app_dialog.js */
+    FilesAppBrowserTest,
+    ::testing::Values(TestCase("suggestAppDialog")));
+
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    Traverse, /* traverse.js */
+    FilesAppBrowserTest,
+    ::testing::Values(TestCase("traverseDownloads").InGuestMode(),
+                      TestCase("traverseDownloads"),
+                      TestCase("traverseDrive").DisableDriveFs(),
+                      TestCase("traverseDrive").EnableDriveFs()));
+
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    Tasks, /* tasks.js */
+    FilesAppBrowserTest,
+    ::testing::Values(TestCase("executeDefaultTaskDownloads"),
+                      TestCase("executeDefaultTaskDownloads").InGuestMode(),
+                      TestCase("executeDefaultTaskDrive").DisableDriveFs(),
+                      TestCase("executeDefaultTaskDrive").EnableDriveFs(),
+                      TestCase("defaultTaskForPdf"),
+                      TestCase("defaultTaskForTextPlain"),
+                      TestCase("defaultTaskDialogDownloads"),
+                      TestCase("defaultTaskDialogDownloads").InGuestMode(),
+                      TestCase("defaultTaskDialogDrive").DisableDriveFs(),
+                      TestCase("defaultTaskDialogDrive").EnableDriveFs(),
+                      TestCase("genericTaskIsNotExecuted"),
+                      TestCase("genericTaskAndNonGenericTask")));
+
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    FolderShortcuts, /* folder_shortcuts.js */
+    FilesAppBrowserTest,
+    ::testing::Values(TestCase("traverseFolderShortcuts").DisableDriveFs(),
+                      TestCase("traverseFolderShortcuts").EnableDriveFs(),
+                      TestCase("addRemoveFolderShortcuts").DisableDriveFs(),
+                      TestCase("addRemoveFolderShortcuts").EnableDriveFs()));
+
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    SortColumns, /* sort_columns.js */
+    FilesAppBrowserTest,
+    ::testing::Values(TestCase("sortColumns"),
+                      TestCase("sortColumns").InGuestMode()));
+
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    TabIndex, /* tab_index.js: */
+    FilesAppBrowserTest,
     ::testing::Values(
-        TestParameter(NOT_IN_GUEST_MODE, "defaultTaskDialogOnDownloads"),
-        TestParameter(IN_GUEST_MODE, "defaultTaskDialogOnDownloads"),
-        TestParameter(NOT_IN_GUEST_MODE, "defaultTaskDialogOnDrive")));
+        TestCase("tabindexSearchBoxFocus"),
+        TestCase("tabindexSearchBoxFocus").EnableMyFilesVolume(),
+        TestCase("tabindexFocus"),
+        TestCase("tabindexFocus").EnableMyFilesVolume(),
+        TestCase("tabindexFocusDownloads"),
+        TestCase("tabindexFocusDownloads").EnableMyFilesVolume(),
+        TestCase("tabindexFocusDownloads").InGuestMode(),
+        TestCase("tabindexFocusDownloads").InGuestMode().EnableMyFilesVolume(),
+        TestCase("tabindexFocusBreadcrumbBackground"),
+        TestCase("tabindexFocusDirectorySelected"),
+        TestCase("tabindexFocusDirectorySelected").EnableMyFilesVolume(),
+        TestCase("tabindexOpenDialogDrive").WithBrowser().DisableDriveFs(),
+        TestCase("tabindexOpenDialogDrive").WithBrowser().EnableDriveFs(),
+        TestCase("tabindexOpenDialogDrive")
+            .WithBrowser()
+            .EnableDriveFs()
+            .EnableMyFilesVolume(),
+        TestCase("tabindexOpenDialogDownloads").WithBrowser(),
+        TestCase("tabindexOpenDialogDownloads")
+            .WithBrowser()
+            .EnableMyFilesVolume(),
+        TestCase("tabindexOpenDialogDownloads").WithBrowser().InGuestMode(),
+        TestCase("tabindexOpenDialogDownloads")
+            .WithBrowser()
+            .InGuestMode()
+            .EnableMyFilesVolume(),
+        TestCase("tabindexSaveFileDialogDrive").WithBrowser().DisableDriveFs(),
+        TestCase("tabindexSaveFileDialogDrive").WithBrowser().EnableDriveFs(),
+        TestCase("tabindexSaveFileDialogDrive")
+            .WithBrowser()
+            .EnableDriveFs()
+            .EnableMyFilesVolume(),
+        TestCase("tabindexSaveFileDialogDownloads").WithBrowser(),
+        TestCase("tabindexSaveFileDialogDownloads").WithBrowser().InGuestMode(),
+        TestCase("tabindexSaveFileDialogDownloads")
+            .WithBrowser()
+            .InGuestMode()
+            .EnableMyFilesVolume()));
 
-#if defined(DISABLE_SLOW_FILESAPP_TESTS)
-#define MAYBE_GenericTask DISABLED_GenericTask
-#else
-#define MAYBE_GenericTask GenericTask
-#endif
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    MAYBE_GenericTask,
-    FileManagerBrowserTest,
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    FileDialog, /* file_dialog.js */
+    FilesAppBrowserTest,
     ::testing::Values(
-        TestParameter(NOT_IN_GUEST_MODE, "genericTaskIsNotExecuted"),
-        TestParameter(NOT_IN_GUEST_MODE, "genericAndNonGenericTasksAreMixed")));
+        TestCase("openFileDialogUnload").WithBrowser(),
+        TestCase("openFileDialogUnload").WithBrowser().EnableMyFilesVolume(),
+        TestCase("openFileDialogDownloads").WithBrowser(),
+        TestCase("openFileDialogDownloads").WithBrowser().EnableMyFilesVolume(),
+        TestCase("openFileDialogDownloads").WithBrowser().InGuestMode(),
+        TestCase("openFileDialogDownloads")
+            .WithBrowser()
+            .InGuestMode()
+            .EnableMyFilesVolume(),
+        TestCase("openFileDialogDownloads").WithBrowser().InIncognito(),
+        TestCase("openFileDialogDownloads")
+            .WithBrowser()
+            .InIncognito()
+            .EnableMyFilesVolume(),
+        TestCase("openFileDialogPanelsDisabled").WithBrowser(),
+        TestCase("saveFileDialogDownloads").WithBrowser(),
+        TestCase("saveFileDialogDownloads").WithBrowser().EnableMyFilesVolume(),
+        TestCase("saveFileDialogDownloads").WithBrowser().InGuestMode(),
+        TestCase("saveFileDialogDownloads")
+            .WithBrowser()
+            .InGuestMode()
+            .EnableMyFilesVolume(),
+        TestCase("saveFileDialogDownloads").WithBrowser().InIncognito(),
+        TestCase("saveFileDialogDownloads")
+            .WithBrowser()
+            .InIncognito()
+            .EnableMyFilesVolume(),
+        TestCase("saveFileDialogDownloadsNewFolderButton")
+            .WithBrowser()
+            .EnableMyFilesVolume(),
+        TestCase("saveFileDialogPanelsDisabled").WithBrowser(),
+        TestCase("openFileDialogCancelDownloads").WithBrowser(),
+        TestCase("openFileDialogCancelDownloads")
+            .WithBrowser()
+            .EnableMyFilesVolume(),
+        TestCase("openFileDialogEscapeDownloads").WithBrowser(),
+        TestCase("openFileDialogEscapeDownloads")
+            .WithBrowser()
+            .EnableMyFilesVolume(),
+        TestCase("openFileDialogDrive").WithBrowser().DisableDriveFs(),
+        TestCase("openFileDialogDrive")
+            .WithBrowser()
+            .InIncognito()
+            .DisableDriveFs(),
+        TestCase("openFileDialogDrive").WithBrowser().EnableDriveFs(),
+        TestCase("openFileDialogDrive")
+            .WithBrowser()
+            .EnableDriveFs()
+            .EnableMyFilesVolume(),
+        TestCase("openFileDialogDrive")
+            .WithBrowser()
+            .InIncognito()
+            .EnableDriveFs(),
+        TestCase("saveFileDialogDrive").WithBrowser(),
+        TestCase("saveFileDialogDrive").WithBrowser().EnableMyFilesVolume(),
+        TestCase("saveFileDialogDrive").WithBrowser().InIncognito(),
+        TestCase("openFileDialogDriveFromBrowser")
+            .WithBrowser()
+            .EnableDriveFs(),
+        TestCase("openFileDialogDriveFromBrowser")
+            .WithBrowser()
+            .DisableDriveFs(),
+        TestCase("openFileDialogDriveHostedDoc").WithBrowser().EnableDriveFs(),
+        TestCase("openFileDialogDriveHostedDoc").WithBrowser().DisableDriveFs(),
+        TestCase("openFileDialogDriveHostedNeedsFile")
+            .WithBrowser()
+            .EnableDriveFs(),
+        TestCase("saveFileDialogDriveHostedNeedsFile")
+            .WithBrowser()
+            .EnableDriveFs(),
+        TestCase("openFileDialogDriveHostedNeedsFile")
+            .WithBrowser()
+            .DisableDriveFs(),
+        TestCase("openFileDialogCancelDrive").WithBrowser().DisableDriveFs(),
+        TestCase("openFileDialogCancelDrive").WithBrowser().EnableDriveFs(),
+        TestCase("openFileDialogEscapeDrive").WithBrowser().DisableDriveFs(),
+        TestCase("openFileDialogEscapeDrive").WithBrowser().EnableDriveFs(),
+        TestCase("openFileDialogDriveOffline")
+            .WithBrowser()
+            .Offline()
+            .EnableDriveFs(),
+        TestCase("saveFileDialogDriveOffline").WithBrowser().Offline(),
+        TestCase("openFileDialogDriveOfflinePinned")
+            .WithBrowser()
+            .Offline()
+            .EnableDriveFs(),
+        TestCase("saveFileDialogDriveOfflinePinned").WithBrowser().Offline(),
+        TestCase("openFileDialogDefaultFilter").WithBrowser(),
+        TestCase("saveFileDialogDefaultFilter").WithBrowser(),
+        TestCase("openFileDialogFileListShowContextMenu").WithBrowser()));
 
-#if defined(DISABLE_SLOW_FILESAPP_TESTS)
-#define MAYBE_FolderShortcuts DISABLED_FolderShortcuts
-#else
-#define MAYBE_FolderShortcuts FolderShortcuts
-#endif
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    MAYBE_FolderShortcuts,
-    FileManagerBrowserTest,
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    CopyBetweenWindows, /* copy_between_windows.js */
+    FilesAppBrowserTest,
     ::testing::Values(
-        TestParameter(NOT_IN_GUEST_MODE, "traverseFolderShortcuts"),
-        TestParameter(NOT_IN_GUEST_MODE, "addRemoveFolderShortcuts")));
+        TestCase("copyBetweenWindowsLocalToDrive").DisableDriveFs(),
+        TestCase("copyBetweenWindowsLocalToDrive").EnableDriveFs(),
+        TestCase("copyBetweenWindowsLocalToUsb"),
+        TestCase("copyBetweenWindowsUsbToDrive").DisableDriveFs(),
+        TestCase("copyBetweenWindowsUsbToDrive").EnableDriveFs(),
+        TestCase("copyBetweenWindowsDriveToLocal").DisableDriveFs(),
+        TestCase("copyBetweenWindowsDriveToLocal").EnableDriveFs(),
+        TestCase("copyBetweenWindowsDriveToUsb").DisableDriveFs(),
+        TestCase("copyBetweenWindowsDriveToUsb").EnableDriveFs(),
+        TestCase("copyBetweenWindowsUsbToLocal")));
 
-// Fails on official build. http://crbug.com/429294
-#if defined(DISABLE_SLOW_FILESAPP_TESTS) || defined(OFFICIAL_BUILD)
-#define MAYBE_SortColumns DISABLED_SortColumns
-#else
-#define MAYBE_SortColumns SortColumns
-#endif
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    MAYBE_SortColumns,
-    FileManagerBrowserTest,
-    ::testing::Values(TestParameter(NOT_IN_GUEST_MODE, "sortColumns"),
-                      TestParameter(IN_GUEST_MODE, "sortColumns")));
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    GridView, /* grid_view.js */
+    FilesAppBrowserTest,
+    ::testing::Values(TestCase("showGridViewDownloads"),
+                      TestCase("showGridViewDownloads").InGuestMode(),
+                      TestCase("showGridViewDrive").DisableDriveFs(),
+                      TestCase("showGridViewDrive").EnableDriveFs(),
+                      TestCase("showGridViewButtonSwitches"),
+                      TestCase("showGridViewKeyboardSelectionA11y"),
+                      TestCase("showGridViewMouseSelectionA11y")));
 
-#if defined(DISABLE_SLOW_FILESAPP_TESTS)
-#define MAYBE_TabIndex DISABLED_TabIndex
-#else
-#define MAYBE_TabIndex TabIndex
-#endif
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    MAYBE_TabIndex,
-    FileManagerBrowserTestWithLegacyEventDispatch,
-    ::testing::Values(TestParameter(NOT_IN_GUEST_MODE, "searchBoxFocus")));
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    Providers, /* providers.js */
+    FilesAppBrowserTest,
+    ::testing::Values(TestCase("requestMount"),
+                      TestCase("requestMount").DisableNativeSmb(),
+                      TestCase("requestMountMultipleMounts"),
+                      TestCase("requestMountMultipleMounts").DisableNativeSmb(),
+                      TestCase("requestMountSourceDevice"),
+                      TestCase("requestMountSourceDevice").DisableNativeSmb(),
+                      TestCase("requestMountSourceFile"),
+                      TestCase("requestMountSourceFile").DisableNativeSmb(),
+                      TestCase("providerEject"),
+                      TestCase("providerEject").DisableNativeSmb(),
+                      TestCase("installNewServiceOnline"),
+                      TestCase("installNewServiceOffline").Offline()));
 
-#if defined(DISABLE_SLOW_FILESAPP_TESTS)
-#define MAYBE_TabindexFocus DISABLED_TabindexFocus
-#else
-#define MAYBE_TabindexFocus TabindexFocus
-#endif
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    MAYBE_TabindexFocus,
-    FileManagerBrowserTestWithLegacyEventDispatch,
-    ::testing::Values(TestParameter(NOT_IN_GUEST_MODE, "tabindexFocus")));
-
-#if defined(DISABLE_SLOW_FILESAPP_TESTS)
-#define MAYBE_TabindexFocusDownloads DISABLED_TabindexFocusDownloads
-#else
-#define MAYBE_TabindexFocusDownloads TabindexFocusDownloads
-#endif
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    MAYBE_TabindexFocusDownloads,
-    FileManagerBrowserTestWithLegacyEventDispatch,
-    ::testing::Values(TestParameter(NOT_IN_GUEST_MODE,
-                                    "tabindexFocusDownloads"),
-                      TestParameter(IN_GUEST_MODE, "tabindexFocusDownloads")));
-
-#if defined(DISABLE_SLOW_FILESAPP_TESTS)
-#define MAYBE_TabindexFocusDirectorySelected \
-  DISABLED_TabindexFocusDirectorySelected
-#else
-#define MAYBE_TabindexFocusDirectorySelected TabindexFocusDirectorySelected
-#endif
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    MAYBE_TabindexFocusDirectorySelected,
-    FileManagerBrowserTestWithLegacyEventDispatch,
-    ::testing::Values(TestParameter(NOT_IN_GUEST_MODE,
-                                    "tabindexFocusDirectorySelected")));
-
-// Fails on official cros trunk build. http://crbug.com/480491
-#if defined(DISABLE_SLOW_FILESAPP_TESTS) || defined(OFFICIAL_BUILD)
-#define MAYBE_TabindexOpenDialog DISABLED_TabindexOpenDialog
-#else
-#define MAYBE_TabindexOpenDialog TabindexOpenDialog
-#endif
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    DISABLED_TabindexOpenDialog,
-    FileManagerBrowserTest,
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    GearMenu, /* gear_menu.js */
+    FilesAppBrowserTest,
     ::testing::Values(
-        TestParameter(NOT_IN_GUEST_MODE, "tabindexOpenDialogDrive"),
-        TestParameter(NOT_IN_GUEST_MODE, "tabindexOpenDialogDownloads"),
-        TestParameter(IN_GUEST_MODE, "tabindexOpenDialogDownloads")));
+        TestCase("showHiddenFilesDownloads"),
+        TestCase("showHiddenFilesDownloads").InGuestMode(),
+        TestCase("showHiddenFilesDrive").DisableDriveFs(),
+        TestCase("showHiddenFilesDrive").EnableDriveFs(),
+        TestCase("showPasteIntoCurrentFolder"),
+        TestCase("showSelectAllInCurrentFolder"),
+        TestCase("showToggleHiddenAndroidFoldersGearMenuItemsInMyFiles"),
+        TestCase("enableToggleHiddenAndroidFoldersShowsHiddenFiles"),
+        TestCase("hideCurrentDirectoryByTogglingHiddenAndroidFolders"),
+        TestCase("newFolderInDownloads"),
+        TestCase("showSendFeedbackAction")));
 
-// Fails on official build. http://crbug.com/482121.
-#if defined(DISABLE_SLOW_FILESAPP_TESTS) || defined(OFFICIAL_BUILD)
-#define MAYBE_TabindexSaveFileDialog DISABLED_TabindexSaveFileDialog
-#else
-#define MAYBE_TabindexSaveFileDialog TabindexSaveFileDialog
-#endif
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    DISABLED_TabindexSaveFileDialog,
-    FileManagerBrowserTest,
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    FilesTooltip, /* files_tooltip.js */
+    FilesAppBrowserTest,
+    ::testing::Values(TestCase("filesTooltipFocus"),
+                      TestCase("filesTooltipMouseOver"),
+                      TestCase("filesTooltipClickHides")));
+
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    FileList, /* file_list.js */
+    FilesAppBrowserTest,
+    ::testing::Values(TestCase("fileListAriaAttributes"),
+                      TestCase("fileListFocusFirstItem"),
+                      TestCase("fileListSelectLastFocusedItem"),
+                      TestCase("fileListKeyboardSelectionA11y"),
+                      TestCase("fileListMouseSelectionA11y")));
+
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    Crostini, /* crostini.js */
+    FilesAppBrowserTest,
+    ::testing::Values(TestCase("mountCrostini"),
+                      TestCase("sharePathWithCrostini")));
+
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    MyFiles, /* my_files.js */
+    FilesAppBrowserTest,
     ::testing::Values(
-        TestParameter(NOT_IN_GUEST_MODE, "tabindexSaveFileDialogDrive"),
-        TestParameter(NOT_IN_GUEST_MODE, "tabindexSaveFileDialogDownloads"),
-        TestParameter(IN_GUEST_MODE, "tabindexSaveFileDialogDownloads")));
+        // search should only be disabled if MyFiles isn't a volume.
+        TestCase("hideSearchButton").DisableMyFilesVolume(),
+        TestCase("directoryTreeRefresh"),
+        TestCase("directoryTreeRefresh").EnableMyFilesVolume(),
+        TestCase("showMyFiles"),
+        TestCase("showMyFiles").EnableMyFilesVolume(),
+        TestCase("myFilesDisplaysAndOpensEntries"),
+        TestCase("myFilesDisplaysAndOpensEntries").EnableMyFilesVolume(),
+        TestCase("myFilesFolderRename"),
+        TestCase("myFilesFolderRename").EnableMyFilesVolume(),
+        TestCase("myFilesUpdatesChildren"),
+        TestCase("myFilesUpdatesWhenAndroidVolumeMounts")
+            .EnableMyFilesVolume()
+            .DontMountVolumes(),
+        TestCase("myFilesUpdatesChildren").EnableMyFilesVolume(),
+        TestCase("myFilesAutoExpandOnce").EnableMyFilesVolume(),
+        TestCase("myFilesToolbarDelete").EnableMyFilesVolume()));
 
-#if defined(DISABLE_SLOW_FILESAPP_TESTS) || defined(OFFICIAL_BUILD)
-#define MAYBE_OpenFileDialog DISABLED_OpenFileDialog
-#else
-#define MAYBE_OpenFileDialog OpenFileDialog
-#endif
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    MAYBE_OpenFileDialog,
-    FileManagerBrowserTest,
-    ::testing::Values(TestParameter(NOT_IN_GUEST_MODE,
-                                    "openFileDialogOnDownloads"),
-                      TestParameter(IN_GUEST_MODE,
-                                    "openFileDialogOnDownloads"),
-                      TestParameter(NOT_IN_GUEST_MODE,
-                                    "openFileDialogOnDrive"),
-                      TestParameter(IN_INCOGNITO,
-                                    "openFileDialogOnDownloads"),
-                      TestParameter(IN_INCOGNITO,
-                                    "openFileDialogOnDrive"),
-                      TestParameter(NOT_IN_GUEST_MODE,
-                                    "unloadFileDialog")));
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    InstallLinuxPackageDialog, /* install_linux_package_dialog.js */
+    FilesAppBrowserTest,
+    ::testing::Values(TestCase("installLinuxPackageDialog")));
 
-#if defined(DISABLE_SLOW_FILESAPP_TESTS)
-#define MAYBE_CopyBetweenWindows DISABLED_CopyBetweenWindows
-#else
-// flaky: http://crbug.com/500966
-#define MAYBE_CopyBetweenWindows DISABLED_CopyBetweenWindows
-#endif
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    MAYBE_CopyBetweenWindows,
-    FileManagerBrowserTest,
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    LauncherSearch, /* launcher_search.js */
+    FilesAppBrowserTest,
+    ::testing::Values(TestCase("launcherOpenSearchResult"),
+                      TestCase("launcherSearch"),
+                      TestCase("launcherSearchOffline").Offline()));
+
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    Recents, /* recents.js */
+    FilesAppBrowserTest,
     ::testing::Values(
-        TestParameter(NOT_IN_GUEST_MODE, "copyBetweenWindowsLocalToDrive"),
-        TestParameter(NOT_IN_GUEST_MODE, "copyBetweenWindowsLocalToUsb"),
-        TestParameter(NOT_IN_GUEST_MODE, "copyBetweenWindowsUsbToDrive"),
-        TestParameter(NOT_IN_GUEST_MODE, "copyBetweenWindowsDriveToLocal"),
-        TestParameter(NOT_IN_GUEST_MODE, "copyBetweenWindowsDriveToUsb"),
-        TestParameter(NOT_IN_GUEST_MODE, "copyBetweenWindowsUsbToLocal")));
+        TestCase("recentsDownloads"),
+        TestCase("recentsDrive").DisableDriveFs(),
+        TestCase("recentsDrive").EnableDriveFs(),
+        TestCase("recentsCrostiniNotMounted"),
+        TestCase("recentsCrostiniMounted"),
+        TestCase("recentsDownloadsAndDrive").DisableDriveFs(),
+        TestCase("recentsDownloadsAndDrive").EnableDriveFs(),
+        TestCase("recentsDownloadsAndDriveWithOverlap").DisableDriveFs(),
+        TestCase("recentsDownloadsAndDriveWithOverlap").EnableDriveFs()));
 
-#if defined(DISABLE_SLOW_FILESAPP_TESTS)
-#define MAYBE_ShowGridView DISABLED_ShowGridView
-#else
-#define MAYBE_ShowGridView ShowGridView
-#endif
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    MAYBE_ShowGridView,
-    FileManagerBrowserTest,
-    ::testing::Values(TestParameter(NOT_IN_GUEST_MODE, "showGridViewDownloads"),
-                      TestParameter(IN_GUEST_MODE, "showGridViewDownloads"),
-                      TestParameter(NOT_IN_GUEST_MODE, "showGridViewDrive")));
-
-#if defined(DISABLE_SLOW_FILESAPP_TESTS)
-#define MAYBE_Providers DISABLED_Providers
-#else
-#define MAYBE_Providers Providers
-#endif
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    MAYBE_Providers,
-    FileManagerBrowserTest,
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    Metadata, /* metadata.js */
+    FilesAppBrowserTest,
     ::testing::Values(
-        TestParameter(NOT_IN_GUEST_MODE, "requestMount"),
-        TestParameter(NOT_IN_GUEST_MODE, "requestMountMultipleMounts"),
-        TestParameter(NOT_IN_GUEST_MODE, "requestMountSourceDevice"),
-        TestParameter(NOT_IN_GUEST_MODE, "requestMountSourceFile")));
+        TestCase("metadataDocumentsProvider").EnableDocumentsProvider(),
+        TestCase("metadataDownloads"),
+        TestCase("metadataDownloads").EnableMyFilesVolume(),
+        TestCase("metadataDrive").DisableDriveFs(),
+        TestCase("metadataDrive").EnableDriveFs(),
+        TestCase("metadataDrive").EnableDriveFs().EnableMyFilesVolume(),
+        TestCase("metadataTeamDrives").DisableDriveFs(),
+        TestCase("metadataTeamDrives").EnableDriveFs(),
+        TestCase("metadataTeamDrives").EnableDriveFs().EnableMyFilesVolume(),
+        TestCase("metadataLargeDrive").DisableDriveFs(),
+        TestCase("metadataLargeDrive").EnableDriveFs(),
+        TestCase("metadataLargeDrive").EnableDriveFs().EnableMyFilesVolume()));
 
-#if defined(DISABLE_SLOW_FILESAPP_TESTS)
-#define MAYBE_GearMenu DISABLED_GearMenu
-#else
-#define MAYBE_GearMenu GearMenu
-#endif
-WRAPPED_INSTANTIATE_TEST_CASE_P(
-    MAYBE_GearMenu,
-    FileManagerBrowserTest,
-    ::testing::Values(
-        TestParameter(NOT_IN_GUEST_MODE, "showHiddenFilesOnDownloads"),
-        TestParameter(NOT_IN_GUEST_MODE, "showHiddenFilesOnDrive"),
-        TestParameter(NOT_IN_GUEST_MODE, "hideGoogleDocs")));
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    NavigationList, /* navigation_list.js */
+    FilesAppBrowserTest,
+    ::testing::Values(TestCase("navigationScrollsWhenClipped")));
+
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    Search, /* search.js */
+    FilesAppBrowserTest,
+    ::testing::Values(TestCase("searchDownloadsWithResults"),
+                      TestCase("searchDownloadsWithNoResults"),
+                      TestCase("searchDownloadsClearSearch")));
+
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    Metrics, /* metrics.js */
+    FilesAppBrowserTest,
+    ::testing::Values(TestCase("metricsRecordEnum")));
+
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    Breadcrumbs, /* breadcrumbs.js */
+    FilesAppBrowserTest,
+    ::testing::Values(TestCase("breadcrumbsNavigate"),
+                      TestCase("breadcrumbsLeafNoFocus"),
+                      TestCase("breadcrumbsDownloadsTranslation")));
+
+WRAPPED_INSTANTIATE_TEST_SUITE_P(
+    FormatDialog, /* format_dialog.js */
+    FilesAppBrowserTest,
+    ::testing::Values(TestCase("formatDialog").EnableFormatDialog(),
+                      TestCase("formatDialogEmpty").EnableFormatDialog(),
+                      TestCase("formatDialogCancel").EnableFormatDialog(),
+                      TestCase("formatDialogNameLength").EnableFormatDialog(),
+                      TestCase("formatDialogNameInvalid").EnableFormatDialog(),
+                      TestCase("formatDialogGearMenu").EnableFormatDialog()));
 
 // Structure to describe an account info.
 struct TestAccountInfo {
@@ -583,7 +1116,10 @@ static const TestAccountInfo kTestAccounts[] = {
 };
 
 // Test fixture class for testing multi-profile features.
-class MultiProfileFileManagerBrowserTest : public FileManagerBrowserTestBase {
+class MultiProfileFilesAppBrowserTest : public FileManagerBrowserTestBase {
+ public:
+  MultiProfileFilesAppBrowserTest() = default;
+
  protected:
   // Enables multi-profiles.
   void SetUpCommandLine(base::CommandLine* command_line) override {
@@ -595,6 +1131,11 @@ class MultiProfileFileManagerBrowserTest : public FileManagerBrowserTestBase {
                                     kTestAccounts[DUMMY_ACCOUNT_INDEX].email);
     command_line->AppendSwitchASCII(chromeos::switches::kLoginProfile,
                                     kTestAccounts[DUMMY_ACCOUNT_INDEX].hash);
+    // Don't require policy for our sessions - this is required because
+    // this test creates a secondary profile synchronously, so we need to
+    // let the policy code know not to expect cached policy.
+    command_line->AppendSwitchASCII(chromeos::switches::kProfileRequiresPolicy,
+                                    "false");
   }
 
   // Logs in to the primary profile of this test.
@@ -609,8 +1150,13 @@ class MultiProfileFileManagerBrowserTest : public FileManagerBrowserTestBase {
   // This is used for preparing all accounts in PRE_ test setup, and for testing
   // actual login behavior.
   void AddAllUsers() {
-    for (size_t i = 0; i < arraysize(kTestAccounts); ++i)
+    for (size_t i = 0; i < base::size(kTestAccounts); ++i) {
+      // The primary account was already set up in SetUpOnMainThread, so skip it
+      // here.
+      if (i == PRIMARY_ACCOUNT_INDEX)
+        continue;
       AddUser(kTestAccounts[i], i >= SECONDARY_ACCOUNT_INDEX_START);
+    }
   }
 
   // Returns primary profile (if it is already created.)
@@ -621,78 +1167,191 @@ class MultiProfileFileManagerBrowserTest : public FileManagerBrowserTestBase {
     return profile ? profile : FileManagerBrowserTestBase::profile();
   }
 
-  // Sets the test case name (used as a function name in test_cases.js to call.)
-  void set_test_case_name(const std::string& name) { test_case_name_ = name; }
-
   // Adds a new user for testing to the current session.
   void AddUser(const TestAccountInfo& info, bool log_in) {
     base::ScopedAllowBlockingForTesting allow_blocking;
     const AccountId account_id(
         AccountId::FromUserEmailGaiaId(info.email, info.gaia_id));
+    user_manager::User* user =
+        user_manager::User::CreateRegularUserForTesting(account_id);
+    static_cast<user_manager::UserManagerBase*>(
+        user_manager::UserManager::Get())
+        ->AddUserRecordForTesting(user);
     if (log_in) {
       session_manager::SessionManager::Get()->CreateSession(account_id,
                                                             info.hash, false);
     }
+    chromeos::ProfileHelper::Get()->SetUserToProfileMappingForTesting(
+        user, profile());
     user_manager::UserManager::Get()->SaveUserDisplayName(
         account_id, base::UTF8ToUTF16(info.display_name));
-    SigninManagerFactory::GetForProfile(
-        chromeos::ProfileHelper::GetProfileByUserIdHashForTest(info.hash))
-        ->SetAuthenticatedAccountInfo(info.gaia_id, info.email);
+    Profile* profile =
+        chromeos::ProfileHelper::GetProfileByUserIdHashForTest(info.hash);
+    signin::IdentityManager* identity_manager =
+        IdentityManagerFactory::GetForProfile(profile);
+    if (!identity_manager->HasPrimaryAccount())
+      signin::MakePrimaryAccountAvailable(identity_manager, info.email);
   }
 
- private:
-  GuestMode GetGuestModeParam() const override { return NOT_IN_GUEST_MODE; }
-  const char* GetTestManifestName() const override {
-    return "file_manager_test_manifest.json";
-  }
-  const char* GetTestCaseNameParam() const override {
+  GuestMode GetGuestMode() const override { return NOT_IN_GUEST_MODE; }
+
+  bool GetEnableDriveFs() const override { return false; }
+
+  const char* GetTestCaseName() const override {
     return test_case_name_.c_str();
   }
 
+  std::string GetFullTestCaseName() const override { return test_case_name_; }
+
+  const char* GetTestExtensionManifestName() const override {
+    return "file_manager_test_manifest.json";
+  }
+
+  void set_test_case_name(const std::string& name) { test_case_name_ = name; }
+
+ private:
   std::string test_case_name_;
+
+  DISALLOW_COPY_AND_ASSIGN(MultiProfileFilesAppBrowserTest);
 };
 
-// Fails on official build. http://crbug.com/429294
-#if defined(DISABLE_SLOW_FILESAPP_TESTS) || defined(OFFICIAL_BUILD)
-#define MAYBE_PRE_BasicDownloads DISABLED_PRE_BasicDownloads
-#define MAYBE_BasicDownloads DISABLED_BasicDownloads
-#else
-#define MAYBE_PRE_BasicDownloads PRE_BasicDownloads
-#define MAYBE_BasicDownloads BasicDownloads
-#endif
-IN_PROC_BROWSER_TEST_F(MultiProfileFileManagerBrowserTest,
-                       MAYBE_PRE_BasicDownloads) {
+IN_PROC_BROWSER_TEST_F(MultiProfileFilesAppBrowserTest, PRE_BasicDownloads) {
   AddAllUsers();
 }
 
-IN_PROC_BROWSER_TEST_F(MultiProfileFileManagerBrowserTest,
-                       MAYBE_BasicDownloads) {
+IN_PROC_BROWSER_TEST_F(MultiProfileFilesAppBrowserTest, BasicDownloads) {
   AddAllUsers();
-
-  // Sanity check that normal operations work in multi-profile setting as well.
+  // Sanity check that normal operations work in multi-profile.
   set_test_case_name("keyboardCopyDownloads");
   StartTest();
 }
 
-// Flaky: crbug.com/715961.
-// Previously it was disabled via DISABLE_SLOW_FILESAPP_TESTS and in
-// OFFICIAL_BUILD, see http://crbug.com/429294.
-IN_PROC_BROWSER_TEST_F(MultiProfileFileManagerBrowserTest, PRE_BasicDrive) {
+IN_PROC_BROWSER_TEST_F(MultiProfileFilesAppBrowserTest, PRE_BasicDrive) {
   AddAllUsers();
 }
 
-// Fails on official build. http://crbug.com/429294
-#if defined(DISABLE_SLOW_FILESAPP_TESTS) || defined(OFFICIAL_BUILD)
-#define MAYBE_BasicDrive DISABLED_BasicDrive
-#else
-#define MAYBE_BasicDrive BasicDrive
-#endif
-IN_PROC_BROWSER_TEST_F(MultiProfileFileManagerBrowserTest, MAYBE_BasicDrive) {
+IN_PROC_BROWSER_TEST_F(MultiProfileFilesAppBrowserTest, BasicDrive) {
   AddAllUsers();
-
-  // Sanity check that normal operations work in multi-profile setting as well.
+  // Sanity check that normal operations work in multi-profile.
   set_test_case_name("keyboardCopyDrive");
   StartTest();
+}
+
+// Test fixture class for testing migration to DriveFS.
+class DriveFsFilesAppBrowserTest : public FileManagerBrowserTestBase {
+ public:
+  DriveFsFilesAppBrowserTest() = default;
+
+ protected:
+  GuestMode GetGuestMode() const override { return NOT_IN_GUEST_MODE; }
+
+  const char* GetTestCaseName() const override {
+    return test_case_name_.c_str();
+  }
+
+  std::string GetFullTestCaseName() const override { return test_case_name_; }
+
+  const char* GetTestExtensionManifestName() const override {
+    return "file_manager_test_manifest.json";
+  }
+
+  void set_test_case_name(const std::string& name) { test_case_name_ = name; }
+
+  bool GetEnableDriveFs() const override {
+    return !base::StringPiece(
+                ::testing::UnitTest::GetInstance()->current_test_info()->name())
+                .starts_with("PRE");
+  }
+
+  base::FilePath GetDriveDataDirectory() {
+    return profile()->GetPath().Append("drive/v1");
+  }
+
+  bool GetEnableMyFilesVolume() const override {
+    return base::StringPiece(
+               ::testing::UnitTest::GetInstance()->current_test_info()->name())
+        .ends_with("MyFiles");
+  }
+
+ private:
+  std::string test_case_name_;
+
+  DISALLOW_COPY_AND_ASSIGN(DriveFsFilesAppBrowserTest);
+};
+
+IN_PROC_BROWSER_TEST_F(DriveFsFilesAppBrowserTest, PRE_MigratePinnedFiles) {
+  set_test_case_name("PRE_driveMigratePinnedFile");
+  StartTest();
+}
+
+IN_PROC_BROWSER_TEST_F(DriveFsFilesAppBrowserTest, MigratePinnedFiles) {
+  set_test_case_name("driveMigratePinnedFile");
+  StartTest();
+
+  base::ScopedAllowBlockingForTesting allow_io;
+  EXPECT_TRUE(base::IsDirectoryEmpty(GetDriveDataDirectory()));
+}
+
+IN_PROC_BROWSER_TEST_F(DriveFsFilesAppBrowserTest,
+                       PRE_MigratePinnedFilesMyFiles) {
+  set_test_case_name("PRE_driveMigratePinnedFile");
+  StartTest();
+}
+
+IN_PROC_BROWSER_TEST_F(DriveFsFilesAppBrowserTest, MigratePinnedFilesMyFiles) {
+  set_test_case_name("driveMigratePinnedFile");
+  StartTest();
+
+  base::ScopedAllowBlockingForTesting allow_io;
+  EXPECT_TRUE(base::IsDirectoryEmpty(GetDriveDataDirectory()));
+}
+
+IN_PROC_BROWSER_TEST_F(DriveFsFilesAppBrowserTest, PRE_RecoverDirtyFiles) {
+  set_test_case_name("PRE_driveRecoverDirtyFiles");
+  StartTest();
+
+  {
+    base::ScopedAllowBlockingForTesting allow_io;
+
+    // Create a non-dirty file in the cache.
+    base::WriteFile(GetDriveDataDirectory().Append("files/foo"), "data", 4);
+  }
+}
+
+IN_PROC_BROWSER_TEST_F(DriveFsFilesAppBrowserTest, RecoverDirtyFiles) {
+  set_test_case_name("driveRecoverDirtyFiles");
+  StartTest();
+
+  base::ScopedAllowBlockingForTesting allow_io;
+  EXPECT_TRUE(base::IsDirectoryEmpty(GetDriveDataDirectory()));
+}
+
+IN_PROC_BROWSER_TEST_F(DriveFsFilesAppBrowserTest,
+                       PRE_RecoverDirtyFilesMyFiles) {
+  set_test_case_name("PRE_driveRecoverDirtyFiles");
+  StartTest();
+
+  {
+    base::ScopedAllowBlockingForTesting allow_io;
+
+    // Create a non-dirty file in the cache.
+    base::WriteFile(GetDriveDataDirectory().Append("files/foo"), "data", 4);
+  }
+}
+
+IN_PROC_BROWSER_TEST_F(DriveFsFilesAppBrowserTest, RecoverDirtyFilesMyFiles) {
+  set_test_case_name("driveRecoverDirtyFiles");
+  StartTest();
+
+  base::ScopedAllowBlockingForTesting allow_io;
+  EXPECT_TRUE(base::IsDirectoryEmpty(GetDriveDataDirectory()));
+}
+
+IN_PROC_BROWSER_TEST_F(DriveFsFilesAppBrowserTest, LaunchWithoutOldDriveData) {
+  base::ScopedAllowBlockingForTesting allow_io;
+
+  // After starting up, GCache/v1 should still be empty.
+  EXPECT_TRUE(base::IsDirectoryEmpty(GetDriveDataDirectory()));
 }
 
 }  // namespace file_manager

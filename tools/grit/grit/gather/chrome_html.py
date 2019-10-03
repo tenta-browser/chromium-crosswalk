@@ -1,4 +1,3 @@
-#!/usr/bin/env python
 # Copyright (c) 2012 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
@@ -14,6 +13,8 @@ of the inlined file including those on relevant platforms. Unsupported scale
 factors are also removed from existing image sets to support explicitly
 referencing all available images.
 """
+
+from __future__ import print_function
 
 import os
 import re
@@ -320,6 +321,7 @@ class ChromeHtml(interface.GathererBase):
     if self.flatten_html_:
       return html_inline.GetResourceFilenames(
           self.grd_node.ToRealPath(self.GetInputPath()),
+          self.grd_node,
           allow_external_script=self.allow_external_script_,
           rewrite_function=lambda fp, t, d: ProcessImageSets(
               fp, t, self.scale_factors_, d,
@@ -339,6 +341,10 @@ class ChromeHtml(interface.GathererBase):
     """Parses and inlines the represented file."""
 
     filename = self.GetInputPath()
+    # If there is a grd_node, prefer its GetInputPath(), as that may do more
+    # processing to make the call to ToRealPath() below work correctly.
+    if self.grd_node:
+      filename = self.grd_node.GetInputPath()
     if self.filename_expansion_function:
       filename = self.filename_expansion_function(filename)
     # Hack: some unit tests supply an absolute path and no root node.

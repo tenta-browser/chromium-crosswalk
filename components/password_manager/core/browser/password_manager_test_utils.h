@@ -6,24 +6,27 @@
 #define COMPONENTS_PASSWORD_MANAGER_CORE_BROWSER_PASSWORD_MANAGER_TEST_UTILS_H_
 
 #include <iosfwd>
-#include <string>
 #include <vector>
 
 #include "base/feature_list.h"
-#include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "components/autofill/core/common/password_form.h"
+#include "components/password_manager/core/browser/origin_credential_store.h"
 #include "components/password_manager/core/browser/password_store.h"
-#include "net/http/transport_security_state.h"
 #include "testing/gmock/include/gmock/gmock.h"
+#include "url/gurl.h"
+
+#if defined(SYNC_PASSWORD_REUSE_DETECTION_ENABLED)
+#include "components/password_manager/core/browser/password_hash_data.h"  // nogncheck
+#include "components/password_manager/core/browser/password_reuse_detector_consumer.h"  // nogncheck
+#endif
 
 namespace password_manager {
 
 // This template allows creating methods with signature conforming to
-// TestingFactoryFunction of the appropriate platform instance of
-// KeyedServiceFactory. Context is the browser context prescribed by
-// TestingFactoryFunction. Store is the PasswordStore version needed in the
-// tests which use this method.
+// TestingFactory of the appropriate platform instance of KeyedServiceFactory.
+// Context is the browser context prescribed by TestingFactory. Store is the
+// PasswordStore version needed in the tests which use this method.
 template <class Context, class Store>
 scoped_refptr<RefcountedKeyedService> BuildPasswordStore(Context* context) {
   scoped_refptr<password_manager::PasswordStore> store(new Store);
@@ -60,10 +63,15 @@ std::unique_ptr<autofill::PasswordForm> FillPasswordFormWithData(
     const PasswordFormData& form_data,
     bool use_federated_login = false);
 
-// Convenience method that wraps the passed in forms in unique ptrs and returns
-// the result.
-std::vector<std::unique_ptr<autofill::PasswordForm>> WrapForms(
-    std::vector<autofill::PasswordForm> forms);
+// Creates a new map entry in the |first| element of the returned pair. The
+// |second| element holds the PasswordForm that the |first| element points to.
+// That way, the pointer only points to a valid address in the called scope.
+std::pair<std::pair<base::string16, const autofill::PasswordForm*>,
+          std::unique_ptr<const autofill::PasswordForm>>
+CreateEntry(const std::string& username,
+            const std::string& password,
+            const GURL& origin_url,
+            bool is_psl_match);
 
 // Checks whether the PasswordForms pointed to in |actual_values| are in some
 // permutation pairwise equal to those in |expectations|. Returns true in case
@@ -89,34 +97,41 @@ class MockPasswordStoreObserver : public PasswordStore::Observer {
   MOCK_METHOD1(OnLoginsChanged, void(const PasswordStoreChangeList& changes));
 };
 
-// TODO(crbug.com/706392): Fix password reuse detection for Android.
-#if !defined(OS_ANDROID) && !defined(OS_IOS)
+#if defined(SYNC_PASSWORD_REUSE_DETECTION_ENABLED)
 class MockPasswordReuseDetectorConsumer : public PasswordReuseDetectorConsumer {
  public:
   MockPasswordReuseDetectorConsumer();
   ~MockPasswordReuseDetectorConsumer() override;
 
   MOCK_METHOD4(OnReuseFound,
-               void(size_t, bool, const std::vector<std::string>&, int));
+               void(size_t,
+                    base::Optional<PasswordHashData>,
+                    const std::vector<std::string>&,
+                    int));
 };
-#endif
 
-// Auxiliary class to automatically set and reset the HSTS state for a given
-// host.
-class HSTSStateManager {
+// Matcher class used to compare PasswordHashData in tests.
+class PasswordHashDataMatcher
+    : public ::testing::MatcherInterface<base::Optional<PasswordHashData>> {
  public:
-  HSTSStateManager(net::TransportSecurityState* state,
-                   bool is_hsts,
-                   const std::string& host);
-  ~HSTSStateManager();
+  explicit PasswordHashDataMatcher(base::Optional<PasswordHashData> expected);
+  virtual ~PasswordHashDataMatcher() {}
+
+  // ::testing::MatcherInterface overrides
+  virtual bool MatchAndExplain(base::Optional<PasswordHashData> hash_data,
+                               ::testing::MatchResultListener* listener) const;
+  virtual void DescribeTo(::std::ostream* os) const;
+  virtual void DescribeNegationTo(::std::ostream* os) const;
 
  private:
-  net::TransportSecurityState* state_;
-  const bool is_hsts_;
-  const std::string host_;
+  const base::Optional<PasswordHashData> expected_;
 
-  DISALLOW_COPY_AND_ASSIGN(HSTSStateManager);
+  DISALLOW_COPY_AND_ASSIGN(PasswordHashDataMatcher);
 };
+
+::testing::Matcher<base::Optional<PasswordHashData>> Matches(
+    base::Optional<PasswordHashData> expected);
+#endif
 
 }  // namespace password_manager
 

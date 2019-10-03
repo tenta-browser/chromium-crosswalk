@@ -7,7 +7,7 @@
 
 #include "base/macros.h"
 #include "device/gamepad/gamepad_export.h"
-#include "device/gamepad/public/interfaces/gamepad.mojom.h"
+#include "device/gamepad/public/mojom/gamepad.mojom.h"
 
 namespace device {
 
@@ -20,11 +20,11 @@ class DEVICE_GAMEPAD_EXPORT GamepadHapticsManager
   static void Create(mojom::GamepadHapticsManagerRequest request);
 
   // mojom::GamepadHapticsManager implementation.
-  void PlayVibrationEffectOnce(int pad_index,
+  void PlayVibrationEffectOnce(uint32_t pad_index,
                                mojom::GamepadHapticEffectType,
                                mojom::GamepadEffectParametersPtr,
                                PlayVibrationEffectOnceCallback) override;
-  void ResetVibrationActuator(int pad_index,
+  void ResetVibrationActuator(uint32_t pad_index,
                               ResetVibrationActuatorCallback) override;
 
  private:

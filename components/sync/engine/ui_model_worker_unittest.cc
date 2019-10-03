@@ -9,8 +9,8 @@
 #include "base/bind.h"
 #include "base/bind_helpers.h"
 #include "base/location.h"
-#include "base/message_loop/message_loop.h"
 #include "base/run_loop.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/test/test_timeouts.h"
 #include "base/threading/platform_thread.h"
 #include "base/threading/thread.h"
@@ -27,13 +27,13 @@ SyncerError DoWork(
     base::Closure work) {
   DCHECK(thread_verifier->BelongsToCurrentThread());
   work.Run();
-  return SYNCER_OK;
+  return SyncerError(SyncerError::SYNCER_OK);
 }
 
 // Converts |work| to a WorkCallback that will verify that it's run on the
 // thread it was constructed on.
 WorkCallback ClosureToWorkCallback(base::Closure work) {
-  return base::Bind(&DoWork, base::ThreadTaskRunnerHandle::Get(), work);
+  return base::BindOnce(&DoWork, base::ThreadTaskRunnerHandle::Get(), work);
 }
 
 // Increments |counter|.
@@ -50,14 +50,14 @@ class SyncUIModelWorkerTest : public testing::Test {
 
   void PostWorkToSyncThread(base::Closure work) {
     sync_thread_.task_runner()->PostTask(
-        FROM_HERE,
-        base::Bind(base::IgnoreResult(&UIModelWorker::DoWorkAndWaitUntilDone),
-                   worker_, base::Passed(ClosureToWorkCallback(work))));
+        FROM_HERE, base::BindOnce(base::IgnoreResult(
+                                      &UIModelWorker::DoWorkAndWaitUntilDone),
+                                  worker_, ClosureToWorkCallback(work)));
   }
 
  protected:
-  std::unique_ptr<base::MessageLoop> ui_loop_ =
-      std::make_unique<base::MessageLoop>();
+  std::unique_ptr<base::test::ScopedTaskEnvironment> task_environment_ =
+      std::make_unique<base::test::ScopedTaskEnvironment>();
   base::Thread sync_thread_;
   scoped_refptr<UIModelWorker> worker_;
 };
@@ -87,7 +87,7 @@ TEST_F(SyncUIModelWorkerTest, MultipleDoWork) {
 }
 
 TEST_F(SyncUIModelWorkerTest, JoinSyncThreadAfterUIMessageLoopDestruction) {
-  PostWorkToSyncThread(base::Bind(&base::DoNothing));
+  PostWorkToSyncThread(base::DoNothing());
 
   // Wait to allow the sync thread to post the WorkCallback to the UI
   // MessageLoop. This is racy. If the WorkCallback isn't posted fast enough,
@@ -97,12 +97,12 @@ TEST_F(SyncUIModelWorkerTest, JoinSyncThreadAfterUIMessageLoopDestruction) {
 
   // The sync thread shouldn't wait for the WorkCallback to run on the UI thread
   // after the UI MessageLoop is gone.
-  ui_loop_.reset();
+  task_environment_.reset();
   sync_thread_.Stop();
 }
 
 TEST_F(SyncUIModelWorkerTest, JoinSyncThreadAfterRequestStop) {
-  PostWorkToSyncThread(base::Bind(&base::DoNothing));
+  PostWorkToSyncThread(base::DoNothing());
 
   // Wait to allow the sync thread to post the WorkCallback to the UI
   // MessageLoop. This is racy. If the WorkCallback isn't posted fast enough,

@@ -8,7 +8,6 @@ namespace switches {
 
 const char kEnableDistillabilityService[] = "enable-distillability-service";
 const char kEnableDomDistiller[] = "enable-dom-distiller";
-const char kEnableSyncArticles[] = "enable-sync-articles";
 const char kReaderModeHeuristics[] = "reader-mode-heuristics";
 const char kReaderModeFeedback[] = "reader-mode-feedback";
 
@@ -18,11 +17,11 @@ const char kAllArticles[] = "allarticles";
 const char kOGArticle[] = "opengraph";
 const char kAlwaysTrue[] = "alwaystrue";
 const char kNone[] = "none";
-};
+}  // namespace reader_mode_heuristics
 
 namespace reader_mode_feedback {
 const char kOn[] = "on";
 const char kOff[] = "off";
-};
+}  // namespace reader_mode_feedback
 
 }  // namespace switches

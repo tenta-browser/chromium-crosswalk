@@ -4,7 +4,10 @@
 
 #include "ash/app_list/model/app_list_item_list.h"
 
+#include <utility>
+
 #include "ash/app_list/model/app_list_item.h"
+#include "base/guid.h"
 #include "base/memory/ptr_util.h"
 
 namespace app_list {
@@ -30,6 +33,8 @@ AppListItem* AppListItemList::FindItem(const std::string& id) {
   return nullptr;
 }
 
+// TODO(https://crbug.com/883971): Make it return iterator to avoid unnecessary
+// check in this code.
 bool AppListItemList::FindItemIndex(const std::string& id, size_t* index) {
   for (size_t i = 0; i < app_list_items_.size(); ++i) {
     if (app_list_items_[i]->id() == id) {
@@ -43,7 +48,7 @@ bool AppListItemList::FindItemIndex(const std::string& id, size_t* index) {
 void AppListItemList::MoveItem(size_t from_index, size_t to_index) {
   DCHECK_LT(from_index, item_count());
   DCHECK_LT(to_index, item_count());
-  if (from_index == to_index)
+  if (from_index == to_index || item_count() == 1)
     return;
 
   auto target_item = std::move(app_list_items_[from_index]);
@@ -121,12 +126,44 @@ void AppListItemList::SetItemPosition(AppListItem* item,
     observer.OnListItemMoved(from_index, to_index, item);
 }
 
+AppListItem* AppListItemList::AddPageBreakItemAfter(
+    const AppListItem* previous_item) {
+  size_t previous_index;
+  CHECK(FindItemIndex(previous_item->id(), &previous_index));
+  CHECK(!previous_item->IsInFolder());
+
+  const size_t next_index = previous_index + 1;
+  const AppListItem* next_item =
+      next_index < item_count() ? item_at(next_index) : nullptr;
+  syncer::StringOrdinal position;
+  if (!next_item) {
+    position = previous_item->position().CreateAfter();
+  } else {
+    // It is possible that items were added with the same ordinal. To
+    // successfully add the page break item we need to fix this. We do not try
+    // to fix this when an item is added in order to avoid possible edge cases
+    // with sync.
+    if (previous_item->position().Equals(next_item->position()))
+      FixItemPosition(next_index);
+    position = previous_item->position().CreateBetween(next_item->position());
+  }
+
+  auto page_break_item = std::make_unique<AppListItem>(base::GenerateGUID());
+  page_break_item->set_position(position);
+  page_break_item->set_is_page_break(true);
+
+  AppListItem* item = page_break_item.get();
+  size_t index = GetItemSortOrderIndex(item->position(), item->id());
+  app_list_items_.insert(app_list_items_.begin() + index,
+                         std::move(page_break_item));
+  return item;
+}
+
 void AppListItemList::HighlightItemInstalledFromUI(const std::string& id) {
   // Items within folders are not highlighted (apps are never installed to a
   // folder initially). So just search the top-level list.
   size_t index;
   if (FindItemIndex(highlighted_id_, &index)) {
-    item_at(index)->set_highlighted(false);
     for (auto& observer : observers_)
       observer.OnAppListItemHighlight(index, false);
   }
@@ -137,7 +174,6 @@ void AppListItemList::HighlightItemInstalledFromUI(const std::string& id) {
     return;
   }
 
-  item_at(index)->set_highlighted(true);
   for (auto& observer : observers_)
     observer.OnAppListItemHighlight(index, true);
 }
@@ -181,7 +217,6 @@ AppListItem* AppListItemList::AddItem(std::unique_ptr<AppListItem> item_ptr) {
 
   if (item->id() == highlighted_id_) {
     // Item not present when highlight requested, so highlight it now.
-    item->set_highlighted(true);
     for (auto& observer : observers_)
       observer.OnAppListItemHighlight(index, true);
   }

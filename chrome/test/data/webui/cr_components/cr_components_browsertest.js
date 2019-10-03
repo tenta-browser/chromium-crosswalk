@@ -4,12 +4,8 @@
 
 /** @fileoverview Tests for shared Polymer components. */
 
-/** @const {string} Path to source root. */
-var ROOT_PATH = '../../../../../';
-
 // Polymer BrowserTest fixture.
-GEN_INCLUDE(
-    [ROOT_PATH + 'chrome/test/data/webui/polymer_browser_test_base.js']);
+GEN_INCLUDE(['//chrome/test/data/webui/polymer_browser_test_base.js']);
 
 /**
  * Test fixture for shared Polymer components.
@@ -22,11 +18,8 @@ CrComponentsBrowserTest.prototype = {
   __proto__: PolymerTest.prototype,
 
   /** @override */
-  extraLibraries: PolymerTest.getLibraries(ROOT_PATH),
-
-  /** @override */
   get browsePreload() {
-    throw 'this is abstract and should be overriden by subclasses';
+    throw 'subclasses should override to load a WebUI page that includes it.';
   },
 
   /** @override */
@@ -40,6 +33,28 @@ CrComponentsBrowserTest.prototype = {
   },
 };
 
+/**
+ * @constructor
+ * @extends {CrComponentsBrowserTest}
+ */
+function CrComponentsManagedFootnoteTest() {}
+
+CrComponentsManagedFootnoteTest.prototype = {
+  __proto__: CrComponentsBrowserTest.prototype,
+
+  /** @override */
+  browsePreload: 'chrome://downloads',
+
+  /** @override */
+  extraLibraries: CrComponentsBrowserTest.prototype.extraLibraries.concat([
+    'managed_footnote_test.js',
+  ]),
+};
+
+TEST_F('CrComponentsManagedFootnoteTest', 'All', function() {
+  mocha.run();
+});
+
 GEN('#if defined(OS_CHROMEOS)');
 
 /**
@@ -52,14 +67,13 @@ CrComponentsNetworkConfigTest.prototype = {
   __proto__: CrComponentsBrowserTest.prototype,
 
   /** @override */
-  browsePreload:
-      'chrome://resources/cr_components/chromeos/network/network_config.html',
+
+  browsePreload: 'chrome://internet-config-dialog',
 
   /** @override */
   extraLibraries: CrComponentsBrowserTest.prototype.extraLibraries.concat([
-    ROOT_PATH + 'ui/webui/resources/js/assert.js',
-    ROOT_PATH + 'ui/webui/resources/js/load_time_data.js',
-    ROOT_PATH + 'ui/webui/resources/js/promise_resolver.js',
+    '//ui/webui/resources/js/assert.js',
+    '//ui/webui/resources/js/promise_resolver.js',
     '../fake_chrome_event.js',
     '../chromeos/networking_private_constants.js',
     '../chromeos/fake_networking_private.js',

@@ -22,8 +22,9 @@
 #include "base/bind.h"
 #include "base/compiler_specific.h"
 #include "base/files/file_util.h"
-#include "base/message_loop/message_loop.h"
+#include "base/metrics/histogram_macros.h"
 #include "base/strings/string_util.h"
+#include "base/strings/stringprintf.h"
 #include "base/synchronization/lock.h"
 #include "base/task_runner.h"
 #include "base/threading/thread_restrictions.h"
@@ -63,8 +64,7 @@ URLRequestFileJob::URLRequestFileJob(
       stream_(new FileStream(file_task_runner)),
       file_task_runner_(file_task_runner),
       remaining_bytes_(0),
-      range_parse_result_(OK),
-      weak_ptr_factory_(this) {}
+      range_parse_result_(OK) {}
 
 void URLRequestFileJob::Start() {
   FileMetaInfo* meta_info = new FileMetaInfo();
@@ -109,7 +109,8 @@ int URLRequestFileJob::ReadRawData(IOBuffer* dest, int dest_size) {
 }
 
 bool URLRequestFileJob::IsRedirectResponse(GURL* location,
-                                           int* http_status_code) {
+                                           int* http_status_code,
+                                           bool* insecure_scheme_was_upgraded) {
   if (meta_info_.is_directory) {
     // This happens when we discovered the file is a directory, so needs a
     // slash at the end of the path.
@@ -118,6 +119,7 @@ bool URLRequestFileJob::IsRedirectResponse(GURL* location,
     GURL::Replacements replacements;
     replacements.SetPathStr(new_path);
 
+    *insecure_scheme_was_upgraded = false;
     *location = request_->url().ReplaceComponents(replacements);
     *http_status_code = 301;  // simulate a permanent redirect
     return true;
@@ -131,7 +133,7 @@ bool URLRequestFileJob::IsRedirectResponse(GURL* location,
 
   base::FilePath new_path = file_path_;
   bool resolved;
-  resolved = base::win::ResolveShortcut(new_path, &new_path, NULL);
+  resolved = base::win::ResolveShortcut(new_path, &new_path, nullptr);
 
   // If shortcut is not resolved successfully, do not redirect.
   if (!resolved)
@@ -177,6 +179,17 @@ void URLRequestFileJob::SetExtraRequestHeaders(
   }
 }
 
+void URLRequestFileJob::GetResponseInfo(HttpResponseInfo* info) {
+  if (!serve_mime_type_as_content_type_ || !meta_info_.mime_type_result)
+    return;
+  auto headers =
+      base::MakeRefCounted<net::HttpResponseHeaders>("HTTP/1.1 200 OK");
+  headers->AddHeader(base::StringPrintf("%s: %s",
+                                        net::HttpRequestHeaders::kContentType,
+                                        meta_info_.mime_type.c_str()));
+  info->headers = headers;
+}
+
 void URLRequestFileJob::OnOpenComplete(int result) {}
 
 void URLRequestFileJob::OnSeekComplete(int64_t result) {}
@@ -191,6 +204,7 @@ std::unique_ptr<SourceStream> URLRequestFileJob::SetUpSourceStream() {
   if (!base::LowerCaseEqualsASCII(file_path_.Extension(), ".svgz"))
     return source;
 
+  UMA_HISTOGRAM_BOOLEAN("Net.FileSVGZLoadCount", true);
   return GzipSourceStream::Create(std::move(source), SourceStream::TYPE_GZIP);
 }
 
@@ -302,7 +316,7 @@ void URLRequestFileJob::DidRead(scoped_refptr<IOBuffer> buf, int result) {
   }
 
   OnReadComplete(buf.get(), result);
-  buf = NULL;
+  buf = nullptr;
 
   ReadRawDataComplete(result);
 }

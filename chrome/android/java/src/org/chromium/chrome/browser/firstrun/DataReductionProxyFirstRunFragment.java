@@ -5,6 +5,7 @@
 package org.chromium.chrome.browser.firstrun;
 
 import android.os.Bundle;
+import android.support.v4.app.Fragment;
 import android.support.v7.widget.SwitchCompat;
 import android.view.LayoutInflater;
 import android.view.View;
@@ -13,18 +14,25 @@ import android.view.ViewGroup;
 import android.widget.Button;
 
 import org.chromium.chrome.R;
+import org.chromium.chrome.browser.datareduction.DataReductionPromoUtils;
 import org.chromium.chrome.browser.net.spdyproxy.DataReductionProxySettings;
-import org.chromium.chrome.browser.preferences.datareduction.DataReductionPromoUtils;
 
 /**
  * The First Run Experience fragment that allows the user to opt in to Data Saver.
  */
-public class DataReductionProxyFirstRunFragment extends FirstRunPage {
+public class DataReductionProxyFirstRunFragment extends Fragment implements FirstRunFragment {
+    /** FRE page that instantiates this fragment. */
+    public static class Page implements FirstRunPage<DataReductionProxyFirstRunFragment> {
+        @Override
+        public DataReductionProxyFirstRunFragment instantiateFragment() {
+            return new DataReductionProxyFirstRunFragment();
+        }
+    }
 
     @Override
     public View onCreateView(
             LayoutInflater inflater, ViewGroup container, Bundle savedInstanceState) {
-        return inflater.inflate(R.layout.fre_data_reduction_proxy, container, false);
+        return inflater.inflate(R.layout.fre_data_reduction_proxy_lite_mode, container, false);
     }
 
     @Override
@@ -41,9 +49,10 @@ public class DataReductionProxyFirstRunFragment extends FirstRunPage {
                 DataReductionProxySettings.getInstance().setDataReductionProxyEnabled(
                         v.getContext(), enableDataSaverSwitch.isChecked());
                 if (enableDataSaverSwitch.isChecked()) {
-                    enableDataSaverSwitch.setText(R.string.data_reduction_enabled_switch);
+                    enableDataSaverSwitch.setText(R.string.data_reduction_enabled_switch_lite_mode);
                 } else {
-                    enableDataSaverSwitch.setText(R.string.data_reduction_disabled_switch);
+                    enableDataSaverSwitch.setText(
+                            R.string.data_reduction_disabled_switch_lite_mode);
                 }
             }
         });
@@ -51,7 +60,7 @@ public class DataReductionProxyFirstRunFragment extends FirstRunPage {
         nextButton.setOnClickListener(new OnClickListener() {
             @Override
             public void onClick(View v) {
-                advanceToNextPage();
+                getPageDelegate().advanceToNextPage();
             }
         });
 

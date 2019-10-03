@@ -4,507 +4,367 @@
 
 #include "media/capture/video/chromeos/stream_buffer_manager.h"
 
-#include <sync/sync.h>
+#include <memory>
+#include <string>
 
-#include "base/memory/ptr_util.h"
+#include "base/bind.h"
+#include "base/bind_helpers.h"
+#include "base/posix/safe_strerror.h"
+#include "base/strings/string_number_conversions.h"
+#include "base/trace_event/trace_event.h"
+#include "gpu/ipc/common/gpu_memory_buffer_support.h"
 #include "media/capture/video/chromeos/camera_buffer_factory.h"
 #include "media/capture/video/chromeos/camera_device_context.h"
 #include "media/capture/video/chromeos/camera_metadata_utils.h"
-#include "mojo/edk/embedder/embedder.h"
-#include "mojo/edk/embedder/scoped_platform_handle.h"
+#include "media/capture/video/chromeos/pixel_format_utils.h"
+#include "media/capture/video/chromeos/request_builder.h"
+#include "mojo/public/cpp/platform/platform_handle.h"
+#include "mojo/public/cpp/system/platform_handle.h"
 
 namespace media {
 
 StreamBufferManager::StreamBufferManager(
-    arc::mojom::Camera3CallbackOpsRequest callback_ops_request,
-    std::unique_ptr<StreamCaptureInterface> capture_interface,
     CameraDeviceContext* device_context,
-    std::unique_ptr<CameraBufferFactory> camera_buffer_factory,
-    scoped_refptr<base::SingleThreadTaskRunner> ipc_task_runner)
-    : callback_ops_(this, std::move(callback_ops_request)),
-      capture_interface_(std::move(capture_interface)),
-      device_context_(device_context),
+    bool video_capture_use_gmb,
+    std::unique_ptr<CameraBufferFactory> camera_buffer_factory)
+    : device_context_(device_context),
+      video_capture_use_gmb_(video_capture_use_gmb),
       camera_buffer_factory_(std::move(camera_buffer_factory)),
-      ipc_task_runner_(std::move(ipc_task_runner)),
-      capturing_(false),
-      frame_number_(0),
-      partial_result_count_(1),
-      first_frame_shutter_time_(base::TimeTicks()),
       weak_ptr_factory_(this) {
-  DCHECK(ipc_task_runner_->BelongsToCurrentThread());
-  DCHECK(callback_ops_.is_bound());
-  DCHECK(device_context_);
+  if (video_capture_use_gmb_) {
+    gmb_support_ = std::make_unique<gpu::GpuMemoryBufferSupport>();
+  }
 }
 
 StreamBufferManager::~StreamBufferManager() {
-  DCHECK(ipc_task_runner_->BelongsToCurrentThread());
-  if (stream_context_) {
-    for (const auto& buf : stream_context_->buffers) {
-      if (buf) {
-        buf->Unmap();
+  DestroyCurrentStreamsAndBuffers();
+}
+
+void StreamBufferManager::ReserveBuffer(StreamType stream_type) {
+  if (video_capture_use_gmb_) {
+    ReserveBufferFromPool(stream_type);
+  } else {
+    ReserveBufferFromFactory(stream_type);
+  }
+}
+
+gfx::GpuMemoryBuffer* StreamBufferManager::GetGpuMemoryBufferById(
+    StreamType stream_type,
+    uint64_t buffer_ipc_id) {
+  auto& stream_context = stream_context_[stream_type];
+  int key = GetBufferKey(buffer_ipc_id);
+  auto it = stream_context->buffers.find(key);
+  if (it == stream_context->buffers.end()) {
+    LOG(ERROR) << "Invalid buffer: " << key << " for stream: " << stream_type;
+    return nullptr;
+  }
+  return it->second.gmb.get();
+}
+
+base::Optional<StreamBufferManager::Buffer>
+StreamBufferManager::AcquireBufferForClientById(StreamType stream_type,
+                                                uint64_t buffer_ipc_id) {
+  DCHECK(stream_context_.count(stream_type));
+  auto& stream_context = stream_context_[stream_type];
+  auto it = stream_context->buffers.find(GetBufferKey(buffer_ipc_id));
+  if (it == stream_context->buffers.end()) {
+    LOG(ERROR) << "Invalid buffer: " << buffer_ipc_id
+               << " for stream: " << stream_type;
+    return base::nullopt;
+  }
+  auto buffer_pair = std::move(it->second);
+  stream_context->buffers.erase(it);
+  return std::move(buffer_pair.vcd_buffer);
+}
+
+VideoCaptureFormat StreamBufferManager::GetStreamCaptureFormat(
+    StreamType stream_type) {
+  return stream_context_[stream_type]->capture_format;
+}
+
+bool StreamBufferManager::HasFreeBuffers(
+    const std::set<StreamType>& stream_types) {
+  for (auto stream_type : stream_types) {
+    if (IsInputStream(stream_type)) {
+      continue;
+    }
+    if (stream_context_[stream_type]->free_buffers.empty()) {
+      return false;
+    }
+  }
+  return true;
+}
+
+bool StreamBufferManager::HasStreamsConfigured(
+    std::initializer_list<StreamType> stream_types) {
+  for (auto stream_type : stream_types) {
+    if (stream_context_.find(stream_type) == stream_context_.end()) {
+      return false;
+    }
+  }
+  return true;
+}
+
+void StreamBufferManager::SetUpStreamsAndBuffers(
+    VideoCaptureFormat capture_format,
+    const cros::mojom::CameraMetadataPtr& static_metadata,
+    std::vector<cros::mojom::Camera3StreamPtr> streams) {
+  DestroyCurrentStreamsAndBuffers();
+
+  for (auto& stream : streams) {
+    DVLOG(2) << "Stream " << stream->id
+             << " stream_type: " << stream->stream_type
+             << " configured: usage=" << stream->usage
+             << " max_buffers=" << stream->max_buffers;
+
+    const size_t kMaximumAllowedBuffers = 15;
+    if (stream->max_buffers > kMaximumAllowedBuffers) {
+      device_context_->SetErrorState(
+          media::VideoCaptureError::
+              kCrosHalV3BufferManagerHalRequestedTooManyBuffers,
+          FROM_HERE,
+          std::string("Camera HAL requested ") +
+              base::NumberToString(stream->max_buffers) +
+              std::string(" buffers which exceeds the allowed maximum "
+                          "number of buffers"));
+      return;
+    }
+
+    // A better way to tell the stream type here would be to check on the usage
+    // flags of the stream.
+    StreamType stream_type = StreamIdToStreamType(stream->id);
+    auto stream_context = std::make_unique<StreamContext>();
+    stream_context->capture_format = capture_format;
+    stream_context->stream = std::move(stream);
+
+    const ChromiumPixelFormat stream_format =
+        camera_buffer_factory_->ResolveStreamBufferFormat(
+            stream_context->stream->format);
+    // Internally we keep track of the VideoPixelFormat that's actually
+    // supported by the camera instead of the one requested by the client.
+    stream_context->capture_format.pixel_format = stream_format.video_format;
+
+    switch (stream_type) {
+      case StreamType::kPreviewOutput:
+      case StreamType::kYUVInput:
+      case StreamType::kYUVOutput:
+        stream_context->buffer_dimension = gfx::Size(
+            stream_context->stream->width, stream_context->stream->height);
+        break;
+      case StreamType::kJpegOutput: {
+        auto jpeg_size = GetMetadataEntryAsSpan<int32_t>(
+            static_metadata,
+            cros::mojom::CameraMetadataTag::ANDROID_JPEG_MAX_SIZE);
+        CHECK_EQ(jpeg_size.size(), 1u);
+        stream_context->buffer_dimension = gfx::Size(jpeg_size[0], 1);
+        break;
+      }
+      default: {
+        NOTREACHED();
       }
     }
-  }
-}
+    stream_context_[stream_type] = std::move(stream_context);
 
-void StreamBufferManager::SetUpStreamAndBuffers(
-    VideoCaptureFormat capture_format,
-    uint32_t partial_result_count,
-    arc::mojom::Camera3StreamPtr stream) {
-  DCHECK(ipc_task_runner_->BelongsToCurrentThread());
-  DCHECK(!stream_context_);
-
-  VLOG(2) << "Stream " << stream->id << " configured: usage=" << stream->usage
-          << " max_buffers=" << stream->max_buffers;
-
-  const size_t kMaximumAllowedBuffers = 15;
-  if (stream->max_buffers > kMaximumAllowedBuffers) {
-    device_context_->SetErrorState(
-        FROM_HERE, std::string("Camera HAL requested ") +
-                       std::to_string(stream->max_buffers) +
-                       std::string(" buffers which exceeds the allowed maximum "
-                                   "number of buffers"));
-    return;
-  }
-
-  partial_result_count_ = partial_result_count;
-  stream_context_ = base::MakeUnique<StreamContext>();
-  stream_context_->capture_format = capture_format;
-  stream_context_->stream = std::move(stream);
-
-  const ChromiumPixelFormat stream_format =
-      camera_buffer_factory_->ResolveStreamBufferFormat(
-          stream_context_->stream->format);
-  stream_context_->capture_format.pixel_format = stream_format.video_format;
-
-  // Allocate buffers.
-  size_t num_buffers = stream_context_->stream->max_buffers;
-  stream_context_->buffers.resize(num_buffers);
-  for (size_t j = 0; j < num_buffers; ++j) {
-    auto buffer = camera_buffer_factory_->CreateGpuMemoryBuffer(
-        gfx::Size(stream_context_->stream->width,
-                  stream_context_->stream->height),
-        stream_format.gfx_format);
-    if (!buffer) {
-      device_context_->SetErrorState(FROM_HERE,
-                                     "Failed to create GpuMemoryBuffer");
-      return;
+    // For input stream, there is no need to allocate buffers.
+    if (IsInputStream(stream_type)) {
+      continue;
     }
-    bool ret = buffer->Map();
-    if (!ret) {
-      device_context_->SetErrorState(FROM_HERE,
-                                     "Failed to map GpuMemoryBuffer");
-      return;
+
+    // Allocate buffers.
+    for (size_t j = 0; j < stream_context_[stream_type]->stream->max_buffers;
+         ++j) {
+      ReserveBuffer(stream_type);
     }
-    stream_context_->buffers[j] = std::move(buffer);
-    stream_context_->free_buffers.push(j);
+    DVLOG(2) << "Allocated "
+             << stream_context_[stream_type]->stream->max_buffers << " buffers";
   }
-  VLOG(2) << "Allocated " << stream_context_->stream->max_buffers << " buffers";
 }
 
-void StreamBufferManager::StartCapture(arc::mojom::CameraMetadataPtr settings) {
-  DCHECK(ipc_task_runner_->BelongsToCurrentThread());
-  DCHECK(stream_context_);
-  DCHECK(stream_context_->request_settings.is_null());
-
-  capturing_ = true;
-  stream_context_->request_settings = std::move(settings);
-  // We cannot use a loop to register all the free buffers in one shot here
-  // because the camera HAL v3 API specifies that the client cannot call
-  // ProcessCaptureRequest before the previous one returns.
-  RegisterBuffer();
+cros::mojom::Camera3StreamPtr StreamBufferManager::GetStreamConfiguration(
+    StreamType stream_type) {
+  if (!stream_context_.count(stream_type)) {
+    return cros::mojom::Camera3Stream::New();
+  }
+  return stream_context_[stream_type]->stream.Clone();
 }
 
-void StreamBufferManager::StopCapture() {
-  DCHECK(ipc_task_runner_->BelongsToCurrentThread());
-  capturing_ = false;
-}
-
-void StreamBufferManager::RegisterBuffer() {
-  DCHECK(ipc_task_runner_->BelongsToCurrentThread());
-  DCHECK(stream_context_);
-
-  if (!capturing_) {
-    return;
-  }
-
-  if (stream_context_->free_buffers.empty()) {
-    return;
-  }
-
-  size_t buffer_id = stream_context_->free_buffers.front();
-  stream_context_->free_buffers.pop();
-  const gfx::GpuMemoryBuffer* buffer =
-      stream_context_->buffers[buffer_id].get();
-
-  VideoPixelFormat buffer_format = stream_context_->capture_format.pixel_format;
+base::Optional<BufferInfo> StreamBufferManager::RequestBufferForCaptureRequest(
+    StreamType stream_type,
+    base::Optional<uint64_t> buffer_ipc_id) {
+  VideoPixelFormat buffer_format =
+      stream_context_[stream_type]->capture_format.pixel_format;
   uint32_t drm_format = PixFormatVideoToDrm(buffer_format);
   if (!drm_format) {
     device_context_->SetErrorState(
-        FROM_HERE, std::string("Unsupported video pixel format") +
-                       VideoPixelFormatToString(buffer_format));
-    return;
-  }
-  arc::mojom::HalPixelFormat hal_pixel_format = stream_context_->stream->format;
-
-  gfx::NativePixmapHandle buffer_handle =
-      buffer->GetHandle().native_pixmap_handle;
-  size_t num_planes = buffer_handle.planes.size();
-  std::vector<StreamCaptureInterface::Plane> planes(num_planes);
-  for (size_t i = 0; i < num_planes; ++i) {
-    // Wrap the platform handle.
-    MojoHandle wrapped_handle;
-    // There is only one fd.
-    int dup_fd = dup(buffer_handle.fds[0].fd);
-    if (dup_fd == -1) {
-      device_context_->SetErrorState(FROM_HERE, "Failed to dup fd");
-      return;
-    }
-    MojoResult result = mojo::edk::CreatePlatformHandleWrapper(
-        mojo::edk::ScopedPlatformHandle(mojo::edk::PlatformHandle(dup_fd)),
-        &wrapped_handle);
-    if (result != MOJO_RESULT_OK) {
-      device_context_->SetErrorState(FROM_HERE,
-                                     "Failed to wrap gpu memory handle");
-      return;
-    }
-    planes[i].fd.reset(mojo::Handle(wrapped_handle));
-    planes[i].stride = buffer_handle.planes[i].stride;
-    planes[i].offset = buffer_handle.planes[i].offset;
-  }
-  // We reuse BufferType::GRALLOC here since on ARC++ we are using DMA-buf-based
-  // gralloc buffers.
-  capture_interface_->RegisterBuffer(
-      buffer_id, arc::mojom::Camera3DeviceOps::BufferType::GRALLOC, drm_format,
-      hal_pixel_format, stream_context_->stream->width,
-      stream_context_->stream->height, std::move(planes),
-      base::Bind(&StreamBufferManager::OnRegisteredBuffer,
-                 weak_ptr_factory_.GetWeakPtr(), buffer_id));
-  VLOG(2) << "Registered buffer " << buffer_id;
-}
-
-void StreamBufferManager::OnRegisteredBuffer(size_t buffer_id, int32_t result) {
-  DCHECK(ipc_task_runner_->BelongsToCurrentThread());
-
-  if (!capturing_) {
-    return;
-  }
-  if (result) {
-    device_context_->SetErrorState(FROM_HERE,
-                                   std::string("Failed to register buffer: ") +
-                                       std::string(strerror(result)));
-    return;
-  }
-  ProcessCaptureRequest(buffer_id);
-}
-
-void StreamBufferManager::ProcessCaptureRequest(size_t buffer_id) {
-  DCHECK(ipc_task_runner_->BelongsToCurrentThread());
-  DCHECK(stream_context_);
-
-  arc::mojom::Camera3StreamBufferPtr buffer =
-      arc::mojom::Camera3StreamBuffer::New();
-  buffer->stream_id = static_cast<uint64_t>(
-      arc::mojom::Camera3RequestTemplate::CAMERA3_TEMPLATE_PREVIEW);
-  buffer->buffer_id = buffer_id;
-  buffer->status = arc::mojom::Camera3BufferStatus::CAMERA3_BUFFER_STATUS_OK;
-
-  arc::mojom::Camera3CaptureRequestPtr request =
-      arc::mojom::Camera3CaptureRequest::New();
-  request->frame_number = frame_number_;
-  request->settings = stream_context_->request_settings.Clone();
-  request->output_buffers.push_back(std::move(buffer));
-
-  capture_interface_->ProcessCaptureRequest(
-      std::move(request),
-      base::Bind(&StreamBufferManager::OnProcessedCaptureRequest,
-                 weak_ptr_factory_.GetWeakPtr()));
-  VLOG(2) << "Requested capture for frame " << frame_number_ << " with buffer "
-          << buffer_id;
-  frame_number_++;
-}
-
-void StreamBufferManager::OnProcessedCaptureRequest(int32_t result) {
-  DCHECK(ipc_task_runner_->BelongsToCurrentThread());
-
-  if (!capturing_) {
-    return;
-  }
-  if (result) {
-    device_context_->SetErrorState(
-        FROM_HERE, std::string("Process capture request failed") +
-                       std::string(strerror(result)));
-    return;
-  }
-  RegisterBuffer();
-}
-
-void StreamBufferManager::ProcessCaptureResult(
-    arc::mojom::Camera3CaptureResultPtr result) {
-  DCHECK(ipc_task_runner_->BelongsToCurrentThread());
-
-  if (!capturing_) {
-    return;
-  }
-  uint32_t frame_number = result->frame_number;
-  // A new partial result may be created in either ProcessCaptureResult or
-  // Notify.
-  CaptureResult& partial_result = partial_results_[frame_number];
-  if (partial_results_.size() > stream_context_->stream->max_buffers) {
-    device_context_->SetErrorState(
+        media::VideoCaptureError::
+            kCrosHalV3BufferManagerUnsupportedVideoPixelFormat,
         FROM_HERE,
-        "Received more capture results than the maximum number of buffers");
+        std::string("Unsupported video pixel format") +
+            VideoPixelFormatToString(buffer_format));
+    return {};
+  }
+
+  BufferInfo buffer_info;
+  if (buffer_ipc_id.has_value()) {
+    // Currently, only kYUVInput has an associated output buffer which is
+    // kYUVOutput.
+    if (stream_type != StreamType::kYUVInput) {
+      return {};
+    }
+    int key = GetBufferKey(*buffer_ipc_id);
+    const auto& stream_context = stream_context_[StreamType::kYUVOutput];
+    auto it = stream_context->buffers.find(key);
+    CHECK(it != stream_context->buffers.end());
+    buffer_info.ipc_id = *buffer_ipc_id;
+    buffer_info.dimension = stream_context->buffer_dimension;
+    buffer_info.gpu_memory_buffer_handle = it->second.gmb->CloneHandle();
+  } else {
+    const auto& stream_context = stream_context_[stream_type];
+    CHECK(!stream_context->free_buffers.empty());
+    int key = stream_context->free_buffers.front();
+    auto it = stream_context->buffers.find(key);
+    CHECK(it != stream_context->buffers.end());
+    stream_context->free_buffers.pop();
+    buffer_info.ipc_id = GetBufferIpcId(stream_type, key);
+    buffer_info.dimension = stream_context->buffer_dimension;
+    buffer_info.gpu_memory_buffer_handle = it->second.gmb->CloneHandle();
+  }
+  buffer_info.drm_format = drm_format;
+  buffer_info.hal_pixel_format = stream_context_[stream_type]->stream->format;
+  return buffer_info;
+}
+
+void StreamBufferManager::ReleaseBufferFromCaptureResult(
+    StreamType stream_type,
+    uint64_t buffer_ipc_id) {
+  if (IsInputStream(stream_type)) {
     return;
   }
-  if (result->output_buffers) {
-    if (result->output_buffers->size() != 1) {
-      device_context_->SetErrorState(
-          FROM_HERE,
-          std::string("Incorrect number of output buffers received: ") +
-              std::to_string(result->output_buffers->size()));
-      return;
-    }
-    arc::mojom::Camera3StreamBufferPtr& stream_buffer =
-        result->output_buffers.value()[0];
-    VLOG(2) << "Received capture result for frame " << frame_number
-            << " stream_id: " << stream_buffer->stream_id;
-    // The camera HAL v3 API specifies that only one capture result can carry
-    // the result buffer for any given frame number.
-    if (!partial_result.buffer.is_null()) {
-      device_context_->SetErrorState(
-          FROM_HERE,
-          std::string("Received multiple result buffers for frame ") +
-              std::to_string(frame_number));
-      return;
-    } else {
-      partial_result.buffer = std::move(stream_buffer);
-      // If the buffer is marked as error it is due to either a request or a
-      // buffer error.  In either case the content of the buffer must be dropped
-      // and the buffer can be reused.  We simply submit the buffer here and
-      // don't wait for any partial results.  SubmitCaptureResult() will drop
-      // and reuse the buffer.
-      if (partial_result.buffer->status ==
-          arc::mojom::Camera3BufferStatus::CAMERA3_BUFFER_STATUS_ERROR) {
-        SubmitCaptureResult(frame_number);
-        return;
+  stream_context_[stream_type]->free_buffers.push(GetBufferKey(buffer_ipc_id));
+}
+
+gfx::Size StreamBufferManager::GetBufferDimension(StreamType stream_type) {
+  DCHECK(stream_context_.count(stream_type));
+  return stream_context_[stream_type]->buffer_dimension;
+}
+
+bool StreamBufferManager::IsReprocessSupported() {
+  return stream_context_.find(StreamType::kYUVOutput) != stream_context_.end();
+}
+
+// static
+uint64_t StreamBufferManager::GetBufferIpcId(StreamType stream_type, int key) {
+  uint64_t id = 0;
+  id |= static_cast<uint64_t>(stream_type) << 32;
+  DCHECK_GE(key, 0);
+  id |= static_cast<uint32_t>(key);
+  return id;
+}
+
+// static
+int StreamBufferManager::GetBufferKey(uint64_t buffer_ipc_id) {
+  return buffer_ipc_id & 0xFFFFFFFF;
+}
+
+void StreamBufferManager::ReserveBufferFromFactory(StreamType stream_type) {
+  auto& stream_context = stream_context_[stream_type];
+  base::Optional<gfx::BufferFormat> gfx_format =
+      PixFormatVideoToGfx(stream_context->capture_format.pixel_format);
+  if (!gfx_format) {
+    device_context_->SetErrorState(
+        media::VideoCaptureError::
+            kCrosHalV3BufferManagerFailedToCreateGpuMemoryBuffer,
+        FROM_HERE, "Unsupported video pixel format");
+    return;
+  }
+  auto gmb = camera_buffer_factory_->CreateGpuMemoryBuffer(
+      stream_context->buffer_dimension, *gfx_format);
+  if (!gmb) {
+    device_context_->SetErrorState(
+        media::VideoCaptureError::
+            kCrosHalV3BufferManagerFailedToCreateGpuMemoryBuffer,
+        FROM_HERE, "Failed to allocate GPU memory buffer");
+    return;
+  }
+  if (!gmb->Map()) {
+    device_context_->SetErrorState(
+        media::VideoCaptureError::
+            kCrosHalV3BufferManagerFailedToCreateGpuMemoryBuffer,
+        FROM_HERE, "Failed to map GPU memory buffer");
+    return;
+  }
+  // All the GpuMemoryBuffers are allocated from the factory in bulk when the
+  // streams are configured.  Here we simply use the sequence of the allocated
+  // buffer as the buffer id.
+  int key = stream_context->buffers.size() + 1;
+  stream_context->free_buffers.push(key);
+  stream_context->buffers.insert(
+      std::make_pair(key, BufferPair(std::move(gmb), base::nullopt)));
+}
+
+void StreamBufferManager::ReserveBufferFromPool(StreamType stream_type) {
+  auto& stream_context = stream_context_[stream_type];
+  base::Optional<gfx::BufferFormat> gfx_format =
+      PixFormatVideoToGfx(stream_context->capture_format.pixel_format);
+  if (!gfx_format) {
+    device_context_->SetErrorState(
+        media::VideoCaptureError::
+            kCrosHalV3BufferManagerFailedToCreateGpuMemoryBuffer,
+        FROM_HERE, "Unsupported video pixel format");
+    return;
+  }
+  Buffer vcd_buffer;
+  if (!device_context_->ReserveVideoCaptureBufferFromPool(
+          stream_context->buffer_dimension,
+          stream_context->capture_format.pixel_format, &vcd_buffer)) {
+    device_context_->SetErrorState(
+        media::VideoCaptureError::
+            kCrosHalV3BufferManagerFailedToCreateGpuMemoryBuffer,
+        FROM_HERE, "Failed to reserve video capture buffer");
+    return;
+  }
+  auto gmb = gmb_support_->CreateGpuMemoryBufferImplFromHandle(
+      vcd_buffer.handle_provider->GetGpuMemoryBufferHandle(),
+      stream_context->buffer_dimension, *gfx_format,
+      CameraBufferFactory::GetBufferUsage(*gfx_format), base::NullCallback());
+  stream_context->free_buffers.push(vcd_buffer.id);
+  stream_context->buffers.insert(std::make_pair(
+      vcd_buffer.id, BufferPair(std::move(gmb), std::move(vcd_buffer))));
+}
+
+void StreamBufferManager::DestroyCurrentStreamsAndBuffers() {
+  for (const auto& iter : stream_context_) {
+    if (iter.second) {
+      if (!video_capture_use_gmb_) {
+        // The GMB is mapped by default only when it's allocated locally.
+        for (auto& buf : iter.second->buffers) {
+          auto& buf_pair = buf.second;
+          if (buf_pair.gmb) {
+            buf_pair.gmb->Unmap();
+          }
+        }
+        iter.second->buffers.clear();
       }
     }
   }
-
-  // |result->partial_result| is set to 0 if the capture result contains only
-  // the result buffer handles and no result metadata.
-  if (result->partial_result) {
-    uint32_t result_id = result->partial_result;
-    if (result_id > partial_result_count_) {
-      device_context_->SetErrorState(
-          FROM_HERE, std::string("Invalid partial_result id: ") +
-                         std::to_string(result_id));
-      return;
-    }
-    if (partial_result.partial_metadata_received.find(result_id) !=
-        partial_result.partial_metadata_received.end()) {
-      device_context_->SetErrorState(
-          FROM_HERE, std::string("Received duplicated partial metadata: ") +
-                         std::to_string(result_id));
-      return;
-    }
-    partial_result.partial_metadata_received.insert(result_id);
-    MergeMetadata(&partial_result.metadata, result->result);
-  }
-
-  SubmitCaptureResultIfComplete(frame_number);
+  stream_context_.clear();
 }
 
-void StreamBufferManager::Notify(arc::mojom::Camera3NotifyMsgPtr message) {
-  DCHECK(ipc_task_runner_->BelongsToCurrentThread());
+StreamBufferManager::BufferPair::BufferPair(
+    std::unique_ptr<gfx::GpuMemoryBuffer> input_gmb,
+    base::Optional<Buffer> input_vcd_buffer)
+    : gmb(std::move(input_gmb)), vcd_buffer(std::move(input_vcd_buffer)) {}
 
-  if (!capturing_) {
-    return;
-  }
-  if (message->type == arc::mojom::Camera3MsgType::CAMERA3_MSG_ERROR) {
-    uint32_t frame_number = message->message->get_error()->frame_number;
-    uint64_t error_stream_id = message->message->get_error()->error_stream_id;
-    arc::mojom::Camera3ErrorMsgCode error_code =
-        message->message->get_error()->error_code;
-    HandleNotifyError(frame_number, error_stream_id, error_code);
-  } else {  // arc::mojom::Camera3MsgType::CAMERA3_MSG_SHUTTER
-    uint32_t frame_number = message->message->get_shutter()->frame_number;
-    uint64_t shutter_time = message->message->get_shutter()->timestamp;
-    // A new partial result may be created in either ProcessCaptureResult or
-    // Notify.
-    VLOG(2) << "Received shutter time for frame " << frame_number;
-    if (!shutter_time) {
-      device_context_->SetErrorState(
-          FROM_HERE, std::string("Received invalid shutter time: ") +
-                         std::to_string(shutter_time));
-      return;
-    }
-    CaptureResult& partial_result = partial_results_[frame_number];
-    if (partial_results_.size() > stream_context_->stream->max_buffers) {
-      device_context_->SetErrorState(
-          FROM_HERE,
-          "Received more capture results than the maximum number of buffers");
-      return;
-    }
-    // Shutter timestamp is in ns.
-    base::TimeTicks reference_time =
-        base::TimeTicks::FromInternalValue(shutter_time / 1000);
-    partial_result.reference_time = reference_time;
-    if (first_frame_shutter_time_.is_null()) {
-      // Record the shutter time of the first frame for calculating the
-      // timestamp.
-      first_frame_shutter_time_ = reference_time;
-    }
-    partial_result.timestamp = reference_time - first_frame_shutter_time_;
-    SubmitCaptureResultIfComplete(frame_number);
-  }
+StreamBufferManager::BufferPair::BufferPair(
+    StreamBufferManager::BufferPair&& other) {
+  gmb = std::move(other.gmb);
+  vcd_buffer = std::move(other.vcd_buffer);
 }
 
-void StreamBufferManager::HandleNotifyError(
-    uint32_t frame_number,
-    uint64_t error_stream_id,
-    arc::mojom::Camera3ErrorMsgCode error_code) {
-  std::string warning_msg;
-
-  switch (error_code) {
-    case arc::mojom::Camera3ErrorMsgCode::CAMERA3_MSG_ERROR_DEVICE:
-      // Fatal error and no more frames will be produced by the device.
-      device_context_->SetErrorState(FROM_HERE, "Fatal device error");
-      return;
-
-    case arc::mojom::Camera3ErrorMsgCode::CAMERA3_MSG_ERROR_REQUEST:
-      // An error has occurred in processing the request; the request
-      // specified by |frame_number| has been dropped by the camera device.
-      // Subsequent requests are unaffected.
-      //
-      // The HAL will call ProcessCaptureResult with the buffers' state set to
-      // STATUS_ERROR.  The content of the buffers will be dropped and the
-      // buffers will be reused in SubmitCaptureResult.
-      warning_msg =
-          std::string("An error occurred while processing request for frame ") +
-          std::to_string(frame_number);
-      break;
-
-    case arc::mojom::Camera3ErrorMsgCode::CAMERA3_MSG_ERROR_RESULT:
-      // An error has occurred in producing the output metadata buffer for a
-      // result; the output metadata will not be available for the frame
-      // specified by |frame_number|.  Subsequent requests are unaffected.
-      warning_msg = std::string(
-                        "An error occurred while producing result "
-                        "metadata for frame ") +
-                    std::to_string(frame_number);
-      break;
-
-    case arc::mojom::Camera3ErrorMsgCode::CAMERA3_MSG_ERROR_BUFFER:
-      // An error has occurred in placing the output buffer into a stream for
-      // a request. |frame_number| specifies the request for which the buffer
-      // was dropped, and |error_stream_id| specifies the stream that dropped
-      // the buffer.
-      //
-      // The HAL will call ProcessCaptureResult with the buffer's state set to
-      // STATUS_ERROR.  The content of the buffer will be dropped and the
-      // buffer will be reused in SubmitCaptureResult.
-      warning_msg =
-          std::string(
-              "An error occurred while filling output buffer of stream ") +
-          std::to_string(error_stream_id) + std::string(" in frame ") +
-          std::to_string(frame_number);
-      break;
-
-    default:
-      // To eliminate the warning for not handling CAMERA3_MSG_NUM_ERRORS
-      break;
-  }
-
-  LOG(WARNING) << warning_msg;
-  device_context_->LogToClient(warning_msg);
-  // If the buffer is already returned by the HAL, submit it and we're done.
-  auto partial_result = partial_results_.find(frame_number);
-  if (partial_result != partial_results_.end() &&
-      !partial_result->second.buffer.is_null()) {
-    SubmitCaptureResult(frame_number);
-  }
-}
-
-void StreamBufferManager::SubmitCaptureResultIfComplete(uint32_t frame_number) {
-  DCHECK(ipc_task_runner_->BelongsToCurrentThread());
-  DCHECK(partial_results_.find(frame_number) != partial_results_.end());
-
-  CaptureResult& partial_result = partial_results_[frame_number];
-  if (partial_result.partial_metadata_received.size() < partial_result_count_ ||
-      partial_result.buffer.is_null() ||
-      partial_result.reference_time == base::TimeTicks()) {
-    // We can only submit the result buffer when:
-    //   1. All the result metadata are received, and
-    //   2. The result buffer is received, and
-    //   3. The the shutter time is received.
-    return;
-  }
-  SubmitCaptureResult(frame_number);
-}
-
-void StreamBufferManager::SubmitCaptureResult(uint32_t frame_number) {
-  DCHECK(ipc_task_runner_->BelongsToCurrentThread());
-  DCHECK(partial_results_.find(frame_number) != partial_results_.end());
-
-  CaptureResult& partial_result = partial_results_[frame_number];
-  if (partial_results_.begin()->first != frame_number) {
-    device_context_->SetErrorState(
-        FROM_HERE, std::string("Received frame is out-of-order; expect ") +
-                       std::to_string(partial_results_.begin()->first) +
-                       std::string(" but got ") + std::to_string(frame_number));
-    return;
-  }
-
-  VLOG(2) << "Submit capture result of frame " << frame_number;
-  uint32_t buffer_id = partial_result.buffer->buffer_id;
-
-  // Wait on release fence before delivering the result buffer to client.
-  if (partial_result.buffer->release_fence.is_valid()) {
-    const int kSyncWaitTimeoutMs = 1000;
-    mojo::edk::ScopedPlatformHandle fence;
-    MojoResult result = mojo::edk::PassWrappedPlatformHandle(
-        partial_result.buffer->release_fence.release().value(), &fence);
-    if (result != MOJO_RESULT_OK) {
-      device_context_->SetErrorState(FROM_HERE,
-                                     "Failed to unwrap release fence fd");
-      return;
-    }
-    if (!sync_wait(fence.get().handle, kSyncWaitTimeoutMs)) {
-      device_context_->SetErrorState(FROM_HERE,
-                                     "Sync wait on release fence timed out");
-      return;
-    }
-  }
-
-  // Deliver the captured data to client and then re-queue the buffer.
-  if (partial_result.buffer->status !=
-      arc::mojom::Camera3BufferStatus::CAMERA3_BUFFER_STATUS_ERROR) {
-    gfx::GpuMemoryBuffer* buffer = stream_context_->buffers[buffer_id].get();
-    auto buffer_handle = buffer->GetHandle();
-    size_t mapped_size = 0;
-    for (const auto& plane : buffer_handle.native_pixmap_handle.planes) {
-      mapped_size += plane.size;
-    }
-    // We are relying on the GpuMemoryBuffer being mapped contiguously on the
-    // virtual memory address space.
-    device_context_->SubmitCapturedData(
-        reinterpret_cast<uint8_t*>(buffer->memory(0)), mapped_size,
-        stream_context_->capture_format, partial_result.reference_time,
-        partial_result.timestamp);
-  }
-  stream_context_->free_buffers.push(buffer_id);
-  partial_results_.erase(frame_number);
-  RegisterBuffer();
-}
+StreamBufferManager::BufferPair::~BufferPair() = default;
 
 StreamBufferManager::StreamContext::StreamContext() = default;
 
 StreamBufferManager::StreamContext::~StreamContext() = default;
-
-StreamBufferManager::CaptureResult::CaptureResult()
-    : metadata(arc::mojom::CameraMetadata::New()) {}
-
-StreamBufferManager::CaptureResult::~CaptureResult() = default;
 
 }  // namespace media

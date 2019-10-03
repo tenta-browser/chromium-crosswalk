@@ -18,11 +18,12 @@ import android.os.StrictMode;
 import android.os.SystemClock;
 import android.util.Log;
 
-import org.chromium.base.ThreadUtils;
 import org.chromium.base.library_loader.ProcessInitException;
+import org.chromium.base.task.PostTask;
 import org.chromium.chrome.browser.init.ChromeBrowserInitializer;
 import org.chromium.chrome.browser.webapps.WebappRegistry;
 import org.chromium.components.background_task_scheduler.TaskIds;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 
 /**
  * The Notification service receives intents fired as responses to user actions issued on Android
@@ -86,17 +87,12 @@ public class NotificationService extends IntentService {
     @Override
     public void onHandleIntent(final Intent intent) {
         if (!intent.hasExtra(NotificationConstants.EXTRA_NOTIFICATION_ID)
-                || !intent.hasExtra(NotificationConstants.EXTRA_NOTIFICATION_INFO_ORIGIN)
-                || !intent.hasExtra(NotificationConstants.EXTRA_NOTIFICATION_INFO_TAG)) {
+                || !intent.hasExtra(NotificationConstants.EXTRA_NOTIFICATION_INFO_ORIGIN)) {
             return;
         }
 
-        ThreadUtils.runOnUiThread(new Runnable() {
-            @Override
-            public void run() {
-                dispatchIntentOnUIThread(NotificationService.this, intent);
-            }
-        });
+        PostTask.runOrPostTask(UiThreadTaskTraits.DEFAULT,
+                () -> { dispatchIntentOnUIThread(NotificationService.this, intent); });
     }
 
     /**

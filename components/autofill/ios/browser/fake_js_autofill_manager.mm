@@ -4,8 +4,12 @@
 
 #import "components/autofill/ios/browser/fake_js_autofill_manager.h"
 
-#import "base/mac/bind_objc_block.h"
-#include "ios/web/public/web_thread.h"
+#include "base/bind.h"
+#include "base/strings/sys_string_conversions.h"
+#include "base/task/post_task.h"
+#include "ios/web/public/js_messaging/web_frame.h"
+#include "ios/web/public/thread/web_task_traits.h"
+#include "ios/web/public/thread/web_thread.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
@@ -14,11 +18,21 @@
 @implementation FakeJSAutofillManager
 
 @synthesize lastClearedFormName = _lastClearedFormName;
+@synthesize lastClearedFieldIdentifier = _lastClearedFieldIdentifier;
+@synthesize lastClearedFrameIdentifier = _lastClearedFrameIdentifier;
 
-- (void)clearAutofilledFieldsForFormNamed:(NSString*)formName
-                        completionHandler:(ProceduralBlock)completionHandler {
-  web::WebThread::PostTask(web::WebThread::UI, FROM_HERE, base::BindBlockArc(^{
+- (void)clearAutofilledFieldsForFormName:(NSString*)formName
+                         fieldIdentifier:(NSString*)fieldIdentifier
+                                 inFrame:(web::WebFrame*)frame
+                       completionHandler:(ProceduralBlock)completionHandler {
+  base::PostTaskWithTraits(FROM_HERE, {web::WebThread::UI}, base::BindOnce(^{
                              _lastClearedFormName = [formName copy];
+                             _lastClearedFieldIdentifier =
+                                 [fieldIdentifier copy];
+                             _lastClearedFrameIdentifier =
+                                 frame ? base::SysUTF8ToNSString(
+                                             frame->GetFrameId())
+                                       : nil;
                              completionHandler();
                            }));
 }

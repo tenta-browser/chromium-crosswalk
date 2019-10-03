@@ -88,9 +88,9 @@ TestBraille.assertContent = function(text, opt_start, opt_end) {
  * @constructor
  * @extends {ChromeVoxUnitTestBase}
  */
-function CvoxEditableTextUnitTest() {}
+function ChromeVoxEditableTextUnitTest() {}
 
-CvoxEditableTextUnitTest.prototype = {
+ChromeVoxEditableTextUnitTest.prototype = {
   __proto__: ChromeVoxUnitTestBase.prototype,
 
   /** @override */
@@ -111,6 +111,7 @@ CvoxEditableTextUnitTest.prototype = {
     cvox.ChromeVoxEditableTextBase.useIBeamCursor = true;
     cvox.ChromeVox.typingEcho = cvox.TypingEcho.CHARACTER_AND_WORD;
     cvox.ChromeVoxEditableTextBase.eventTypingEcho = false;
+    cvox.ChromeVoxEditableTextBase.shouldSpeakInsertions = true;
     cvox.ChromeVox.braille = new TestBraille();
 
     /** Simple mock. */
@@ -173,7 +174,7 @@ CvoxEditableTextUnitTest.prototype = {
   }
 };
 
-TEST_F('CvoxEditableTextUnitTest', 'CursorNavigation', function() {
+TEST_F('ChromeVoxEditableTextUnitTest', 'CursorNavigation', function() {
   var tts = new TestTts();
   var obj = new cvox.ChromeVoxEditableTextBase('Hello', 0, 0, false, tts);
 
@@ -192,7 +193,7 @@ TEST_F('CvoxEditableTextUnitTest', 'CursorNavigation', function() {
 });
 
 /** Test typing words. */
-TEST_F('CvoxEditableTextUnitTest', 'TypingWords', function() {
+TEST_F('ChromeVoxEditableTextUnitTest', 'TypingWords', function() {
   var tts = new TestTts();
   var obj = new cvox.ChromeVoxEditableTextBase('', 0, 0, false, tts);
   obj.changed(new cvox.TextChangeEvent('H', 1, 1));
@@ -251,7 +252,7 @@ TEST_F('CvoxEditableTextUnitTest', 'TypingWords', function() {
 });
 
 /** Test selection. */
-TEST_F('CvoxEditableTextUnitTest', 'Selection', function() {
+TEST_F('ChromeVoxEditableTextUnitTest', 'Selection', function() {
   var tts = new TestTts();
   var obj =
       new cvox.ChromeVoxEditableTextBase('Hello, world.', 0, 0, false, tts);
@@ -284,7 +285,7 @@ TEST_F('CvoxEditableTextUnitTest', 'Selection', function() {
 
 
 /** Test multi-line text. */
-TEST_F('CvoxEditableTextUnitTest', 'MultiLineText', function() {
+TEST_F('ChromeVoxEditableTextUnitTest', 'MultiLineText', function() {
   var str = 'This string\nspans\nfive lines.\n  \n';
   var tts = new TestTts();
   var obj = new cvox.ChromeVoxEditableElement(null, str, 0, 0, false, tts);
@@ -344,7 +345,7 @@ TEST_F('CvoxEditableTextUnitTest', 'MultiLineText', function() {
  * address bar, and it's being autocompleted. Sometimes it's autocompleted
  * as they type, sometimes there's a short delay.
  */
-TEST_F('CvoxEditableTextUnitTest', 'Autocomplete', function() {
+TEST_F('ChromeVoxEditableTextUnitTest', 'Autocomplete', function() {
   var tts = new TestTts();
   var obj = new cvox.ChromeVoxEditableTextBase('', 0, 0, false, tts);
 
@@ -394,7 +395,7 @@ TEST_F('CvoxEditableTextUnitTest', 'Autocomplete', function() {
 /**
  * Test a few common scenarios where text is replaced.
  */
-TEST_F('CvoxEditableTextUnitTest', 'ReplacingText', function() {
+TEST_F('ChromeVoxEditableTextUnitTest', 'ReplacingText', function() {
   // Initial value is Alabama.
   var tts = new TestTts();
   var obj = new cvox.ChromeVoxEditableTextBase('Alabama', 0, 0, false, tts);
@@ -433,7 +434,7 @@ TEST_F('CvoxEditableTextUnitTest', 'ReplacingText', function() {
 /**
  * Test feedback when text changes in a long sentence.
  */
-TEST_F('CvoxEditableTextUnitTest', 'ReplacingLongText', function() {
+TEST_F('ChromeVoxEditableTextUnitTest', 'ReplacingLongText', function() {
   var tts = new TestTts();
   var obj = new cvox.ChromeVoxEditableTextBase(
     'I love deadlines. I like the whooshing sound they make as they fly by.',
@@ -448,7 +449,7 @@ TEST_F('CvoxEditableTextUnitTest', 'ReplacingLongText', function() {
 });
 
 /** Tests character echo. */
-TEST_F('CvoxEditableTextUnitTest', 'CharacterEcho', function() {
+TEST_F('ChromeVoxEditableTextUnitTest', 'CharacterEcho', function() {
   cvox.ChromeVox.typingEcho = cvox.TypingEcho.CHARACTER;
   var tts = new TestTts();
   var obj = new cvox.ChromeVoxEditableTextBase('', 0, 0, false, tts);
@@ -471,8 +472,40 @@ TEST_F('CvoxEditableTextUnitTest', 'CharacterEcho', function() {
 });
 
 
+/** Tests character echo in auto complete text fields. */
+TEST_F('ChromeVoxEditableTextUnitTest', 'CharEchoInAutoComplete', function() {
+  var tts = new TestTts();
+  var url = 'chromevox.com';
+  var obj = new cvox.ChromeVoxEditableTextBase(url, 1, 13, false, tts);
+
+  // This simulates a user typing into an auto complete text field one character
+  // at a time. The selection is the completion and we toggle between various
+  // typing echo options.
+  cvox.ChromeVox.typingEcho = cvox.TypingEcho.CHARACTER;
+  obj.changed(new cvox.TextChangeEvent(url, 2, 13));
+  cvox.ChromeVox.typingEcho = cvox.TypingEcho.NONE;
+  obj.changed(new cvox.TextChangeEvent(url, 3, 13));
+  cvox.ChromeVox.typingEcho = cvox.TypingEcho.CHARACTER_AND_WORD;
+  obj.changed(new cvox.TextChangeEvent(url, 4, 13));
+  cvox.ChromeVox.typingEcho = cvox.TypingEcho.WORD;
+  obj.changed(new cvox.TextChangeEvent(url, 5, 13));
+
+  // The characters should only be read for the typing echo modes containing a
+  // character. They are commented out below when unexpected to make the test
+  // clearer to read.
+  assertEqualStringArrays(
+      [
+        'h', url.slice(2),
+        /* 'r', */ url.slice(3),
+        'o', url.slice(4),
+        /* 'm', */ url.slice(5)
+      ],
+       tts.get());
+});
+
+
 /** Tests word echo. */
-TEST_F('CvoxEditableTextUnitTest', 'WordEcho', function() {
+TEST_F('ChromeVoxEditableTextUnitTest', 'WordEcho', function() {
   cvox.ChromeVox.typingEcho = cvox.TypingEcho.WORD;
   var tts = new TestTts();
   var obj = new cvox.ChromeVoxEditableTextBase('', 0, 0, false, tts);
@@ -496,7 +529,7 @@ TEST_F('CvoxEditableTextUnitTest', 'WordEcho', function() {
 
 
 /** Tests no echo. */
-TEST_F('CvoxEditableTextUnitTest', 'NoEcho', function() {
+TEST_F('ChromeVoxEditableTextUnitTest', 'NoEcho', function() {
   cvox.ChromeVox.typingEcho = cvox.TypingEcho.NONE;
   var tts = new TestTts();
   var obj = new cvox.ChromeVoxEditableTextBase('', 0, 0, false, tts);
@@ -519,7 +552,8 @@ TEST_F('CvoxEditableTextUnitTest', 'NoEcho', function() {
 });
 
 /** Tests cursor movement in an input field by character. */
-TEST_F('CvoxEditableTextUnitTest', 'CursorMovementByCharacter', function() {
+TEST_F('ChromeVoxEditableTextUnitTest', 'CursorMovementByCharacter',
+       function() {
   var test = this.setUpForCursorTest_('input');
   var editable = test.editable, prepare = test.prepare, expect = test.expect;
   try {
@@ -548,7 +582,7 @@ TEST_F('CvoxEditableTextUnitTest', 'CursorMovementByCharacter', function() {
 });
 
 /** Tests cursor movement in an input field by word. */
-TEST_F('CvoxEditableTextUnitTest', 'CursorMovementByWord', function() {
+TEST_F('ChromeVoxEditableTextUnitTest', 'CursorMovementByWord', function() {
   var test = this.setUpForCursorTest_('input');
   var editable = test.editable, prepare = test.prepare, expect = test.expect;
   try {
@@ -583,7 +617,7 @@ TEST_F('CvoxEditableTextUnitTest', 'CursorMovementByWord', function() {
 });
 
 /** Tests that character and word movement still work in <textarea>. */
-TEST_F('CvoxEditableTextUnitTest', 'CursorMovementTextArea', function() {
+TEST_F('ChromeVoxEditableTextUnitTest', 'CursorMovementTextArea', function() {
   var test = this.setUpForCursorTest_('textarea');
   var editable = test.editable, prepare = test.prepare, expect = test.expect;
   try {
@@ -608,7 +642,7 @@ TEST_F('CvoxEditableTextUnitTest', 'CursorMovementTextArea', function() {
 });
 
 /** Tests that line navigation works. */
-TEST_F('CvoxEditableTextUnitTest', 'CursorMovementByLine', function() {
+TEST_F('ChromeVoxEditableTextUnitTest', 'CursorMovementByLine', function() {
   var test = this.setUpForCursorTest_('textarea');
   var editable = test.editable, prepare = test.prepare, expect = test.expect;
   try {
@@ -643,7 +677,7 @@ TEST_F('CvoxEditableTextUnitTest', 'CursorMovementByLine', function() {
 });
 
 /** Tests that paragraph navigation works. */
-TEST_F('CvoxEditableTextUnitTest', 'CursorMovementByParagraph', function() {
+TEST_F('ChromeVoxEditableTextUnitTest', 'CursorMovementByParagraph', function() {
   var test = this.setUpForCursorTest_('textarea');
   var editable = test.editable, prepare = test.prepare, expect = test.expect;
   try {
@@ -666,7 +700,7 @@ TEST_F('CvoxEditableTextUnitTest', 'CursorMovementByParagraph', function() {
 });
 
 /** Tests normalization of TextChangeEvent's */
-TEST_F('CvoxEditableTextUnitTest', 'TextChangeEvent', function() {
+TEST_F('ChromeVoxEditableTextUnitTest', 'TextChangeEvent', function() {
   var event1 = new cvox.TextChangeEvent('foo', 0, 1, true);
   var event2 = new cvox.TextChangeEvent('foo', 1, 0, true);
   var event3 = new cvox.TextChangeEvent('foo', 1, 1, true);
@@ -681,7 +715,7 @@ TEST_F('CvoxEditableTextUnitTest', 'TextChangeEvent', function() {
   assertEquals(1, event3.end);
 });
 
-TEST_F('CvoxEditableTextUnitTest', 'ContentEditableBraille', function() {
+TEST_F('ChromeVoxEditableTextUnitTest', 'ContentEditableBraille', function() {
   this.loadDoc(function() {/*!
     <div id='1' contenteditable='true'>
       Some &nbsp; text.<br><br>
@@ -703,7 +737,7 @@ TEST_F('CvoxEditableTextUnitTest', 'ContentEditableBraille', function() {
   TestBraille.assertContent('', 0, 0);
 });
 
-TEST_F('CvoxEditableTextUnitTest', 'TypingNonBreakingSpaces', function() {
+TEST_F('ChromeVoxEditableTextUnitTest', 'TypingNonBreakingSpaces', function() {
   var tts = new TestTts();
   var obj = new cvox.ChromeVoxEditableTextBase('Hello', 0, 0, false, tts);
 

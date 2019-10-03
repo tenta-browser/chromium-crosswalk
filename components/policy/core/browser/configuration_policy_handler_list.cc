@@ -5,7 +5,6 @@
 #include "components/policy/core/browser/configuration_policy_handler_list.h"
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "components/policy/core/browser/configuration_policy_handler.h"
 #include "components/policy/core/browser/configuration_policy_handler_parameters.h"
 #include "components/policy/core/browser/policy_error_map.h"
@@ -63,8 +62,7 @@ void ConfigurationPolicyHandlerList::ApplyPolicySettings(
   }
 
   if (details_callback_) {
-    for (PolicyMap::const_iterator it = filtered_policies->begin();
-         it != filtered_policies->end();
+    for (auto it = filtered_policies->begin(); it != filtered_policies->end();
          ++it) {
       const PolicyDetails* details = details_callback_.Run(it->first);
       if (details && details->is_deprecated)

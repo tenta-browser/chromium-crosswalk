@@ -8,12 +8,11 @@
 
 #include "base/bind.h"
 #include "base/callback.h"
-#include "base/memory/ptr_util.h"
 #include "base/threading/thread_task_runner_handle.h"
-#include "chrome/browser/gcm/instance_id/instance_id_profile_service.h"
 #include "chrome/browser/gcm/instance_id/instance_id_profile_service_factory.h"
 #include "components/gcm_driver/instance_id/instance_id.h"
 #include "components/gcm_driver/instance_id/instance_id_driver.h"
+#include "components/gcm_driver/instance_id/instance_id_profile_service.h"
 #include "components/offline_pages/core/offline_page_feature.h"
 
 using instance_id::InstanceID;
@@ -42,9 +41,10 @@ void PrefetchInstanceIDProxy::GetGCMToken(
   DCHECK(IsPrefetchingOfflinePagesEnabled());
   if (!token_.empty()) {
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE, base::Bind(&PrefetchInstanceIDProxy::GotGCMToken,
-                              weak_factory_.GetWeakPtr(), callback, token_,
-                              InstanceID::SUCCESS));
+        FROM_HERE,
+        base::BindOnce(&PrefetchInstanceIDProxy::GotGCMToken,
+                       weak_factory_.GetWeakPtr(), std::move(callback), token_,
+                       InstanceID::SUCCESS));
     return;
   }
 
@@ -55,10 +55,11 @@ void PrefetchInstanceIDProxy::GetGCMToken(
   InstanceID* instance_id = service->driver()->GetInstanceID(app_id_);
   DCHECK(instance_id);
 
-  instance_id->GetToken(kProdSenderId, kScopeGCM,
-                        std::map<std::string, std::string>(),
-                        base::Bind(&PrefetchInstanceIDProxy::GotGCMToken,
-                                   weak_factory_.GetWeakPtr(), callback));
+  instance_id->GetToken(
+      kProdSenderId, kScopeGCM, std::map<std::string, std::string>(),
+      /*is_lazy=*/false,
+      base::BindOnce(&PrefetchInstanceIDProxy::GotGCMToken,
+                     weak_factory_.GetWeakPtr(), std::move(callback)));
 }
 
 void PrefetchInstanceIDProxy::GotGCMToken(InstanceID::GetTokenCallback callback,
@@ -66,7 +67,7 @@ void PrefetchInstanceIDProxy::GotGCMToken(InstanceID::GetTokenCallback callback,
                                           InstanceID::Result result) {
   DVLOG(1) << "Got an Instance ID token for GCM: " << token
            << " with result: " << result;
-  callback.Run(token, result);
+  std::move(callback).Run(token, result);
 }
 
 }  // namespace offline_pages

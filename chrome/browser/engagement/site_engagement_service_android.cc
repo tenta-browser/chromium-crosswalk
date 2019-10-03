@@ -6,10 +6,9 @@
 
 #include "base/android/jni_android.h"
 #include "base/android/jni_string.h"
-#include "base/memory/ptr_util.h"
+#include "chrome/android/chrome_jni_headers/SiteEngagementService_jni.h"
 #include "chrome/browser/engagement/site_engagement_score.h"
 #include "chrome/browser/profiles/profile_android.h"
-#include "jni/SiteEngagementService_jni.h"
 #include "url/gurl.h"
 
 using base::android::JavaParamRef;
@@ -21,7 +20,7 @@ SiteEngagementServiceAndroid::GetOrCreate(JNIEnv* env,
   SiteEngagementServiceAndroid* android_service = service->GetAndroidService();
   if (!android_service) {
     service->SetAndroidService(
-        base::MakeUnique<SiteEngagementServiceAndroid>(env, service));
+        std::make_unique<SiteEngagementServiceAndroid>(env, service));
     android_service = service->GetAndroidService();
   }
 
@@ -64,16 +63,13 @@ void SiteEngagementServiceAndroid::ResetBaseScoreForURL(
   }
 }
 
-void JNI_SiteEngagementService_SetParamValuesForTesting(
-    JNIEnv* env,
-    const JavaParamRef<jclass>& clazz) {
+void JNI_SiteEngagementService_SetParamValuesForTesting(JNIEnv* env) {
   SiteEngagementScore::SetParamValuesForTesting();
 }
 
 base::android::ScopedJavaLocalRef<jobject>
 JNI_SiteEngagementService_SiteEngagementServiceForProfile(
     JNIEnv* env,
-    const JavaParamRef<jclass>& clazz,
     const JavaParamRef<jobject>& jprofile) {
   Profile* profile = ProfileAndroid::FromProfileAndroid(jprofile);
   SiteEngagementService* service = SiteEngagementService::Get(profile);

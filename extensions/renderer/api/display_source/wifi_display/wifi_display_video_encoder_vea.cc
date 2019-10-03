@@ -116,17 +116,17 @@ WiFiDisplayVideoEncoderVEA::WiFiDisplayVideoEncoderVEA(
 
 WiFiDisplayVideoEncoderVEA::~WiFiDisplayVideoEncoderVEA() {
   media_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&media::VideoEncodeAccelerator::Destroy,
-                            base::Unretained(vea_)));
+      FROM_HERE, base::BindOnce(&media::VideoEncodeAccelerator::Destroy,
+                                base::Unretained(vea_)));
 }
 
 scoped_refptr<WiFiDisplayVideoEncoder>
 WiFiDisplayVideoEncoderVEA::InitOnMediaThread(const InitParameters& params) {
   media::VideoCodecProfile profile = (params.profile == wds::CHP)
       ? media::H264PROFILE_HIGH : media::H264PROFILE_BASELINE;
-  bool success =
-      vea_->Initialize(media::PIXEL_FORMAT_I420, params.frame_size,
-                       profile, params.bit_rate, this);
+  const media::VideoEncodeAccelerator::Config config(
+      media::PIXEL_FORMAT_I420, params.frame_size, profile, params.bit_rate);
+  bool success = vea_->Initialize(config, this);
   if (success)
     return this;
 
@@ -152,8 +152,9 @@ void WiFiDisplayVideoEncoderVEA::RequireBitstreamBuffers(
 void WiFiDisplayVideoEncoderVEA::OnCreateSharedMemory(
     std::unique_ptr<base::SharedMemory> memory) {
   media_task_runner_->PostTask(
-      FROM_HERE, base::Bind(&WiFiDisplayVideoEncoderVEA::OnReceivedSharedMemory,
-                            this, base::Passed(&memory)));
+      FROM_HERE,
+      base::BindOnce(&WiFiDisplayVideoEncoderVEA::OnReceivedSharedMemory, this,
+                     std::move(memory)));
 }
 
 void WiFiDisplayVideoEncoderVEA::OnReceivedSharedMemory(
@@ -170,7 +171,7 @@ void WiFiDisplayVideoEncoderVEA::OnReceivedSharedMemory(
   for (size_t i = 0; i < output_buffers_.size(); ++i) {
     vea_->UseOutputBitstreamBuffer(media::BitstreamBuffer(
         static_cast<int32_t>(i), output_buffers_[i]->handle(),
-        output_buffers_[i]->mapped_size()));
+        false /* read_only */, output_buffers_[i]->mapped_size()));
   }
 }
 
@@ -209,14 +210,14 @@ void WiFiDisplayVideoEncoderVEA::BitstreamBufferReady(
   if (!encoded_callback_.is_null()) {
     encoded_callback_.Run(
         std::unique_ptr<WiFiDisplayEncodedFrame>(new WiFiDisplayEncodedFrame(
-            std::string(reinterpret_cast<const char*>(output_buffer->memory()),
+            std::string(static_cast<const char*>(output_buffer->memory()),
                         payload_size),
             request.reference_time, base::TimeTicks::Now(), key_frame)));
   }
   DCHECK(vea_);
-  vea_->UseOutputBitstreamBuffer(
-      media::BitstreamBuffer(bitstream_buffer_id, output_buffer->handle(),
-                             output_buffer->mapped_size()));
+  vea_->UseOutputBitstreamBuffer(media::BitstreamBuffer(
+      bitstream_buffer_id, output_buffer->handle(), false /* read_only */,
+      output_buffer->mapped_size()));
 
   in_progress_frame_encodes_.pop_front();
 }

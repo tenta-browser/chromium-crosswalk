@@ -13,6 +13,7 @@
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
 #include "base/memory/weak_ptr.h"
+#include "base/sequenced_task_runner.h"
 #include "base/single_thread_task_runner.h"
 #include "base/threading/thread_checker.h"
 #include "remoting/base/session_options.h"
@@ -20,11 +21,11 @@
 #include "remoting/codec/webrtc_video_encoder_selector.h"
 #include "remoting/protocol/host_video_stats_dispatcher.h"
 #include "remoting/protocol/video_stream.h"
+#include "third_party/webrtc/api/scoped_refptr.h"
 #include "third_party/webrtc/common_types.h"
 #include "third_party/webrtc/modules/desktop_capture/desktop_capturer.h"
 
 namespace webrtc {
-class MediaStreamInterface;
 class PeerConnectionInterface;
 }  // namespace webrtc
 
@@ -53,6 +54,7 @@ class WebrtcVideoStream : public VideoStream,
   void SetLosslessEncode(bool want_lossless) override;
   void SetLosslessColor(bool want_lossless) override;
   void SetObserver(Observer* observer) override;
+  void SelectSource(int id) override;
 
  private:
   struct FrameStats;
@@ -85,7 +87,6 @@ class WebrtcVideoStream : public VideoStream,
   scoped_refptr<InputEventTimestampsSource> event_timestamps_source_;
 
   scoped_refptr<webrtc::PeerConnectionInterface> peer_connection_;
-  scoped_refptr<webrtc::MediaStreamInterface> stream_;
 
   HostVideoStatsDispatcher video_stats_dispatcher_;
 

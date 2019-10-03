@@ -9,10 +9,12 @@
 #include <string>
 
 #include "base/macros.h"
+#include "base/optional.h"
 #include "ui/base/models/simple_menu_model.h"
 
 class Browser;
 class ExtensionAction;
+class GURL;
 class Profile;
 
 namespace content {
@@ -28,16 +30,43 @@ class ExtensionContextMenuModel : public ui::SimpleMenuModel,
                                   public ui::SimpleMenuModel::Delegate {
  public:
   enum MenuEntries {
-    NAME = 0,
-    CONFIGURE,
+    HOME_PAGE = 0,
+    OPTIONS,
     TOGGLE_VISIBILITY,
     UNINSTALL,
-    MANAGE,
+    MANAGE_EXTENSIONS,
     INSPECT_POPUP,
+    PAGE_ACCESS_CANT_ACCESS,
     PAGE_ACCESS_SUBMENU,
     PAGE_ACCESS_RUN_ON_CLICK,
     PAGE_ACCESS_RUN_ON_SITE,
     PAGE_ACCESS_RUN_ON_ALL_SITES,
+    PAGE_ACCESS_LEARN_MORE,
+    // NOTE: If you update this, you probably need to update the
+    // ContextMenuAction enum below.
+  };
+
+  // A separate enum to indicate the action taken on the menu. We have two
+  // enums (this and MenuEntries above) to avoid needing to have a single one
+  // with both action-specific values (like kNoAction) and menu-specific values
+  // (like PAGE_ACCESS_SUBMENU).
+  // These values are persisted to logs. Entries should not be renumbered and
+  // numeric values should never be reused. New values should be added before
+  // kMaxValue.
+  enum class ContextMenuAction {
+    kNoAction = 0,
+    kCustomCommand = 1,
+    kHomePage = 2,
+    kOptions = 3,
+    kToggleVisibility = 4,
+    kUninstall = 5,
+    kManageExtensions = 6,
+    kInspectPopup = 7,
+    kPageAccessRunOnClick = 8,
+    kPageAccessRunOnSite = 9,
+    kPageAccessRunOnAllSites = 10,
+    kPageAccessLearnMore = 11,
+    kMaxValue = kPageAccessLearnMore,
   };
 
   // Type of action the extension icon represents.
@@ -73,7 +102,8 @@ class ExtensionContextMenuModel : public ui::SimpleMenuModel,
   ExtensionContextMenuModel(const Extension* extension,
                             Browser* browser,
                             ButtonVisibility visibility,
-                            PopupDelegate* delegate);
+                            PopupDelegate* delegate,
+                            bool can_show_icon_in_toolbar);
   ~ExtensionContextMenuModel() override;
 
   // SimpleMenuModel::Delegate:
@@ -81,6 +111,8 @@ class ExtensionContextMenuModel : public ui::SimpleMenuModel,
   bool IsCommandIdVisible(int command_id) const override;
   bool IsCommandIdEnabled(int command_id) const override;
   void ExecuteCommand(int command_id, int event_flags) override;
+  void OnMenuWillShow(ui::SimpleMenuModel* source) override;
+  void MenuClosed(ui::SimpleMenuModel* source) override;
 
   ui::SimpleMenuModel* page_access_submenu_for_testing() {
     return page_access_submenu_.get();
@@ -93,6 +125,11 @@ class ExtensionContextMenuModel : public ui::SimpleMenuModel,
 
   MenuEntries GetCurrentPageAccess(const Extension* extension,
                                    content::WebContents* web_contents) const;
+
+  // Returns true if the given page access command is enabled in the menu.
+  bool IsPageAccessCommandEnabled(const Extension& extension,
+                                  const GURL& url,
+                                  int command_id) const;
 
   void HandlePageAccessCommand(int command_id,
                                const Extension* extension) const;
@@ -130,10 +167,16 @@ class ExtensionContextMenuModel : public ui::SimpleMenuModel,
   // The visibility of the button at the time the menu opened.
   ButtonVisibility button_visibility_;
 
+  const bool can_show_icon_in_toolbar_;
+
   // Menu matcher for context menu items specified by the extension.
   std::unique_ptr<ContextMenuMatcher> extension_items_;
 
   std::unique_ptr<ui::SimpleMenuModel> page_access_submenu_;
+
+  // The action taken by the menu. Has a valid value when the menu is being
+  // shown.
+  base::Optional<ContextMenuAction> action_taken_;
 
   DISALLOW_COPY_AND_ASSIGN(ExtensionContextMenuModel);
 };

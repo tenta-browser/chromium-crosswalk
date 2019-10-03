@@ -23,12 +23,10 @@ namespace browsertest_util {
 enum class ColumnSpecifier {
   PROCESS_ID,
   MEMORY_FOOTPRINT,
-  PHYSICAL_MEMORY,
   V8_MEMORY,
   V8_MEMORY_USED,
   SQLITE_MEMORY_USED,
   IDLE_WAKEUPS,
-  MEMORY_STATE,
   NETWORK_USE,
   TOTAL_NETWORK_USE,
 

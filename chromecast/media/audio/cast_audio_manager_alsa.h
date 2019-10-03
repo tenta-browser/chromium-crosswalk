@@ -5,9 +5,11 @@
 #ifndef CHROMECAST_MEDIA_AUDIO_CAST_AUDIO_MANAGER_ALSA_H_
 #define CHROMECAST_MEDIA_AUDIO_CAST_AUDIO_MANAGER_ALSA_H_
 
+#include <memory>
 #include <string>
 
 #include "base/macros.h"
+#include "base/single_thread_task_runner.h"
 #include "chromecast/media/audio/cast_audio_manager.h"
 
 namespace media {
@@ -20,11 +22,19 @@ namespace media {
 
 class CastAudioManagerAlsa : public CastAudioManager {
  public:
+  enum StreamType {
+    kStreamPlayback = 0,
+    kStreamCapture,
+  };
+
   CastAudioManagerAlsa(
       std::unique_ptr<::media::AudioThread> audio_thread,
       ::media::AudioLogFactory* audio_log_factory,
-      std::unique_ptr<MediaPipelineBackendFactory> backend_factory,
-      scoped_refptr<base::SingleThreadTaskRunner> backend_task_runner,
+      base::RepeatingCallback<CmaBackendFactory*()> backend_factory_getter,
+      GetSessionIdCallback get_session_id_callback,
+      scoped_refptr<base::SingleThreadTaskRunner> browser_task_runner,
+      scoped_refptr<base::SingleThreadTaskRunner> media_task_runner,
+      service_manager::Connector* connector,
       bool use_mixer);
   ~CastAudioManagerAlsa() override;
 
@@ -36,11 +46,6 @@ class CastAudioManagerAlsa : public CastAudioManager {
       const std::string& device_id) override;
 
  private:
-  enum StreamType {
-    kStreamPlayback = 0,
-    kStreamCapture,
-  };
-
   // CastAudioManager implementation.
   ::media::AudioInputStream* MakeLinearInputStream(
       const ::media::AudioParameters& params,
@@ -64,11 +69,6 @@ class CastAudioManagerAlsa : public CastAudioManager {
   void GetAlsaDevicesInfo(StreamType type,
                           void** hint,
                           ::media::AudioDeviceNames* device_names);
-
-  // Checks if the specific ALSA device is available.
-  static bool IsAlsaDeviceAvailable(StreamType type, const char* device_name);
-
-  static const char* UnwantedDeviceTypeWhenEnumerating(StreamType wanted_type);
 
   std::unique_ptr<::media::AlsaWrapper> wrapper_;
 

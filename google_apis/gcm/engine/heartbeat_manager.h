@@ -16,7 +16,7 @@
 #include "google_apis/gcm/engine/connection_factory.h"
 
 namespace base {
-class Timer;
+class RetainingOneShotTimer;
 }
 
 namespace mcs_proto {
@@ -32,7 +32,15 @@ class GCM_EXPORT HeartbeatManager : public base::PowerObserver {
   typedef base::Callback<void(ConnectionFactory::ConnectionResetReason)>
       ReconnectCallback;
 
-  HeartbeatManager();
+  // |io_task_runner|: for running IO tasks.
+  // |maybe_power_wrapped_io_task_runner|: for running IO tasks, where if the
+  //     feature is provided, it could be a wrapper on top of |io_task_runner|
+  //     to provide power management featueres so that a delayed task posted to
+  //     it can wake the system up from sleep to perform the task.
+  explicit HeartbeatManager(
+      scoped_refptr<base::SequencedTaskRunner> io_task_runner,
+      scoped_refptr<base::SequencedTaskRunner>
+          maybe_power_wrapped_io_task_runner);
   ~HeartbeatManager() override;
 
   // Start the heartbeat logic.
@@ -60,7 +68,7 @@ class GCM_EXPORT HeartbeatManager : public base::PowerObserver {
   base::TimeTicks GetNextHeartbeatTime() const;
 
   // Updates the timer used for scheduling heartbeats.
-  void UpdateHeartbeatTimer(std::unique_ptr<base::Timer> timer);
+  void UpdateHeartbeatTimer(std::unique_ptr<base::RetainingOneShotTimer> timer);
 
   // base::PowerObserver override.
   void OnSuspend() override;
@@ -117,8 +125,10 @@ class GCM_EXPORT HeartbeatManager : public base::PowerObserver {
   // Custom interval requested by the client.
   int client_interval_ms_;
 
+  const scoped_refptr<base::SequencedTaskRunner> io_task_runner_;
+
   // Timer for triggering heartbeats.
-  std::unique_ptr<base::Timer> heartbeat_timer_;
+  std::unique_ptr<base::RetainingOneShotTimer> heartbeat_timer_;
 
   // Time at which the machine was last suspended.
   base::Time suspend_time_;

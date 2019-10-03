@@ -7,8 +7,9 @@
 #include <algorithm>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/logging.h"
-#include "base/sys_info.h"
+#include "base/system/sys_info.h"
 #include "base/time/default_tick_clock.h"
 #include "base/time/time.h"
 #include "remoting/proto/video.pb.h"
@@ -45,8 +46,8 @@ namespace protocol {
 // We assume that the number of available cores is constant.
 CaptureScheduler::CaptureScheduler(const base::Closure& capture_closure)
     : capture_closure_(capture_closure),
-      tick_clock_(new base::DefaultTickClock()),
-      capture_timer_(new base::Timer(false, false)),
+      tick_clock_(base::DefaultTickClock::GetInstance()),
+      capture_timer_(new base::OneShotTimer()),
       minimum_interval_(
           base::TimeDelta::FromMilliseconds(kDefaultMinimumIntervalMs)),
       num_of_processors_(base::SysInfo::NumberOfProcessors()),
@@ -127,12 +128,12 @@ void CaptureScheduler::ProcessVideoAck(std::unique_ptr<VideoAck> video_ack) {
   ScheduleNextCapture();
 }
 
-void CaptureScheduler::SetTickClockForTest(
-    std::unique_ptr<base::TickClock> tick_clock) {
-  tick_clock_ = std::move(tick_clock);
+void CaptureScheduler::SetTickClockForTest(const base::TickClock* tick_clock) {
+  tick_clock_ = tick_clock;
 }
 
-void CaptureScheduler::SetTimerForTest(std::unique_ptr<base::Timer> timer) {
+void CaptureScheduler::SetTimerForTest(
+    std::unique_ptr<base::OneShotTimer> timer) {
   capture_timer_ = std::move(timer);
 }
 

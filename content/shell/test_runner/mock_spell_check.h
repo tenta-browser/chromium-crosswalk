@@ -8,9 +8,9 @@
 #include <vector>
 
 #include "base/macros.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/platform/WebVector.h"
-#include "third_party/WebKit/public/web/WebTextCheckingResult.h"
+#include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/platform/web_vector.h"
+#include "third_party/blink/public/web/web_text_checking_result.h"
 
 namespace test_runner {
 
@@ -38,8 +38,8 @@ class MockSpellCheck {
   // For example, when the given text is "   zz zz", this function sets 3 to
   // misspelledOffset and 2 to misspelledLength, respectively.
   bool SpellCheckWord(const blink::WebString& text,
-                      int* misspelled_offset,
-                      int* misspelled_length);
+                      size_t* misspelled_offset,
+                      size_t* misspelled_length);
 
   // Checks whether the specified text can be spell checked immediately using
   // the spell checker cache.

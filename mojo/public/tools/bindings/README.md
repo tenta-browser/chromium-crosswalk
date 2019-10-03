@@ -1,18 +1,18 @@
-# Mojom IDL and Bindings Generator
-This document is a subset of the [Mojo documentation](/mojo).
+# Mojom Interface Definition Language (IDL)
+This document is a subset of the [Mojo documentation](/mojo/README.md).
 
 [TOC]
 
 ## Overview
 
-Mojom is the IDL for Mojo bindings interfaces. Given a `.mojom` file, the
+Mojom is the IDL for Mojo interfaces. Given a `.mojom` file, the
 [bindings
-generator](https://cs.chromium.org/chromium/src/mojo/public/tools/bindings/)
-outputs bindings for all supported languages: **C++**, **JavaScript**, and
+generator](https://cs.chromium.org/chromium/src/mojo/public/tools/bindings/) can
+output bindings for any supported language: **C++**, **JavaScript**, or
 **Java**.
 
 For a trivial example consider the following hypothetical Mojom file we write to
-`//services/widget/public/interfaces/frobinator.mojom`:
+`//services/widget/public/mojom/frobinator.mojom`:
 
 ```
 module widget.mojom;
@@ -25,15 +25,15 @@ interface Frobinator {
 This defines a single [interface](#Interfaces) named `Frobinator` in a
 [module](#Modules) named `widget.mojom` (and thus fully qualified in Mojom as
 `widget.mojom.Frobinator`.) Note that many interfaces and/or other types of
-definitions may be included in a single Mojom file.
+definitions (structs, enums, *etc.*) may be included in a single Mojom file.
 
 If we add a corresponding GN target to
-`//services/widget/public/interfaces/BUILD.gn`:
+`//services/widget/public/mojom/BUILD.gn`:
 
 ```
 import("mojo/public/tools/bindings/mojom.gni")
 
-mojom("interfaces") {
+mojom("mojom") {
   sources = [
     "frobinator.mojom",
   ]
@@ -43,22 +43,32 @@ mojom("interfaces") {
 and then build this target:
 
 ```
-ninja -C out/r services/widget/public/interfaces
+ninja -C out/r services/widget/public/mojom
 ```
 
 we'll find several generated sources in our output directory:
 
 ```
-out/r/gen/services/widget/public/interfaces/frobinator.mojom.cc
-out/r/gen/services/widget/public/interfaces/frobinator.mojom.h
-out/r/gen/services/widget/public/interfaces/frobinator.mojom.js
-out/r/gen/services/widget/public/interfaces/frobinator.mojom.srcjar
-...
+out/r/gen/services/widget/public/mojom/frobinator.mojom.cc
+out/r/gen/services/widget/public/mojom/frobinator.mojom.h
+out/r/gen/services/widget/public/mojom/frobinator.mojom-shared.h
+etc...
 ```
 
 Each of these generated source modules includes a set of definitions
-representing the Mojom contents within the target language. For more details
-regarding the generated outputs please see
+representing the Mojom contents in C++. You can also build or depend on suffixed
+target names to get bindings for other languages. For example,
+
+```
+ninja -C out/r services/widget/public/mojom:mojom_js
+ninja -C out/r services/widget/public/mojom:mojom_java
+```
+
+would generate JavaScript and Java bindings respectively, in the same generated
+output directory.
+
+For more details regarding the generated
+outputs please see
 [documentation for individual target languages](#Generated-Code-For-Target-Languages).
 
 ## Mojom Syntax
@@ -136,7 +146,7 @@ If your Mojom references definitions from other Mojom files, you must **import**
 those files. Import syntax is as follows:
 
 ```
-import "services/widget/public/interfaces/frobinator.mojom";
+import "services/widget/public/mojom/frobinator.mojom";
 ```
 
 Import paths are always relative to the top-level directory.
@@ -283,7 +293,7 @@ For details on how unions like this translate to generated bindings code, see
 ### Enumeration Types
 
 Enumeration types may be defined using the **enum** keyword either directly
-within a module or within the namespace of some struct or interface:
+within a module or nested within the namespace of some struct or interface:
 
 ```
 module business.mojom;
@@ -304,8 +314,8 @@ struct Employee {
 };
 ```
 
-That that similar to C-style enums, individual values may be explicitly assigned
-within an enum definition. By default values are based at zero and incremenet by
+Similar to C-style enums, individual values may be explicitly assigned within an
+enum definition. By default, values are based at zero and increment by
 1 sequentially.
 
 The effect of nested definitions on generated bindings varies depending on the
@@ -314,7 +324,7 @@ target language. See [documentation for individual target languages](#Generated-
 ### Constants
 
 Constants may be defined using the **const** keyword either directly within a
-module or within the namespace of some struct or interface:
+module or nested within the namespace of some struct or interface:
 
 ```
 module business.mojom;
@@ -341,7 +351,7 @@ target language. See [documentation for individual target languages](#Generated-
 
 An **interface** is a logical bundle of parameterized request messages. Each
 request message may optionally define a parameterized response message. Here's
-syntax to define an interface `Foo` with various kinds of requests:
+an example to define an interface `Foo` with various kinds of requests:
 
 ```
 interface Foo {
@@ -372,9 +382,9 @@ interesting attributes supported today.
 :   The `Sync` attribute may be specified for any interface method which expects
     a response. This makes it so that callers of the method can wait
     synchronously for a response. See
-    [Synchronous Calls](/mojo/public/cpp/bindings#Synchronous-Calls) in the C++
-    bindings documentation. Note that sync calls are not currently supported in
-    other target languages.
+    [Synchronous Calls](/mojo/public/cpp/bindings/README.md#Synchronous-Calls)
+    in the C++ bindings documentation. Note that sync calls are not currently
+    supported in other target languages.
 
 **`[Extensible]`**
 :   The `Extensible` attribute may be specified for any enum definition. This
@@ -386,14 +396,23 @@ interesting attributes supported today.
 :   The `Native` attribute may be specified for an empty struct declaration to
     provide a nominal bridge between Mojo IPC and legacy `IPC::ParamTraits` or
     `IPC_STRUCT_TRAITS*` macros.
-    See [Using Legacy IPC Traits](/ipc#Using-Legacy-IPC-Traits) for more
-    details. Note support for this attribute is strictly limited to C++ bindings
-    generation.
+    See
+    [Repurposing Legacy IPC Traits](/docs/mojo_ipc_conversion.md#repurposing-and-invocations)
+    for more details. Note support for this attribute is strictly limited to C++
+    bindings generation.
 
 **`[MinVersion=N]`**
 :   The `MinVersion` attribute is used to specify the version at which a given
     field, enum value, interface method, or method parameter was introduced.
     See [Versioning](#Versioning) for more details.
+
+**`[EnableIf=value]`**
+:   The `EnableIf` attribute is used to conditionally enable definitions when
+    the mojom is parsed. If the `mojom` target in the GN file does not include
+    the matching `value` in the list of `enabled_features`, the definition
+    will be disabled. This is useful for mojom definitions that only make
+    sense on one platform. Note that the `EnableIf` attribute can only be set
+    once per definition.
 
 ## Generated Code For Target Languages
 
@@ -402,9 +421,9 @@ corresponding code for each supported target language. For more details on how
 Mojom concepts translate to a given target langauge, please refer to the
 bindings API documentation for that language:
 
-* [C++ Bindings](/mojo/public/cpp/bindings)
-* [JavaScript Bindings](/mojo/public/js)
-* [Java Bindings](/mojo/public/java/bindings)
+* [C++ Bindings](/mojo/public/cpp/bindings/README.md)
+* [JavaScript Bindings](/mojo/public/js/README.md)
+* [Java Bindings](/mojo/public/java/bindings/README.md)
 
 ## Message Validation
 
@@ -416,9 +435,11 @@ is added.
 
 If a message fails validation, it is never dispatched. Instead a **connection
 error** is raised on the binding object (see
-[C++ Connection Errors](/mojo/public/cpp/bindings#Connection-Errors),
-[Java Connection Errors](/mojo/public/java/bindings#Connection-Errors), or
-[JavaScript Connection Errors](/mojo/public/js#Connection-Errors) for details.)
+[C++ Connection Errors](/mojo/public/cpp/bindings/README.md#Connection-Errors),
+[Java Connection Errors](/mojo/public/java/bindings/README.md#Connection-Errors),
+or
+[JavaScript Connection Errors](/mojo/public/js/README.md#Connection-Errors) for
+details.)
 
 Some baseline level of validation is done automatically for primitive Mojom
 types.
@@ -467,9 +488,9 @@ manually encode their own bindings messages.
 
 It's also possible for developers to define custom validation logic for specific
 Mojom struct types by exploiting the
-[type mapping](/mojo/public/cpp/bindings#Type-Mapping) system for C++ bindings.
-Messages rejected by custom validation logic trigger the same validation failure
-behavior as the built-in type validation routines.
+[type mapping](/mojo/public/cpp/bindings/README.md#Type-Mapping) system for C++
+bindings. Messages rejected by custom validation logic trigger the same
+validation failure behavior as the built-in type validation routines.
 
 ## Associated Interfaces
 
@@ -483,9 +504,9 @@ relative ordering guarantees among them. Associated interfaces are useful when
 one interface needs to guarantee strict FIFO ordering with respect to one or
 more other interfaces, as they allow interfaces to share a single pipe.
 
-Currenly associated interfaces are only supported in generated C++ bindings.
+Currently associated interfaces are only supported in generated C++ bindings.
 See the documentation for
-[C++ Associated Interfaces](/mojo/public/cpp/bindings#Associated-Interfaces).
+[C++ Associated Interfaces](/mojo/public/cpp/bindings/README.md#Associated-Interfaces).
 
 ## Versioning
 
@@ -536,6 +557,12 @@ By default, fields belong to version 0. New fields must be appended to the
 struct definition (*i.e*., existing fields must not change **ordinal value**)
 with the `MinVersion` attribute set to a number greater than any previous
 existing versions.
+
+*** note
+**NOTE:** do not change existing fields in versioned structs, as this is
+not backwards-compatible. Instead, rename the old field to make its
+deprecation clear and add a new field with the new version number.
+***
 
 **Ordinal value** refers to the relative positional layout of a struct's fields
 (and an interface's methods) when encoded in a message. Implicitly, ordinal
@@ -622,8 +649,9 @@ assert the remote version from a client handle (*e.g.*, an
 `InterfacePtr<T>` in C++ bindings.)
 
 See
-[C++ Versioning Considerations](/mojo/public/cpp/bindings#Versioning-Considerations)
-and [Java Versioning Considerations](/mojo/public/java/bindings#Versioning-Considerations)
+[C++ Versioning Considerations](/mojo/public/cpp/bindings/README.md#Versioning-Considerations)
+and
+[Java Versioning Considerations](/mojo/public/java/bindings/README.md#Versioning-Considerations)
 
 ### Versioned Enums
 
@@ -661,7 +689,7 @@ is strictly for documentation purposes. It has no impact on the generated code.
 
 With extensible enums, bound interface implementations may receive unknown enum
 values and will need to deal with them gracefully. See
-[C++ Versioning Considerations](/mojo/public/cpp/bindings#Versioning-Considerations)
+[C++ Versioning Considerations](/mojo/public/cpp/bindings/README.md#Versioning-Considerations)
 for details.
 
 ## Grammar Reference
@@ -677,7 +705,7 @@ ModuleStatement = AttributeSection "module" Identifier ";"
 ImportStatement = "import" StringLiteral ";"
 Definition = Struct Union Interface Enum Const
 
-AttributeSection = "[" AttributeList "]"
+AttributeSection = <empty> | "[" AttributeList "]"
 AttributeList = <empty> | NonEmptyAttributeList
 NonEmptyAttributeList = Attribute
                       | Attribute "," NonEmptyAttributeList
@@ -691,7 +719,7 @@ StructBody = <empty>
            | StructBody Const
            | StructBody Enum
            | StructBody StructField
-StructField = AttributeSection TypeSpec Name Orginal Default ";"
+StructField = AttributeSection TypeSpec Name Ordinal Default ";"
 
 Union = AttributeSection "union" Name "{" UnionBody "}" ";"
 UnionBody = <empty> | UnionBody UnionField

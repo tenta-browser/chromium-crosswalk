@@ -4,6 +4,7 @@
 
 #include "ui/gl/init/gl_factory.h"
 
+#include <algorithm>
 #include <string>
 #include <vector>
 
@@ -12,6 +13,8 @@
 #include "base/trace_event/trace_event.h"
 #include "ui/gl/gl_share_group.h"
 #include "ui/gl/gl_surface.h"
+#include "ui/gl/gl_utils.h"
+#include "ui/gl/gl_version_info.h"
 #include "ui/gl/init/gl_initializer.h"
 
 namespace gl {
@@ -21,10 +24,41 @@ namespace {
 bool InitializeGLOneOffHelper(bool init_extensions) {
   DCHECK_EQ(kGLImplementationNone, GetGLImplementation());
 
-  std::vector<GLImplementation> allowed_impls = GetAllowedGLImplementations();
-  DCHECK(!allowed_impls.empty());
-
   const base::CommandLine* cmd = base::CommandLine::ForCurrentProcess();
+  std::string requested_implementation_name =
+      cmd->GetSwitchValueASCII(switches::kUseGL);
+  if (requested_implementation_name == kGLImplementationDisabledName) {
+    gl::SetGLImplementation(gl::kGLImplementationDisabled);
+    return true;
+  }
+
+  std::vector<GLImplementation> allowed_impls = GetAllowedGLImplementations();
+
+  if (cmd->HasSwitch(switches::kDisableES3GLContext)) {
+    auto iter = std::find(allowed_impls.begin(), allowed_impls.end(),
+                          kGLImplementationDesktopGLCoreProfile);
+    if (iter != allowed_impls.end())
+      allowed_impls.erase(iter);
+  }
+
+  if (cmd->HasSwitch(switches::kDisableES3GLContextForTesting)) {
+    GLVersionInfo::DisableES3ForTesting();
+  }
+
+  // If the passthrough command decoder is enabled, put ANGLE first if allowed
+  if (gl::UsePassthroughCommandDecoder(cmd)) {
+    auto iter = std::find(allowed_impls.begin(), allowed_impls.end(),
+                          kGLImplementationEGLANGLE);
+    if (iter != allowed_impls.end()) {
+      allowed_impls.erase(iter);
+      allowed_impls.insert(allowed_impls.begin(), kGLImplementationEGLANGLE);
+    }
+  }
+
+  if (allowed_impls.empty()) {
+    LOG(ERROR) << "List of allowed GL implementations is empty.";
+    return false;
+  }
 
   // The default implementation is always the first one in list.
   GLImplementation impl = allowed_impls[0];
@@ -32,8 +66,6 @@ bool InitializeGLOneOffHelper(bool init_extensions) {
   if (cmd->HasSwitch(switches::kOverrideUseSoftwareGLForTests)) {
     impl = GetSoftwareGLImplementation();
   } else if (cmd->HasSwitch(switches::kUseGL)) {
-    std::string requested_implementation_name =
-        cmd->GetSwitchValueASCII(switches::kUseGL);
     if (requested_implementation_name == "any") {
       fallback_to_software_gl = true;
     } else if ((requested_implementation_name ==
@@ -41,11 +73,9 @@ bool InitializeGLOneOffHelper(bool init_extensions) {
                (requested_implementation_name ==
                 kGLImplementationSwiftShaderForWebGLName)) {
       impl = kGLImplementationSwiftShaderGL;
-    } else if (requested_implementation_name == kGLImplementationANGLEName) {
-      impl = kGLImplementationEGLGLES2;
     } else {
       impl = GetNamedGLImplementation(requested_implementation_name);
-      if (!base::ContainsValue(allowed_impls, impl)) {
+      if (!base::Contains(allowed_impls, impl)) {
         LOG(ERROR) << "Requested GL implementation is not available.";
         return false;
       }

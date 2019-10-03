@@ -5,9 +5,9 @@
 #include <memory>
 
 #include "android_webview/browser/input_stream.h"
+#include "android_webview/test/android_webview_unittests_jni/InputStreamUnittest_jni.h"
 #include "base/android/jni_android.h"
 #include "base/android/scoped_java_ref.h"
-#include "jni/InputStreamUnittest_jni.h"
 #include "net/base/io_buffer.h"
 #include "net/base/net_errors.h"
 #include "net/http/http_byte_range.h"
@@ -48,7 +48,7 @@ class InputStreamTest : public Test {
 
     std::unique_ptr<InputStream> input_stream(
         new InputStream(counting_jstream));
-    scoped_refptr<IOBuffer> buffer = new IOBuffer(bytes_requested);
+    auto buffer = base::MakeRefCounted<IOBuffer>(bytes_requested);
 
     EXPECT_TRUE(input_stream->Read(buffer.get(), bytes_requested, bytes_read));
     return buffer;
@@ -65,7 +65,7 @@ TEST_F(InputStreamTest, ReadEmptyStream) {
   std::unique_ptr<InputStream> input_stream(new InputStream(empty_jstream));
   const int bytes_requested = 10;
   int bytes_read = 0;
-  scoped_refptr<IOBuffer> buffer = new IOBuffer(bytes_requested);
+  auto buffer = base::MakeRefCounted<IOBuffer>(bytes_requested);
 
   EXPECT_TRUE(input_stream->Read(buffer.get(), bytes_requested, &bytes_read));
   EXPECT_EQ(0, bytes_read);
@@ -132,7 +132,7 @@ TEST_F(InputStreamTest, DoesNotCrashWhenExceptionThrown) {
 
   const int bytes_requested = 10;
   int bytes_read = 0;
-  scoped_refptr<IOBuffer> buffer = new IOBuffer(bytes_requested);
+  auto buffer = base::MakeRefCounted<IOBuffer>(bytes_requested);
   EXPECT_FALSE(input_stream->Read(buffer.get(), bytes_requested, &bytes_read));
   EXPECT_EQ(0, bytes_read);
 

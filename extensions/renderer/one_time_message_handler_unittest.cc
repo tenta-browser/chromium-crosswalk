@@ -6,7 +6,10 @@
 
 #include <memory>
 
+#include "base/macros.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
+#include "base/strings/stringprintf.h"
 #include "extensions/common/api/messaging/message.h"
 #include "extensions/common/api/messaging/port_id.h"
 #include "extensions/common/extension.h"
@@ -46,15 +49,13 @@ class OneTimeMessageHandlerTest : public NativeExtensionBindingsSystemUnittest {
     message_handler_ =
         std::make_unique<OneTimeMessageHandler>(bindings_system());
 
-    scoped_refptr<Extension> mutable_extension =
-        ExtensionBuilder("foo").Build();
-    RegisterExtension(mutable_extension);
-    extension_ = mutable_extension;
+    extension_ = ExtensionBuilder("foo").Build();
+    RegisterExtension(extension_);
 
     v8::HandleScope handle_scope(isolate());
     v8::Local<v8::Context> context = MainContext();
 
-    script_context_ = CreateScriptContext(context, mutable_extension.get(),
+    script_context_ = CreateScriptContext(context, extension_.get(),
                                           Feature::BLESSED_EXTENSION_CONTEXT);
     script_context_->set_url(extension_->url());
     bindings_system()->UpdateBindingsForContext(script_context_);
@@ -99,8 +100,7 @@ TEST_F(OneTimeMessageHandlerTest, SendMessageAndDontExpectReply) {
               SendOpenMessageChannel(script_context(), port_id, target,
                                      messaging_util::kSendMessageChannel,
                                      include_tls_channel_id));
-  EXPECT_CALL(*ipc_message_sender(),
-              SendPostMessageToPort(MSG_ROUTING_NONE, port_id, message));
+  EXPECT_CALL(*ipc_message_sender(), SendPostMessageToPort(port_id, message));
   EXPECT_CALL(*ipc_message_sender(),
               SendCloseMessagePort(MSG_ROUTING_NONE, port_id, true));
 
@@ -136,8 +136,7 @@ TEST_F(OneTimeMessageHandlerTest, SendMessageAndExpectReply) {
               SendOpenMessageChannel(script_context(), port_id, target,
                                      messaging_util::kSendMessageChannel,
                                      include_tls_channel_id));
-  EXPECT_CALL(*ipc_message_sender(),
-              SendPostMessageToPort(MSG_ROUTING_NONE, port_id, message));
+  EXPECT_CALL(*ipc_message_sender(), SendPostMessageToPort(port_id, message));
 
   message_handler()->SendMessage(script_context(), port_id, target,
                                  messaging_util::kSendMessageChannel,
@@ -182,8 +181,7 @@ TEST_F(OneTimeMessageHandlerTest, DisconnectOpener) {
               SendOpenMessageChannel(script_context(), port_id, target,
                                      messaging_util::kSendMessageChannel,
                                      include_tls_channel_id));
-  EXPECT_CALL(*ipc_message_sender(),
-              SendPostMessageToPort(MSG_ROUTING_NONE, port_id, message));
+  EXPECT_CALL(*ipc_message_sender(), SendPostMessageToPort(port_id, message));
   message_handler()->SendMessage(script_context(), port_id, target,
                                  messaging_util::kSendMessageChannel,
                                  include_tls_channel_id, message, callback);
@@ -215,6 +213,7 @@ TEST_F(OneTimeMessageHandlerTest, DeliverMessageToReceiverWithNoReply) {
       "      function(message, sender, reply) {\n"
       "    this.eventMessage = message;\n"
       "    this.eventSender = sender;\n"
+      "    return true;  // Reply later\n"
       "  });\n"
       "})";
   v8::Local<v8::Function> add_listener =
@@ -283,9 +282,9 @@ TEST_F(OneTimeMessageHandlerTest, DeliverMessageToReceiverAndReply) {
 
   // When the listener replies, we should post the reply to the message port and
   // close the channel.
-  EXPECT_CALL(*ipc_message_sender(),
-              SendPostMessageToPort(MSG_ROUTING_NONE, port_id,
-                                    Message(R"({"data":"hey"})", false)));
+  EXPECT_CALL(
+      *ipc_message_sender(),
+      SendPostMessageToPort(port_id, Message(R"({"data":"hey"})", false)));
   EXPECT_CALL(*ipc_message_sender(),
               SendCloseMessagePort(MSG_ROUTING_NONE, port_id, true));
   message_handler()->DeliverMessage(script_context(), message, port_id);
@@ -304,6 +303,7 @@ TEST_F(OneTimeMessageHandlerTest, TryReplyingMultipleTimes) {
       "  chrome.runtime.onMessage.addListener(\n"
       "      function(message, sender, reply) {\n"
       "    this.sendReply = reply;\n"
+      "    return true;  // Reply later\n"
       "  });\n"
       "})";
   v8::Local<v8::Function> add_listener =
@@ -329,18 +329,109 @@ TEST_F(OneTimeMessageHandlerTest, TryReplyingMultipleTimes) {
   v8::Local<v8::Value> args[] = {reply_arg};
 
   EXPECT_CALL(*ipc_message_sender(),
-              SendPostMessageToPort(MSG_ROUTING_NONE, port_id,
-                                    Message("\"hi\"", false)));
+              SendPostMessageToPort(port_id, Message("\"hi\"", false)));
   EXPECT_CALL(*ipc_message_sender(),
               SendCloseMessagePort(MSG_ROUTING_NONE, port_id, true));
-  RunFunction(reply.As<v8::Function>(), context, arraysize(args), args);
+  RunFunction(reply.As<v8::Function>(), context, base::size(args), args);
   ::testing::Mock::VerifyAndClearExpectations(ipc_message_sender());
   EXPECT_FALSE(message_handler()->HasPort(script_context(), port_id));
 
   // Running the reply function a second time shouldn't do anything.
   // TODO(devlin): Add an error message.
-  RunFunction(reply.As<v8::Function>(), context, arraysize(args), args);
+  RunFunction(reply.As<v8::Function>(), context, base::size(args), args);
   EXPECT_FALSE(message_handler()->HasPort(script_context(), port_id));
+}
+
+// Test starting a new sendMessage call from a sendMessage listener.
+TEST_F(OneTimeMessageHandlerTest, SendMessageInListener) {
+  v8::HandleScope handle_scope(isolate());
+  v8::Local<v8::Context> context = MainContext();
+
+  constexpr char kRegisterListener[] =
+      "(function() {\n"
+      "  chrome.runtime.onMessage.addListener(\n"
+      "      function(message, sender, reply) {\n"
+      "    chrome.runtime.sendMessage('foo', function() {});\n"
+      "  });\n"
+      "})";
+  v8::Local<v8::Function> add_listener =
+      FunctionFromString(context, kRegisterListener);
+  RunFunctionOnGlobal(add_listener, context, 0, nullptr);
+
+  base::UnguessableToken sender_context_id = base::UnguessableToken::Create();
+  const PortId original_port_id(sender_context_id, 0, false);
+
+  v8::Local<v8::Object> sender = v8::Object::New(isolate());
+  message_handler()->AddReceiver(script_context(), original_port_id, sender,
+                                 messaging_util::kOnMessageEvent);
+
+  // On delivering the message, we expect the listener to open a new message
+  // channel by using sendMessage(). The original message channel will be
+  // closed.
+  const PortId listener_created_port_id(script_context()->context_id(), 0,
+                                        true);
+  const Message listener_sent_message("\"foo\"", false);
+  MessageTarget target(MessageTarget::ForExtension(extension()->id()));
+  EXPECT_CALL(
+      *ipc_message_sender(),
+      SendOpenMessageChannel(script_context(), listener_created_port_id, target,
+                             messaging_util::kSendMessageChannel, false));
+  EXPECT_CALL(
+      *ipc_message_sender(),
+      SendPostMessageToPort(listener_created_port_id, listener_sent_message));
+  EXPECT_CALL(*ipc_message_sender(),
+              SendCloseMessagePort(MSG_ROUTING_NONE, original_port_id, false));
+
+  const Message message("\"Hi\"", false);
+  message_handler()->DeliverMessage(script_context(), message,
+                                    original_port_id);
+  ::testing::Mock::VerifyAndClearExpectations(ipc_message_sender());
+}
+
+// Test using sendMessage from the reply to a sendMessage call.
+TEST_F(OneTimeMessageHandlerTest, SendMessageInCallback) {
+  v8::HandleScope handle_scope(isolate());
+  v8::Local<v8::Context> context = MainContext();
+
+  constexpr char kSendMessage[] =
+      "(function() {\n"
+      "  chrome.runtime.sendMessage(\n"
+      "      'foo',\n"
+      "      function(reply) {\n"
+      "        chrome.runtime.sendMessage('bar', function() {});\n"
+      "      });\n"
+      "})";
+  v8::Local<v8::Function> send_message =
+      FunctionFromString(context, kSendMessage);
+
+  // Running the function should send one message ('foo'), which will wait for
+  // a reply.
+  const PortId original_port_id(script_context()->context_id(), 0, true);
+  const Message original_message("\"foo\"", false);
+  MessageTarget target(MessageTarget::ForExtension(extension()->id()));
+  EXPECT_CALL(
+      *ipc_message_sender(),
+      SendOpenMessageChannel(script_context(), original_port_id, target,
+                             messaging_util::kSendMessageChannel, false));
+  EXPECT_CALL(*ipc_message_sender(),
+              SendPostMessageToPort(original_port_id, original_message));
+  RunFunctionOnGlobal(send_message, context, 0, nullptr);
+  ::testing::Mock::VerifyAndClearExpectations(ipc_message_sender());
+
+  // Upon delivering the reply to the sender, it should send a second message
+  // ('bar'). The original message channel should be closed.
+  const PortId new_port_id(script_context()->context_id(), 1, true);
+  EXPECT_CALL(
+      *ipc_message_sender(),
+      SendOpenMessageChannel(script_context(), new_port_id, target,
+                             messaging_util::kSendMessageChannel, false));
+  EXPECT_CALL(*ipc_message_sender(),
+              SendPostMessageToPort(new_port_id, Message("\"bar\"", false)));
+  EXPECT_CALL(*ipc_message_sender(),
+              SendCloseMessagePort(MSG_ROUTING_NONE, original_port_id, true));
+  const Message reply("\"reply\"", false);
+  message_handler()->DeliverMessage(script_context(), reply, original_port_id);
+  ::testing::Mock::VerifyAndClearExpectations(ipc_message_sender());
 }
 
 TEST_F(OneTimeMessageHandlerTest, ResponseCallbackGarbageCollected) {
@@ -350,7 +441,9 @@ TEST_F(OneTimeMessageHandlerTest, ResponseCallbackGarbageCollected) {
   constexpr char kRegisterListener[] =
       "(function() {\n"
       "  chrome.runtime.onMessage.addListener(\n"
-      "      function(message, sender, reply) {});\n"
+      "      function(message, sender, reply) {\n"
+      "        return true;  // Reply later\n"
+      "      });\n"
       "})";
   v8::Local<v8::Function> add_listener =
       FunctionFromString(context, kRegisterListener);
@@ -376,6 +469,57 @@ TEST_F(OneTimeMessageHandlerTest, ResponseCallbackGarbageCollected) {
 
   ::testing::Mock::VerifyAndClearExpectations(ipc_message_sender());
   EXPECT_FALSE(message_handler()->HasPort(script_context(), port_id));
+}
+
+// runtime.onMessage requires that a listener return `true` if they intend to
+// respond to the message asynchronously. Verify that we close the port if no
+// listener does so.
+TEST_F(OneTimeMessageHandlerTest, ChannelClosedIfTrueNotReturned) {
+  v8::HandleScope handle_scope(isolate());
+  v8::Local<v8::Context> context = MainContext();
+
+  auto register_listener = [context](const char* listener) {
+    constexpr char kRegisterListenerTemplate[] =
+        "(function() { chrome.runtime.onMessage.addListener(%s); })";
+    v8::Local<v8::Function> add_listener = FunctionFromString(
+        context, base::StringPrintf(kRegisterListenerTemplate, listener));
+    RunFunctionOnGlobal(add_listener, context, 0, nullptr);
+  };
+
+  register_listener("function(message, reply, sender) { }");
+  // Add a listener that returns a truthy value, but not `true`.
+  register_listener("function(message, reply, sender) { return {}; }");
+  // Add a listener that throws an error.
+  register_listener(
+      "function(message, reply, sender) { throw new Error('hi!'); }");
+
+  base::UnguessableToken other_context_id = base::UnguessableToken::Create();
+  const PortId port_id(other_context_id, 0, false);
+
+  v8::Local<v8::Object> sender = v8::Object::New(isolate());
+  message_handler()->AddReceiver(script_context(), port_id, sender,
+                                 messaging_util::kOnMessageEvent);
+  EXPECT_TRUE(message_handler()->HasPort(script_context(), port_id));
+
+  TestJSRunner::AllowErrors allow_errors;
+
+  // Dispatch the message. Since none of these listeners return `true`, the port
+  // should close.
+  const Message message("\"Hi\"", false);
+  EXPECT_CALL(*ipc_message_sender(),
+              SendCloseMessagePort(MSG_ROUTING_NONE, port_id, false));
+  message_handler()->DeliverMessage(script_context(), message, port_id);
+  ::testing::Mock::VerifyAndClearExpectations(ipc_message_sender());
+  EXPECT_FALSE(message_handler()->HasPort(script_context(), port_id));
+
+  // If any of the listeners return `true`, the channel should be left open.
+  register_listener("function(message, reply, sender) { return true; }");
+  message_handler()->AddReceiver(script_context(), port_id, sender,
+                                 messaging_util::kOnMessageEvent);
+  EXPECT_TRUE(message_handler()->HasPort(script_context(), port_id));
+
+  message_handler()->DeliverMessage(script_context(), message, port_id);
+  EXPECT_TRUE(message_handler()->HasPort(script_context(), port_id));
 }
 
 }  // namespace extensions

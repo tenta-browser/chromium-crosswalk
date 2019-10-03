@@ -8,6 +8,7 @@
 
 #include "base/metrics/histogram_macros.h"
 #include "base/time/time.h"
+#include "build/branding_buildflags.h"
 #include "build/build_config.h"
 #include "chrome/browser/net/referrer.h"
 #include "chrome/browser/ui/browser.h"
@@ -56,7 +57,7 @@ void RecordEvent(bool feedback, ui_metrics::SadTabEvent event) {
 constexpr char kCategoryTagCrash[] = "Crash";
 
 bool ShouldShowFeedbackButton() {
-#if defined(GOOGLE_CHROME_BUILD)
+#if BUILDFLAG(GOOGLE_CHROME_BRANDING)
   const int kMinSecondsBetweenCrashesForFeedbackButton = 10;
 
   static int64_t last_called_ts = 0;
@@ -128,7 +129,7 @@ int SadTab::GetTitle() {
   return 0;
 }
 
-int SadTab::GetMessage() {
+int SadTab::GetInfoMessage() {
   switch (kind_) {
 #if defined(OS_CHROMEOS)
     case SAD_TAB_KIND_KILLED_BY_OOM:
@@ -154,7 +155,7 @@ int SadTab::GetButtonTitle() {
 }
 
 int SadTab::GetHelpLinkTitle() {
-  return IDS_SAD_TAB_LEARN_MORE_LINK;
+  return IDS_LEARN_MORE;
 }
 
 const char* SadTab::GetHelpLinkURL() {
@@ -208,8 +209,8 @@ void SadTab::RecordFirstPaint() {
 #if defined(OS_CHROMEOS)
     case SAD_TAB_KIND_KILLED_BY_OOM:
       UMA_SAD_TAB_COUNTER("Tabs.SadTab.KillDisplayed.OOM");
+      FALLTHROUGH;
 #endif
-    // Fallthrough
     case SAD_TAB_KIND_KILLED:
       UMA_SAD_TAB_COUNTER("Tabs.SadTab.KillDisplayed");
       break;
@@ -228,6 +229,7 @@ void SadTab::PerformAction(SadTab::Action action) {
         ShowFeedbackPage(
             chrome::FindBrowserWithWebContents(web_contents_),
             chrome::kFeedbackSourceSadTabPage,
+            std::string() /* description_template */,
             l10n_util::GetStringUTF8(kind_ == SAD_TAB_KIND_CRASHED
                                          ? IDS_CRASHED_TAB_FEEDBACK_MESSAGE
                                          : IDS_KILLED_TAB_FEEDBACK_MESSAGE),
@@ -265,11 +267,11 @@ SadTab::SadTab(content::WebContents* web_contents, SadTabKind kind)
       UMA_SAD_TAB_COUNTER("Tabs.SadTab.KillCreated.OOM");
       {
         const std::string spec = web_contents->GetURL().GetOrigin().spec();
-        memory::OomMemoryDetails::Log(
-            "Tab OOM-Killed Memory details: " + spec + ", ", base::Closure());
+        memory::OomMemoryDetails::Log("Tab OOM-Killed Memory details: " + spec +
+                                      ", ");
       }
+      FALLTHROUGH;
 #endif
-    // Fall through
     case SAD_TAB_KIND_KILLED:
       UMA_SAD_TAB_COUNTER("Tabs.SadTab.KillCreated");
       LOG(WARNING) << "Tab Killed: "

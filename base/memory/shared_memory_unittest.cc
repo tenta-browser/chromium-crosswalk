@@ -10,13 +10,18 @@
 #include <memory>
 
 #include "base/atomicops.h"
-#include "base/macros.h"
+#include "base/base_switches.h"
+#include "base/bind.h"
+#include "base/command_line.h"
+#include "base/logging.h"
 #include "base/memory/shared_memory_handle.h"
 #include "base/process/kill.h"
 #include "base/rand_util.h"
+#include "base/stl_util.h"
 #include "base/strings/string_number_conversions.h"
+#include "base/strings/string_piece.h"
 #include "base/strings/string_util.h"
-#include "base/sys_info.h"
+#include "base/system/sys_info.h"
 #include "base/test/multiprocess_test.h"
 #include "base/threading/platform_thread.h"
 #include "base/time/time.h"
@@ -24,6 +29,10 @@
 #include "build/build_config.h"
 #include "testing/gtest/include/gtest/gtest.h"
 #include "testing/multiprocess_func_list.h"
+
+#if defined(OS_ANDROID)
+#include "base/callback.h"
+#endif
 
 #if defined(OS_POSIX)
 #include <errno.h>
@@ -43,38 +52,29 @@
 #endif
 
 #if defined(OS_FUCHSIA)
-#include <zircon/process.h>
-#include <zircon/syscalls.h>
-#include "base/fuchsia/scoped_zx_handle.h"
+#include <lib/zx/vmar.h>
+#include <lib/zx/vmo.h>
 #endif
 
 namespace base {
 
 namespace {
 
-#if !defined(OS_MACOSX) && !defined(OS_FUCHSIA)
 // Each thread will open the shared memory.  Each thread will take a different 4
 // byte int pointer, and keep changing it, with some small pauses in between.
 // Verify that each thread's value in the shared memory is always correct.
 class MultipleThreadMain : public PlatformThread::Delegate {
  public:
-  explicit MultipleThreadMain(int16_t id) : id_(id) {}
-  ~MultipleThreadMain() override = default;
+  static const uint32_t kDataSize = 1024;
 
-  static void CleanUp() {
-    SharedMemory memory;
-    memory.Delete(s_test_name_);
-  }
+  MultipleThreadMain(int16_t id, SharedMemoryHandle handle)
+      : id_(id), shm_(handle, false) {}
+  ~MultipleThreadMain() override = default;
 
   // PlatformThread::Delegate interface.
   void ThreadMain() override {
-    const uint32_t kDataSize = 1024;
-    SharedMemory memory;
-    bool rv = memory.CreateNamedDeprecated(s_test_name_, true, kDataSize);
-    EXPECT_TRUE(rv);
-    rv = memory.Map(kDataSize);
-    EXPECT_TRUE(rv);
-    int* ptr = static_cast<int*>(memory.memory()) + id_;
+    EXPECT_TRUE(shm_.Map(kDataSize));
+    int* ptr = static_cast<int*>(shm_.memory()) + id_;
     EXPECT_EQ(0, *ptr);
 
     for (int idx = 0; idx < 100; idx++) {
@@ -85,143 +85,43 @@ class MultipleThreadMain : public PlatformThread::Delegate {
     // Reset back to 0 for the next test that uses the same name.
     *ptr = 0;
 
-    memory.Close();
+    shm_.Unmap();
   }
 
  private:
   int16_t id_;
-
-  static const char s_test_name_[];
+  SharedMemory shm_;
 
   DISALLOW_COPY_AND_ASSIGN(MultipleThreadMain);
 };
 
-const char MultipleThreadMain::s_test_name_[] =
-    "SharedMemoryOpenThreadTest";
-#endif  // !defined(OS_MACOSX) && !defined(OS_FUCHSIA)
+enum class Mode {
+  Default,
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
+  DisableDevShm = 1,
+#endif
+};
+
+class SharedMemoryTest : public ::testing::TestWithParam<Mode> {
+ public:
+  void SetUp() override {
+    switch (GetParam()) {
+      case Mode::Default:
+        break;
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
+      case Mode::DisableDevShm:
+        CommandLine* cmdline = CommandLine::ForCurrentProcess();
+        cmdline->AppendSwitch(switches::kDisableDevShmUsage);
+        break;
+#endif  // defined(OS_LINUX) && !defined(OS_CHROMEOS)
+    }
+  }
+};
 
 }  // namespace
 
-// Android/Mac/Fuchsia doesn't support SharedMemory::Open/Delete/
-// CreateNamedDeprecated(openExisting=true)
-#if !defined(OS_ANDROID) && !defined(OS_MACOSX) && !defined(OS_FUCHSIA)
-TEST(SharedMemoryTest, OpenClose) {
-  const uint32_t kDataSize = 1024;
-  std::string test_name = "SharedMemoryOpenCloseTest";
-
-  // Open two handles to a memory segment, confirm that they are mapped
-  // separately yet point to the same space.
-  SharedMemory memory1;
-  bool rv = memory1.Delete(test_name);
-  EXPECT_TRUE(rv);
-  rv = memory1.Delete(test_name);
-  EXPECT_TRUE(rv);
-  rv = memory1.Open(test_name, false);
-  EXPECT_FALSE(rv);
-  rv = memory1.CreateNamedDeprecated(test_name, false, kDataSize);
-  EXPECT_TRUE(rv);
-  rv = memory1.Map(kDataSize);
-  EXPECT_TRUE(rv);
-  SharedMemory memory2;
-  rv = memory2.Open(test_name, false);
-  EXPECT_TRUE(rv);
-  rv = memory2.Map(kDataSize);
-  EXPECT_TRUE(rv);
-  EXPECT_NE(memory1.memory(), memory2.memory());  // Compare the pointers.
-
-  // Make sure we don't segfault. (it actually happened!)
-  ASSERT_NE(memory1.memory(), static_cast<void*>(nullptr));
-  ASSERT_NE(memory2.memory(), static_cast<void*>(nullptr));
-
-  // Write data to the first memory segment, verify contents of second.
-  memset(memory1.memory(), '1', kDataSize);
-  EXPECT_EQ(memcmp(memory1.memory(), memory2.memory(), kDataSize), 0);
-
-  // Close the first memory segment, and verify the second has the right data.
-  memory1.Close();
-  char* start_ptr = static_cast<char*>(memory2.memory());
-  char* end_ptr = start_ptr + kDataSize;
-  for (char* ptr = start_ptr; ptr < end_ptr; ptr++)
-    EXPECT_EQ(*ptr, '1');
-
-  // Close the second memory segment.
-  memory2.Close();
-
-  rv = memory1.Delete(test_name);
-  EXPECT_TRUE(rv);
-  rv = memory2.Delete(test_name);
-  EXPECT_TRUE(rv);
-}
-
-TEST(SharedMemoryTest, OpenExclusive) {
-  const uint32_t kDataSize = 1024;
-  const uint32_t kDataSize2 = 2048;
-  std::ostringstream test_name_stream;
-  test_name_stream << "SharedMemoryOpenExclusiveTest."
-                   << Time::Now().ToDoubleT();
-  std::string test_name = test_name_stream.str();
-
-  // Open two handles to a memory segment and check that
-  // open_existing_deprecated works as expected.
-  SharedMemory memory1;
-  bool rv = memory1.CreateNamedDeprecated(test_name, false, kDataSize);
-  EXPECT_TRUE(rv);
-
-  // Memory1 knows it's size because it created it.
-  EXPECT_EQ(memory1.requested_size(), kDataSize);
-
-  rv = memory1.Map(kDataSize);
-  EXPECT_TRUE(rv);
-
-  // The mapped memory1 must be at least the size we asked for.
-  EXPECT_GE(memory1.mapped_size(), kDataSize);
-
-  // The mapped memory1 shouldn't exceed rounding for allocation granularity.
-  EXPECT_LT(memory1.mapped_size(),
-            kDataSize + SysInfo::VMAllocationGranularity());
-
-  memset(memory1.memory(), 'G', kDataSize);
-
-  SharedMemory memory2;
-  // Should not be able to create if openExisting is false.
-  rv = memory2.CreateNamedDeprecated(test_name, false, kDataSize2);
-  EXPECT_FALSE(rv);
-
-  // Should be able to create with openExisting true.
-  rv = memory2.CreateNamedDeprecated(test_name, true, kDataSize2);
-  EXPECT_TRUE(rv);
-
-  // Memory2 shouldn't know the size because we didn't create it.
-  EXPECT_EQ(memory2.requested_size(), 0U);
-
-  // We should be able to map the original size.
-  rv = memory2.Map(kDataSize);
-  EXPECT_TRUE(rv);
-
-  // The mapped memory2 must be at least the size of the original.
-  EXPECT_GE(memory2.mapped_size(), kDataSize);
-
-  // The mapped memory2 shouldn't exceed rounding for allocation granularity.
-  EXPECT_LT(memory2.mapped_size(),
-            kDataSize2 + SysInfo::VMAllocationGranularity());
-
-  // Verify that opening memory2 didn't truncate or delete memory 1.
-  char* start_ptr = static_cast<char*>(memory2.memory());
-  char* end_ptr = start_ptr + kDataSize;
-  for (char* ptr = start_ptr; ptr < end_ptr; ptr++) {
-    EXPECT_EQ(*ptr, 'G');
-  }
-
-  memory1.Close();
-  memory2.Close();
-
-  rv = memory1.Delete(test_name);
-  EXPECT_TRUE(rv);
-}
-#endif  // !defined(OS_ANDROID) && !defined(OS_MACOSX) && !defined(OS_FUCHSIA)
-
 // Check that memory is still mapped after its closed.
-TEST(SharedMemoryTest, CloseNoUnmap) {
+TEST_P(SharedMemoryTest, CloseNoUnmap) {
   const size_t kDataSize = 4096;
 
   SharedMemory memory;
@@ -243,13 +143,11 @@ TEST(SharedMemoryTest, CloseNoUnmap) {
   EXPECT_EQ(nullptr, memory.memory());
 }
 
-#if !defined(OS_MACOSX) && !defined(OS_FUCHSIA)
 // Create a set of N threads to each open a shared memory segment and write to
 // it. Verify that they are always reading/writing consistent data.
-TEST(SharedMemoryTest, MultipleThreads) {
+TEST_P(SharedMemoryTest, MultipleThreads) {
   const int kNumThreads = 5;
 
-  MultipleThreadMain::CleanUp();
   // On POSIX we have a problem when 2 threads try to create the shmem
   // (a file) at exactly the same time, since create both creates the
   // file and zerofills it.  We solve the problem for this unit test
@@ -257,9 +155,13 @@ TEST(SharedMemoryTest, MultipleThreads) {
   // intentionally don't clean up its shmem before running with
   // kNumThreads.
 
+  SharedMemoryCreateOptions options;
+  options.size = MultipleThreadMain::kDataSize;
+  SharedMemory shm;
+  EXPECT_TRUE(shm.Create(options));
+
   int threadcounts[] = { 1, kNumThreads };
-  for (size_t i = 0; i < arraysize(threadcounts); i++) {
-    int numthreads = threadcounts[i];
+  for (auto numthreads : threadcounts) {
     std::unique_ptr<PlatformThreadHandle[]> thread_handles;
     std::unique_ptr<MultipleThreadMain* []> thread_delegates;
 
@@ -269,7 +171,8 @@ TEST(SharedMemoryTest, MultipleThreads) {
     // Spawn the threads.
     for (int16_t index = 0; index < numthreads; index++) {
       PlatformThreadHandle pth;
-      thread_delegates[index] = new MultipleThreadMain(index);
+      thread_delegates[index] =
+          new MultipleThreadMain(index, shm.handle().Duplicate());
       EXPECT_TRUE(PlatformThread::Create(0, thread_delegates[index], &pth));
       thread_handles[index] = pth;
     }
@@ -280,14 +183,12 @@ TEST(SharedMemoryTest, MultipleThreads) {
       delete thread_delegates[index];
     }
   }
-  MultipleThreadMain::CleanUp();
 }
-#endif
 
 // Allocate private (unique) shared memory with an empty string for a
 // name.  Make sure several of them don't point to the same thing as
 // we might expect if the names are equal.
-TEST(SharedMemoryTest, AnonymousPrivate) {
+TEST_P(SharedMemoryTest, AnonymousPrivate) {
   int i, j;
   int count = 4;
   bool rv;
@@ -328,17 +229,15 @@ TEST(SharedMemoryTest, AnonymousPrivate) {
   }
 }
 
-TEST(SharedMemoryTest, GetReadOnlyHandle) {
+#if !(defined(OS_MACOSX) && !defined(OS_IOS))
+// The Mach functionality is tested in shared_memory_mac_unittest.cc.
+TEST_P(SharedMemoryTest, GetReadOnlyHandle) {
   StringPiece contents = "Hello World";
 
   SharedMemory writable_shmem;
   SharedMemoryCreateOptions options;
   options.size = contents.size();
   options.share_read_only = true;
-#if defined(OS_MACOSX) && !defined(OS_IOS)
-  // The Mach functionality is tested in shared_memory_mac_unittest.cc.
-  options.type = SharedMemoryHandle::POSIX;
-#endif
   ASSERT_TRUE(writable_shmem.Create(options));
   ASSERT_TRUE(writable_shmem.Map(options.size));
   memcpy(writable_shmem.memory(), contents.data(), contents.size());
@@ -356,6 +255,11 @@ TEST(SharedMemoryTest, GetReadOnlyHandle) {
                         contents.size()));
   EXPECT_TRUE(readonly_shmem.Unmap());
 
+#if defined(OS_ANDROID)
+  // On Android, mapping a region through a read-only descriptor makes the
+  // region read-only. Any writable mapping attempt should fail.
+  ASSERT_FALSE(writable_shmem.Map(contents.size()));
+#else
   // Make sure the writable instance is still writable.
   ASSERT_TRUE(writable_shmem.Map(contents.size()));
   StringPiece new_contents = "Goodbye";
@@ -363,6 +267,7 @@ TEST(SharedMemoryTest, GetReadOnlyHandle) {
   EXPECT_EQ(new_contents,
             StringPiece(static_cast<const char*>(writable_shmem.memory()),
                         new_contents.size()));
+#endif
 
   // We'd like to check that if we send the read-only segment to another
   // process, then that other process can't reopen it read/write.  (Since that
@@ -379,17 +284,18 @@ TEST(SharedMemoryTest, GetReadOnlyHandle) {
   (void)handle;
 #elif defined(OS_FUCHSIA)
   uintptr_t addr;
-  EXPECT_NE(ZX_OK, zx_vmar_map(zx_vmar_root_self(), 0, handle.GetHandle(), 0,
-                               contents.size(), ZX_VM_FLAG_PERM_WRITE, &addr))
+  EXPECT_NE(ZX_OK, zx::vmar::root_self()->map(
+                       0, *zx::unowned_vmo(handle.GetHandle()), 0,
+                       contents.size(), ZX_VM_PERM_WRITE, &addr))
       << "Shouldn't be able to map as writable.";
 
-  ScopedZxHandle duped_handle;
-  EXPECT_NE(ZX_OK, zx_handle_duplicate(handle.GetHandle(), ZX_RIGHT_WRITE,
-                                       duped_handle.receive()))
+  zx::vmo duped_handle;
+  EXPECT_NE(ZX_OK, zx::unowned_vmo(handle.GetHandle())
+                       ->duplicate(ZX_RIGHT_WRITE, &duped_handle))
       << "Shouldn't be able to duplicate the handle into a writable one.";
 
-  EXPECT_EQ(ZX_OK, zx_handle_duplicate(handle.GetHandle(), ZX_RIGHT_READ,
-                                       duped_handle.receive()))
+  EXPECT_EQ(ZX_OK, zx::unowned_vmo(handle.GetHandle())
+                       ->duplicate(ZX_RIGHT_READ, &duped_handle))
       << "Should be able to duplicate the handle into a readable one.";
 #elif defined(OS_POSIX)
   int handle_fd = SharedMemory::GetFdFromSharedMemoryHandle(handle);
@@ -429,8 +335,9 @@ TEST(SharedMemoryTest, GetReadOnlyHandle) {
 #error Unexpected platform; write a test that tries to make 'handle' writable.
 #endif  // defined(OS_POSIX) || defined(OS_WIN)
 }
+#endif  // defined(OS_MACOSX) && !defined(OS_IOS)
 
-TEST(SharedMemoryTest, ShareToSelf) {
+TEST_P(SharedMemoryTest, ShareToSelf) {
   StringPiece contents = "Hello World";
 
   SharedMemory shmem;
@@ -461,7 +368,7 @@ TEST(SharedMemoryTest, ShareToSelf) {
                         contents.size()));
 }
 
-TEST(SharedMemoryTest, ShareWithMultipleInstances) {
+TEST_P(SharedMemoryTest, ShareWithMultipleInstances) {
   static const StringPiece kContents = "Hello World";
 
   SharedMemory shmem;
@@ -505,7 +412,7 @@ TEST(SharedMemoryTest, ShareWithMultipleInstances) {
   ASSERT_EQ(StringPiece(ToLowerASCII(kContents)), readonly_contents);
 }
 
-TEST(SharedMemoryTest, MapAt) {
+TEST_P(SharedMemoryTest, MapAt) {
   ASSERT_TRUE(SysInfo::VMAllocationGranularity() >= sizeof(uint32_t));
   const size_t kCount = SysInfo::VMAllocationGranularity();
   const size_t kDataSize = kCount * sizeof(uint32_t);
@@ -521,8 +428,8 @@ TEST(SharedMemoryTest, MapAt) {
 
   memory.Unmap();
 
-  off_t offset = SysInfo::VMAllocationGranularity();
-  ASSERT_TRUE(memory.MapAt(offset, kDataSize - offset));
+  size_t offset = SysInfo::VMAllocationGranularity();
+  ASSERT_TRUE(memory.MapAt(static_cast<off_t>(offset), kDataSize - offset));
   offset /= sizeof(uint32_t);
   ptr = static_cast<uint32_t*>(memory.memory());
   ASSERT_NE(ptr, static_cast<void*>(nullptr));
@@ -531,7 +438,7 @@ TEST(SharedMemoryTest, MapAt) {
   }
 }
 
-TEST(SharedMemoryTest, MapTwice) {
+TEST_P(SharedMemoryTest, MapTwice) {
   const uint32_t kDataSize = 1024;
   SharedMemory memory;
   bool rv = memory.CreateAndMapAnonymous(kDataSize);
@@ -546,19 +453,25 @@ TEST(SharedMemoryTest, MapTwice) {
 
 #if defined(OS_POSIX)
 // This test is not applicable for iOS (crbug.com/399384).
-#if !defined(OS_IOS)
+// The Mach functionality is tested in shared_memory_mac_unittest.cc.
+#if !defined(OS_MACOSX) && !defined(OS_IOS)
 // Create a shared memory object, mmap it, and mprotect it to PROT_EXEC.
-TEST(SharedMemoryTest, AnonymousExecutable) {
+TEST_P(SharedMemoryTest, AnonymousExecutable) {
+#if defined(OS_LINUX)
+  // On Chromecast both /dev/shm and /tmp are mounted with 'noexec' option,
+  // which makes this test fail. But Chromecast doesn't use NaCL so we don't
+  // need this.
+  if (!IsPathExecutable(FilePath("/dev/shm")) &&
+      !IsPathExecutable(FilePath("/tmp"))) {
+    return;
+  }
+#endif  // OS_LINUX
   const uint32_t kTestSize = 1 << 16;
 
   SharedMemory shared_memory;
   SharedMemoryCreateOptions options;
   options.size = kTestSize;
   options.executable = true;
-#if defined(OS_MACOSX) && !defined(OS_IOS)
-  // The Mach functionality is tested in shared_memory_mac_unittest.cc.
-  options.type = SharedMemoryHandle::POSIX;
-#endif
 
   EXPECT_TRUE(shared_memory.Create(options));
   EXPECT_TRUE(shared_memory.Map(shared_memory.requested_size()));
@@ -566,7 +479,30 @@ TEST(SharedMemoryTest, AnonymousExecutable) {
   EXPECT_EQ(0, mprotect(shared_memory.memory(), shared_memory.requested_size(),
                         PROT_READ | PROT_EXEC));
 }
-#endif  // !defined(OS_IOS)
+#endif  // !defined(OS_MACOSX) && !defined(OS_IOS)
+
+#if defined(OS_ANDROID)
+// This test is restricted to Android since there is no way on other platforms
+// to guarantee that a region can never be mapped with PROT_EXEC. E.g. on
+// Linux, anonymous shared regions come from /dev/shm which can be mounted
+// without 'noexec'. In this case, anything can perform an mprotect() to
+// change the protection mask of a given page.
+TEST(SharedMemoryTest, AnonymousIsNotExecutableByDefault) {
+  const uint32_t kTestSize = 1 << 16;
+
+  SharedMemory shared_memory;
+  SharedMemoryCreateOptions options;
+  options.size = kTestSize;
+
+  EXPECT_TRUE(shared_memory.Create(options));
+  EXPECT_TRUE(shared_memory.Map(shared_memory.requested_size()));
+
+  errno = 0;
+  EXPECT_EQ(-1, mprotect(shared_memory.memory(), shared_memory.requested_size(),
+                         PROT_READ | PROT_EXEC));
+  EXPECT_EQ(EACCES, errno);
+}
+#endif  // OS_ANDROID
 
 // Android supports a different permission model than POSIX for its "ashmem"
 // shared memory implementation. So the tests about file permissions are not
@@ -588,16 +524,14 @@ class ScopedUmaskSetter {
 };
 
 // Create a shared memory object, check its permissions.
-TEST(SharedMemoryTest, FilePermissionsAnonymous) {
+#if !(defined(OS_MACOSX) && !defined(OS_IOS))
+// The Mach functionality is tested in shared_memory_mac_unittest.cc.
+TEST_P(SharedMemoryTest, FilePermissionsAnonymous) {
   const uint32_t kTestSize = 1 << 8;
 
   SharedMemory shared_memory;
   SharedMemoryCreateOptions options;
   options.size = kTestSize;
-#if defined(OS_MACOSX) && !defined(OS_IOS)
-  // The Mach functionality is tested in shared_memory_mac_unittest.cc.
-  options.type = SharedMemoryHandle::POSIX;
-#endif
   // Set a file mode creation mask that gives all permissions.
   ScopedUmaskSetter permissive_mask(S_IWGRP | S_IWOTH);
 
@@ -612,18 +546,17 @@ TEST(SharedMemoryTest, FilePermissionsAnonymous) {
   EXPECT_FALSE(shm_stat.st_mode & S_IRWXO);
   EXPECT_FALSE(shm_stat.st_mode & S_IRWXG);
 }
+#endif  // !(defined(OS_MACOSX) && !defined(OS_IOS)
 
 // Create a shared memory object, check its permissions.
-TEST(SharedMemoryTest, FilePermissionsNamed) {
+#if !(defined(OS_MACOSX) && !defined(OS_IOS))
+// The Mach functionality is tested in shared_memory_mac_unittest.cc.
+TEST_P(SharedMemoryTest, FilePermissionsNamed) {
   const uint32_t kTestSize = 1 << 8;
 
   SharedMemory shared_memory;
   SharedMemoryCreateOptions options;
   options.size = kTestSize;
-#if defined(OS_MACOSX) && !defined(OS_IOS)
-  // The Mach functionality is tested in shared_memory_mac_unittest.cc.
-  options.type = SharedMemoryHandle::POSIX;
-#endif
 
   // Set a file mode creation mask that gives all permissions.
   ScopedUmaskSetter permissive_mask(S_IWGRP | S_IWOTH);
@@ -638,6 +571,7 @@ TEST(SharedMemoryTest, FilePermissionsNamed) {
   EXPECT_FALSE(shm_stat.st_mode & S_IRWXO);
   EXPECT_FALSE(shm_stat.st_mode & S_IRWXG);
 }
+#endif  // !(defined(OS_MACOSX) && !defined(OS_IOS)
 #endif  // !defined(OS_ANDROID) && !defined(OS_FUCHSIA)
 
 #endif  // defined(OS_POSIX)
@@ -645,7 +579,7 @@ TEST(SharedMemoryTest, FilePermissionsNamed) {
 // Map() will return addresses which are aligned to the platform page size, this
 // varies from platform to platform though.  Since we'd like to advertise a
 // minimum alignment that callers can count on, test for it here.
-TEST(SharedMemoryTest, MapMinimumAlignment) {
+TEST_P(SharedMemoryTest, MapMinimumAlignment) {
   static const int kDataSize = 8192;
 
   SharedMemory shared_memory;
@@ -656,10 +590,10 @@ TEST(SharedMemoryTest, MapMinimumAlignment) {
 }
 
 #if defined(OS_WIN)
-TEST(SharedMemoryTest, UnsafeImageSection) {
+TEST_P(SharedMemoryTest, UnsafeImageSection) {
   const char kTestSectionName[] = "UnsafeImageSection";
   wchar_t path[MAX_PATH];
-  EXPECT_GT(::GetModuleFileName(nullptr, path, arraysize(path)), 0U);
+  EXPECT_GT(::GetModuleFileName(nullptr, path, base::size(path)), 0U);
 
   // Map the current executable image to save us creating a new PE file on disk.
   base::win::ScopedHandle file_handle(::CreateFile(
@@ -670,12 +604,7 @@ TEST(SharedMemoryTest, UnsafeImageSection) {
                            PAGE_READONLY | SEC_IMAGE, 0, 0, kTestSectionName));
   EXPECT_TRUE(section_handle.IsValid());
 
-  // Check direct opening by name, from handle and duplicated from handle.
-  SharedMemory shared_memory_open;
-  EXPECT_TRUE(shared_memory_open.Open(kTestSectionName, true));
-  EXPECT_FALSE(shared_memory_open.Map(1));
-  EXPECT_EQ(nullptr, shared_memory_open.memory());
-
+  // Check opening from handle and duplicated from handle.
   SharedMemory shared_memory_handle_local(
       SharedMemoryHandle(section_handle.Take(), 1, UnguessableToken::Create()),
       true);
@@ -701,98 +630,13 @@ TEST(SharedMemoryTest, UnsafeImageSection) {
 }
 #endif  // defined(OS_WIN)
 
-// iOS does not allow multiple processes.
-// Android ashmem does not support named shared memory.
-// Fuchsia SharedMemory does not support named shared memory.
-// Mac SharedMemory does not support named shared memory. crbug.com/345734
-#if !defined(OS_IOS) && !defined(OS_ANDROID) && !defined(OS_MACOSX) && \
-    !defined(OS_FUCHSIA)
-// On POSIX it is especially important we test shmem across processes,
-// not just across threads.  But the test is enabled on all platforms.
-class SharedMemoryProcessTest : public MultiProcessTest {
- public:
-  static void CleanUp() {
-    SharedMemory memory;
-    memory.Delete(s_test_name_);
-  }
-
-  static int TaskTestMain() {
-    int errors = 0;
-    SharedMemory memory;
-    bool rv = memory.CreateNamedDeprecated(s_test_name_, true, s_data_size_);
-    EXPECT_TRUE(rv);
-    if (rv != true)
-      errors++;
-    rv = memory.Map(s_data_size_);
-    EXPECT_TRUE(rv);
-    if (rv != true)
-      errors++;
-    int* ptr = static_cast<int*>(memory.memory());
-
-    // This runs concurrently in multiple processes. Writes need to be atomic.
-    subtle::Barrier_AtomicIncrement(ptr, 1);
-    memory.Close();
-    return errors;
-  }
-
-  static const char s_test_name_[];
-  static const uint32_t s_data_size_;
-};
-
-const char SharedMemoryProcessTest::s_test_name_[] = "MPMem";
-const uint32_t SharedMemoryProcessTest::s_data_size_ = 1024;
-
-TEST_F(SharedMemoryProcessTest, SharedMemoryAcrossProcesses) {
-  const int kNumTasks = 5;
-
-  SharedMemoryProcessTest::CleanUp();
-
-  // Create a shared memory region. Set the first word to 0.
-  SharedMemory memory;
-  bool rv = memory.CreateNamedDeprecated(s_test_name_, true, s_data_size_);
-  ASSERT_TRUE(rv);
-  rv = memory.Map(s_data_size_);
-  ASSERT_TRUE(rv);
-  int* ptr = static_cast<int*>(memory.memory());
-  *ptr = 0;
-
-  // Start |kNumTasks| processes, each of which atomically increments the first
-  // word by 1.
-  Process processes[kNumTasks];
-  for (int index = 0; index < kNumTasks; ++index) {
-    processes[index] = SpawnChild("SharedMemoryTestMain");
-    ASSERT_TRUE(processes[index].IsValid());
-  }
-
-  // Check that each process exited correctly.
-  int exit_code = 0;
-  for (int index = 0; index < kNumTasks; ++index) {
-    EXPECT_TRUE(processes[index].WaitForExit(&exit_code));
-    EXPECT_EQ(0, exit_code);
-  }
-
-  // Check that the shared memory region reflects |kNumTasks| increments.
-  ASSERT_EQ(kNumTasks, *ptr);
-
-  memory.Close();
-  SharedMemoryProcessTest::CleanUp();
-}
-
-MULTIPROCESS_TEST_MAIN(SharedMemoryTestMain) {
-  return SharedMemoryProcessTest::TaskTestMain();
-}
-#endif  // !defined(OS_IOS) && !defined(OS_ANDROID) && !defined(OS_MACOSX) &&
-        // !defined(OS_FUCHSIA)
-
-TEST(SharedMemoryTest, MappedId) {
+#if !(defined(OS_MACOSX) && !defined(OS_IOS))
+// The Mach functionality is tested in shared_memory_mac_unittest.cc.
+TEST_P(SharedMemoryTest, MappedId) {
   const uint32_t kDataSize = 1024;
   SharedMemory memory;
   SharedMemoryCreateOptions options;
   options.size = kDataSize;
-#if defined(OS_MACOSX) && !defined(OS_IOS)
-  // The Mach functionality is tested in shared_memory_mac_unittest.cc.
-  options.type = SharedMemoryHandle::POSIX;
-#endif
 
   EXPECT_TRUE(memory.Create(options));
   base::UnguessableToken id = memory.handle().GetGUID();
@@ -808,5 +652,97 @@ TEST(SharedMemoryTest, MappedId) {
   memory.Unmap();
   EXPECT_TRUE(memory.mapped_id().is_empty());
 }
+#endif  // !(defined(OS_MACOSX) && !defined(OS_IOS)
+
+INSTANTIATE_TEST_SUITE_P(Default,
+                         SharedMemoryTest,
+                         ::testing::Values(Mode::Default));
+#if defined(OS_LINUX) && !defined(OS_CHROMEOS)
+INSTANTIATE_TEST_SUITE_P(SkipDevShm,
+                         SharedMemoryTest,
+                         ::testing::Values(Mode::DisableDevShm));
+#endif  // defined(OS_LINUX) && !defined(OS_CHROMEOS)
+
+#if defined(OS_ANDROID)
+TEST(SharedMemoryTest, ReadOnlyRegions) {
+  const uint32_t kDataSize = 1024;
+  SharedMemory memory;
+  SharedMemoryCreateOptions options;
+  options.size = kDataSize;
+  EXPECT_TRUE(memory.Create(options));
+
+  EXPECT_FALSE(memory.handle().IsRegionReadOnly());
+
+  // Check that it is possible to map the region directly from the fd.
+  int region_fd = memory.handle().GetHandle();
+  EXPECT_GE(region_fd, 0);
+  void* address = mmap(nullptr, kDataSize, PROT_READ | PROT_WRITE, MAP_SHARED,
+                       region_fd, 0);
+  bool success = address && address != MAP_FAILED;
+  ASSERT_TRUE(address);
+  ASSERT_NE(address, MAP_FAILED);
+  if (success) {
+    EXPECT_EQ(0, munmap(address, kDataSize));
+  }
+
+  ASSERT_TRUE(memory.handle().SetRegionReadOnly());
+  EXPECT_TRUE(memory.handle().IsRegionReadOnly());
+
+  // Check that it is no longer possible to map the region read/write.
+  errno = 0;
+  address = mmap(nullptr, kDataSize, PROT_READ | PROT_WRITE, MAP_SHARED,
+                 region_fd, 0);
+  success = address && address != MAP_FAILED;
+  ASSERT_FALSE(success);
+  ASSERT_EQ(EPERM, errno);
+  if (success) {
+    EXPECT_EQ(0, munmap(address, kDataSize));
+  }
+}
+
+TEST(SharedMemoryTest, ReadOnlyDescriptors) {
+  const uint32_t kDataSize = 1024;
+  SharedMemory memory;
+  SharedMemoryCreateOptions options;
+  options.size = kDataSize;
+  EXPECT_TRUE(memory.Create(options));
+
+  EXPECT_FALSE(memory.handle().IsRegionReadOnly());
+
+  // Getting a read-only descriptor should not make the region read-only itself.
+  SharedMemoryHandle ro_handle = memory.GetReadOnlyHandle();
+  EXPECT_FALSE(memory.handle().IsRegionReadOnly());
+
+  // Mapping a writable region from a read-only descriptor should not
+  // be possible, it will DCHECK() in debug builds (see test below),
+  // while returning false on release ones.
+  {
+    bool dcheck_fired = false;
+    logging::ScopedLogAssertHandler log_assert(
+        base::BindRepeating([](bool* flag, const char*, int, base::StringPiece,
+                               base::StringPiece) { *flag = true; },
+                            base::Unretained(&dcheck_fired)));
+
+    SharedMemory rw_region(ro_handle.Duplicate(), /* read_only */ false);
+    EXPECT_FALSE(rw_region.Map(kDataSize));
+    EXPECT_EQ(DCHECK_IS_ON() ? true : false, dcheck_fired);
+  }
+
+  // Nor shall it turn the region read-only itself.
+  EXPECT_FALSE(ro_handle.IsRegionReadOnly());
+
+  // Mapping a read-only region from a read-only descriptor should work.
+  SharedMemory ro_region(ro_handle.Duplicate(), /* read_only */ true);
+  EXPECT_TRUE(ro_region.Map(kDataSize));
+
+  // And it should turn the region read-only too.
+  EXPECT_TRUE(ro_handle.IsRegionReadOnly());
+  EXPECT_TRUE(memory.handle().IsRegionReadOnly());
+  EXPECT_FALSE(memory.Map(kDataSize));
+
+  ro_handle.Close();
+}
+
+#endif  // OS_ANDROID
 
 }  // namespace base

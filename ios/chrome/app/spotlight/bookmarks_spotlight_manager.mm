@@ -77,26 +77,26 @@ class SpotlightBookmarkModelBridge;
 class SpotlightBookmarkModelBridge : public bookmarks::BookmarkModelObserver {
  public:
   explicit SpotlightBookmarkModelBridge(BookmarksSpotlightManager* owner)
-      : owner_(owner){};
+      : owner_(owner) {}
 
   ~SpotlightBookmarkModelBridge() override {}
 
   void BookmarkNodeRemoved(bookmarks::BookmarkModel* model,
                            const bookmarks::BookmarkNode* parent,
-                           int old_index,
+                           size_t old_index,
                            const bookmarks::BookmarkNode* node,
                            const std::set<GURL>& removed_urls) override {}
 
   void OnWillRemoveBookmarks(bookmarks::BookmarkModel* model,
                              const bookmarks::BookmarkNode* parent,
-                             int old_index,
+                             size_t old_index,
                              const bookmarks::BookmarkNode* node) override {
     [owner_ removeNodeFromIndex:node];
   }
 
   void BookmarkModelBeingDeleted(bookmarks::BookmarkModel* model) override {
     [owner_ detachBookmarkModel];
-  };
+  }
 
   void BookmarkModelLoaded(bookmarks::BookmarkModel* model,
                            bool ids_reassigned) override {
@@ -105,8 +105,8 @@ class SpotlightBookmarkModelBridge : public bookmarks::BookmarkModelObserver {
 
   void BookmarkNodeAdded(bookmarks::BookmarkModel* model,
                          const bookmarks::BookmarkNode* parent,
-                         int index) override {
-    [owner_ refreshNodeInIndex:parent->GetChild(index) initial:NO];
+                         size_t index) override {
+    [owner_ refreshNodeInIndex:parent->children()[index].get() initial:NO];
   }
 
   void OnWillChangeBookmarkNode(bookmarks::BookmarkModel* model,
@@ -137,11 +137,12 @@ class SpotlightBookmarkModelBridge : public bookmarks::BookmarkModelObserver {
 
   void BookmarkNodeMoved(bookmarks::BookmarkModel* model,
                          const bookmarks::BookmarkNode* old_parent,
-                         int old_index,
+                         size_t old_index,
                          const bookmarks::BookmarkNode* new_parent,
-                         int new_index) override {
-    [owner_ refreshNodeInIndex:new_parent->GetChild(new_index) initial:NO];
-  };
+                         size_t new_index) override {
+    [owner_ refreshNodeInIndex:new_parent->children()[new_index].get()
+                       initial:NO];
+  }
 
  private:
   __weak BookmarksSpotlightManager* owner_;
@@ -213,10 +214,8 @@ initWithLargeIconService:(favicon::LargeIconService*)largeIconService
     spotlight::DeleteItemsWithIdentifiers(@[ spotlightID ], completion);
     return;
   }
-  int childCount = node->child_count();
-  for (int child = 0; child < childCount; child++) {
-    [self removeNodeFromIndex:node->GetChild(child)];
-  }
+  for (const auto& child : node->children())
+    [self removeNodeFromIndex:child.get()];
 }
 
 - (BOOL)shouldReindex {
@@ -273,10 +272,8 @@ initWithLargeIconService:(favicon::LargeIconService*)largeIconService
     }
     return;
   }
-  int childCount = node->child_count();
-  for (int child = 0; child < childCount; child++) {
-    [self refreshNodeInIndex:node->GetChild(child) initial:initial];
-  }
+  for (const auto& child : node->children())
+    [self refreshNodeInIndex:child.get() initial:initial];
 }
 
 - (void)shutdown {

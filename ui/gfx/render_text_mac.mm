@@ -15,8 +15,8 @@
 #include "base/mac/foundation_util.h"
 #include "base/mac/mac_util.h"
 #include "base/mac/scoped_cftyperef.h"
-#include "base/macros.h"
 #include "base/memory/ptr_util.h"
+#include "base/stl_util.h"
 #include "base/strings/sys_string_conversions.h"
 #include "skia/ext/skia_utils_mac.h"
 #include "third_party/skia/include/ports/SkTypeface_mac.h"
@@ -43,17 +43,13 @@ base::ScopedCFTypeRef<CTFontRef> CopyFontWithSymbolicTraits(CTFontRef font,
   base::ScopedCFTypeRef<CFMutableDictionaryRef> attributes(
       CFDictionaryCreateMutableCopy(kCFAllocatorDefault, 0, orig_attributes));
 
-  base::ScopedCFTypeRef<CFMutableDictionaryRef> traits(
-      CFDictionaryCreateMutable(kCFAllocatorDefault, 0,
-                                &kCFTypeDictionaryKeyCallBacks,
-                                &kCFTypeDictionaryValueCallBacks));
-  base::ScopedCFTypeRef<CFNumberRef> n(
-      CFNumberCreate(kCFAllocatorDefault, kCFNumberIntType, &sym_traits));
-  CFDictionarySetValue(traits, kCTFontSymbolicTrait, n.release());
-  CFDictionarySetValue(attributes, kCTFontTraitsAttribute, traits.release());
+  NSDictionary* traits =
+      @{base::mac::CFToNSCast(kCTFontSymbolicTrait) : @(sym_traits)};
+  CFDictionarySetValue(attributes, kCTFontTraitsAttribute,
+                       base::mac::NSToCFCast(traits));
 
   base::ScopedCFTypeRef<CFStringRef> family_name(CTFontCopyFamilyName(font));
-  CFDictionarySetValue(attributes, kCTFontNameAttribute, family_name.release());
+  CFDictionarySetValue(attributes, kCTFontNameAttribute, family_name);
 
   base::ScopedCFTypeRef<CTFontDescriptorRef> desc(
       CTFontDescriptorCreateWithAttributes(attributes));
@@ -137,7 +133,8 @@ SizeF RenderTextMac::GetStringSizeF() {
   return string_size_;
 }
 
-SelectionModel RenderTextMac::FindCursorPosition(const Point& point) {
+SelectionModel RenderTextMac::FindCursorPosition(const Point& point,
+                                                 const Point& drag_origin) {
   // TODO(asvitkine): Implement this. http://crbug.com/131618
   return SelectionModel();
 }
@@ -162,6 +159,10 @@ std::vector<RenderText::FontSpan> RenderTextMac::GetFontSpansForTesting() {
   return spans;
 }
 
+size_t RenderTextMac::GetLineContainingCaret(const SelectionModel& caret) {
+  return 0;
+}
+
 int RenderTextMac::GetDisplayTextBaseline() {
   EnsureLayout();
   return common_baseline_;
@@ -181,9 +182,15 @@ SelectionModel RenderTextMac::AdjacentWordSelectionModel(
   return SelectionModel();
 }
 
-Range RenderTextMac::GetCursorSpan(const Range& text_range) {
+SelectionModel RenderTextMac::AdjacentLineSelectionModel(
+    const SelectionModel& selection,
+    VisualCursorDirection direction) {
+  return SelectionModel();
+}
+
+RangeF RenderTextMac::GetCursorSpan(const Range& text_range) {
   // TODO(asvitkine): Implement this. http://crbug.com/131618
-  return Range();
+  return RangeF();
 }
 
 std::vector<Rect> RenderTextMac::GetSubstringBounds(const Range& range) {
@@ -317,7 +324,7 @@ base::ScopedCFTypeRef<CTLineRef> RenderTextMac::EnsureLayoutInternal(
   const void* keys[] = {kCTFontAttributeName};
   const void* values[] = {ct_font};
   base::ScopedCFTypeRef<CFDictionaryRef> attributes(
-      CFDictionaryCreate(NULL, keys, values, arraysize(keys), NULL,
+      CFDictionaryCreate(NULL, keys, values, base::size(keys), NULL,
                          &kCFTypeDictionaryValueCallBacks));
 
   base::ScopedCFTypeRef<CFStringRef> cf_text(base::SysUTF16ToCFStringRef(text));
@@ -349,7 +356,8 @@ base::ScopedCFTypeRef<CFMutableArrayRef> RenderTextMac::ApplyStyles(
       CFArrayCreateMutable(NULL, 0, &kCFTypeArrayCallBacks));
 
   // https://developer.apple.com/library/mac/#documentation/Carbon/Reference/CoreText_StringAttributes_Ref/Reference/reference.html
-  internal::StyleIterator style(colors(), baselines(), weights(), styles());
+  internal::StyleIterator style(colors(), baselines(), font_size_overrides(),
+                                weights(), styles());
   const size_t layout_text_length = CFAttributedStringGetLength(attr_string);
   for (size_t i = 0, end = 0; i < layout_text_length; i = end) {
     end = TextIndexToGivenTextIndex(text, style.GetRange().end());
@@ -360,8 +368,11 @@ base::ScopedCFTypeRef<CFMutableArrayRef> RenderTextMac::ApplyStyles(
                                    kCTForegroundColorAttributeName, foreground);
     CFArrayAppendValue(attributes, foreground);
 
-    if (style.style(UNDERLINE)) {
-      CTUnderlineStyle value = kCTUnderlineStyleSingle;
+    if (style.style(TEXT_STYLE_UNDERLINE) ||
+        style.style(TEXT_STYLE_HEAVY_UNDERLINE)) {
+      CTUnderlineStyle value = style.style(TEXT_STYLE_HEAVY_UNDERLINE)
+                                   ? kCTUnderlineStyleThick
+                                   : kCTUnderlineStyleSingle;
       base::ScopedCFTypeRef<CFNumberRef> underline_value(
           CFNumberCreate(NULL, kCFNumberSInt32Type, &value));
       CFAttributedStringSetAttribute(
@@ -371,7 +382,7 @@ base::ScopedCFTypeRef<CFMutableArrayRef> RenderTextMac::ApplyStyles(
 
     // TODO(mboc): Apply font weights other than bold below.
     const int traits =
-        (style.style(ITALIC) ? kCTFontItalicTrait : 0) |
+        (style.style(TEXT_STYLE_ITALIC) ? kCTFontItalicTrait : 0) |
         (style.weight() >= Font::Weight::BOLD ? kCTFontBoldTrait : 0);
     if (traits != 0) {
       base::ScopedCFTypeRef<CTFontRef> styled_font =

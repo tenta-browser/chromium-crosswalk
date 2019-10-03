@@ -9,12 +9,12 @@
 
 #include "base/macros.h"
 #include "base/observer_list.h"
-#include "chrome/browser/extensions/chrome_extension_function.h"
 #include "chrome/browser/extensions/extension_action.h"
 #include "content/public/browser/notification_observer.h"
 #include "content/public/browser/notification_registrar.h"
 #include "extensions/browser/browser_context_keyed_api_factory.h"
 #include "extensions/browser/extension_event_histogram_value.h"
+#include "extensions/browser/extension_function.h"
 #include "third_party/skia/include/core/SkColor.h"
 
 namespace base {
@@ -25,6 +25,8 @@ namespace content {
 class BrowserContext;
 class WebContents;
 }
+
+class Browser;
 
 namespace extensions {
 class ExtensionPrefs;
@@ -43,15 +45,6 @@ class ExtensionActionAPI : public BrowserContextKeyedAPI {
         ExtensionAction* extension_action,
         content::WebContents* web_contents,
         content::BrowserContext* browser_context);
-
-    // Called when there is a change to the extension action's visibility.
-    virtual void OnExtensionActionVisibilityChanged(
-        const std::string& extension_id,
-        bool is_now_visible);
-
-    // Called when the page actions have been refreshed do to a possible change
-    // in count or visibility.
-    virtual void OnPageActionsUpdated(content::WebContents* web_contents);
 
     // Called when the ExtensionActionAPI is shutting down, giving observers a
     // chance to unregister themselves if there is not a definitive lifecycle.
@@ -100,10 +93,6 @@ class ExtensionActionAPI : public BrowserContextKeyedAPI {
   // given |web_contents| (and signals that page actions changed).
   void ClearAllValuesForTab(content::WebContents* web_contents);
 
-  // Notifies that the current set of page actions for |web_contents| has
-  // changed, and signals the browser to update.
-  void NotifyPageActionsChanged(content::WebContents* web_contents);
-
   void set_prefs_for_testing(ExtensionPrefs* prefs) {
     extension_prefs_ = prefs;
   }
@@ -126,7 +115,7 @@ class ExtensionActionAPI : public BrowserContextKeyedAPI {
   static const char* service_name() { return "ExtensionActionAPI"; }
   static const bool kServiceRedirectedInIncognito = true;
 
-  base::ObserverList<Observer> observers_;
+  base::ObserverList<Observer>::Unchecked observers_;
 
   content::BrowserContext* browser_context_;
 
@@ -195,6 +184,9 @@ class ExtensionActionHideFunction : public ExtensionActionFunction {
 
 // setIcon
 class ExtensionActionSetIconFunction : public ExtensionActionFunction {
+ public:
+  static void SetReportErrorForInvisibleIconForTesting(bool value);
+
  protected:
   ~ExtensionActionSetIconFunction() override {}
   ResponseAction RunExtensionAction() override;
@@ -256,6 +248,102 @@ class ExtensionActionGetBadgeBackgroundColorFunction
  protected:
   ~ExtensionActionGetBadgeBackgroundColorFunction() override {}
   ResponseAction RunExtensionAction() override;
+};
+
+//
+// action.* aliases for supported action APIs.
+//
+
+class ActionSetIconFunction : public ExtensionActionSetIconFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("action.setIcon", ACTION_SETICON)
+
+ protected:
+  ~ActionSetIconFunction() override {}
+};
+
+class ActionGetPopupFunction : public ExtensionActionGetPopupFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("action.getPopup", ACTION_GETPOPUP)
+
+ protected:
+  ~ActionGetPopupFunction() override {}
+};
+
+class ActionSetPopupFunction : public ExtensionActionSetPopupFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("action.setPopup", ACTION_SETPOPUP)
+
+ protected:
+  ~ActionSetPopupFunction() override {}
+};
+
+class ActionGetTitleFunction : public ExtensionActionGetTitleFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("action.getTitle", ACTION_GETTITLE)
+
+ protected:
+  ~ActionGetTitleFunction() override {}
+};
+
+class ActionSetTitleFunction : public ExtensionActionSetTitleFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("action.setTitle", ACTION_SETTITLE)
+
+ protected:
+  ~ActionSetTitleFunction() override {}
+};
+
+class ActionGetBadgeTextFunction : public ExtensionActionGetBadgeTextFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("action.getBadgeText", ACTION_GETBADGETEXT)
+
+ protected:
+  ~ActionGetBadgeTextFunction() override {}
+};
+
+class ActionSetBadgeTextFunction : public ExtensionActionSetBadgeTextFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("action.setBadgeText", ACTION_SETBADGETEXT)
+
+ protected:
+  ~ActionSetBadgeTextFunction() override {}
+};
+
+class ActionGetBadgeBackgroundColorFunction
+    : public ExtensionActionGetBadgeBackgroundColorFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("action.getBadgeBackgroundColor",
+                             ACTION_GETBADGEBACKGROUNDCOLOR)
+
+ protected:
+  ~ActionGetBadgeBackgroundColorFunction() override {}
+};
+
+class ActionSetBadgeBackgroundColorFunction
+    : public ExtensionActionSetBadgeBackgroundColorFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("action.setBadgeBackgroundColor",
+                             ACTION_SETBADGEBACKGROUNDCOLOR)
+
+ protected:
+  ~ActionSetBadgeBackgroundColorFunction() override {}
+};
+
+class ActionEnableFunction : public ExtensionActionShowFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("action.enable", ACTION_ENABLE)
+
+ protected:
+  ~ActionEnableFunction() override {}
+};
+
+class ActionDisableFunction : public ExtensionActionHideFunction {
+ public:
+  DECLARE_EXTENSION_FUNCTION("action.disable", ACTION_DISABLE)
+
+ protected:
+  ~ActionDisableFunction() override {}
 };
 
 //
@@ -358,7 +446,7 @@ class BrowserActionDisableFunction : public ExtensionActionHideFunction {
   ~BrowserActionDisableFunction() override {}
 };
 
-class BrowserActionOpenPopupFunction : public ChromeAsyncExtensionFunction,
+class BrowserActionOpenPopupFunction : public UIThreadExtensionFunction,
                                        public content::NotificationObserver {
  public:
   DECLARE_EXTENSION_FUNCTION("browserAction.openPopup",
@@ -369,7 +457,7 @@ class BrowserActionOpenPopupFunction : public ChromeAsyncExtensionFunction,
   ~BrowserActionOpenPopupFunction() override {}
 
   // ExtensionFunction:
-  bool RunAsync() override;
+  ResponseAction Run() override;
 
   void Observe(int type,
                const content::NotificationSource& source,
@@ -377,7 +465,6 @@ class BrowserActionOpenPopupFunction : public ChromeAsyncExtensionFunction,
   void OpenPopupTimedOut();
 
   content::NotificationRegistrar registrar_;
-  bool response_sent_;
 
   DISALLOW_COPY_AND_ASSIGN(BrowserActionOpenPopupFunction);
 };

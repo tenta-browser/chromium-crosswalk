@@ -9,7 +9,6 @@
 #include <vector>
 
 #include "base/bind.h"
-#include "base/memory/ptr_util.h"
 #include "base/test/mock_callback.h"
 #include "base/values.h"
 #include "components/offline_pages/core/renovations/script_injector.h"
@@ -56,7 +55,7 @@ PageRenovatorTest::FakeScriptInjector::FakeScriptInjector(
 void PageRenovatorTest::FakeScriptInjector::Inject(base::string16 script,
                                                    ResultCallback callback) {
   if (callback)
-    callback.Run(base::Value());
+    std::move(callback).Run(base::Value());
   fixture_->script_injector_inject_called_ = true;
 }
 
@@ -66,8 +65,8 @@ PageRenovatorTest::PageRenovatorTest() {
   page_renovation_loader_.SetRenovationsForTest(
       std::vector<std::unique_ptr<PageRenovation>>());
 
-  page_renovator_ = base::MakeUnique<PageRenovator>(
-      &page_renovation_loader_, base::MakeUnique<FakeScriptInjector>(this),
+  page_renovator_ = std::make_unique<PageRenovator>(
+      &page_renovation_loader_, std::make_unique<FakeScriptInjector>(this),
       GURL("example.com"));
 }
 

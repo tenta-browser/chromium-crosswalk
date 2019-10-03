@@ -41,7 +41,7 @@ class FakePluginService : public PluginService {
   base::string16 GetPluginDisplayNameByPath(
       const base::FilePath& path) override;
   void GetPlugins(GetPluginsCallback callback) override;
-  PepperPluginInfo* GetRegisteredPpapiPluginInfo(
+  const PepperPluginInfo* GetRegisteredPpapiPluginInfo(
       const base::FilePath& plugin_path) override;
   void SetFilter(PluginServiceFilter* filter) override;
   PluginServiceFilter* GetFilter() override;
@@ -53,6 +53,9 @@ class FakePluginService : public PluginService {
   void GetInternalPlugins(std::vector<WebPluginInfo>* plugins) override;
   bool PpapiDevChannelSupported(BrowserContext* browser_context,
                                 const GURL& document_url) override;
+  int CountPpapiPluginProcessesForProfile(
+      const base::FilePath& plugin_path,
+      const base::FilePath& profile_data_directory) override;
 
  private:
   DISALLOW_COPY_AND_ASSIGN(FakePluginService);

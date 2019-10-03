@@ -5,7 +5,8 @@
 #include "ios/chrome/test/app/password_test_util.h"
 
 #include "base/mac/foundation_util.h"
-#import "ios/chrome/browser/ui/settings/password_details_collection_view_controller_for_testing.h"
+#import "ios/chrome/browser/ui/settings/password/password_details_table_view_controller+testing.h"
+#import "ios/chrome/browser/ui/settings/password/passwords_table_view_controller.h"
 #import "ios/chrome/browser/ui/settings/settings_navigation_controller.h"
 #import "ios/chrome/browser/ui/util/top_view_controller.h"
 
@@ -15,6 +16,8 @@
 
 @implementation MockReauthenticationModule
 
+@synthesize localizedReasonForAuthentication =
+    _localizedReasonForAuthentication;
 @synthesize shouldSucceed = _shouldSucceed;
 @synthesize canAttempt = _canAttempt;
 
@@ -28,8 +31,10 @@
 }
 
 - (void)attemptReauthWithLocalizedReason:(NSString*)localizedReason
+                    canReusePreviousAuth:(BOOL)canReusePreviousAuth
                                  handler:(void (^)(BOOL success))
                                              showCopyPasswordsHandler {
+  self.localizedReasonForAuthentication = localizedReason;
   showCopyPasswordsHandler(_shouldSucceed);
 }
 
@@ -47,12 +52,30 @@ MockReauthenticationModule* SetUpAndReturnMockReauthenticationModule() {
   SettingsNavigationController* settings_navigation_controller =
       base::mac::ObjCCastStrict<SettingsNavigationController>(
           top_view_controller::TopPresentedViewController());
-  PasswordDetailsCollectionViewController*
-      password_details_collection_view_controller =
-          base::mac::ObjCCastStrict<PasswordDetailsCollectionViewController>(
-              settings_navigation_controller.topViewController);
-  [password_details_collection_view_controller
+  PasswordDetailsTableViewController* password_details_table_view_controller =
+      base::mac::ObjCCastStrict<PasswordDetailsTableViewController>(
+          settings_navigation_controller.topViewController);
+  [password_details_table_view_controller
       setReauthenticationModule:mock_reauthentication_module];
+  return mock_reauthentication_module;
+}
+
+// Replace the reauthentication module in
+// PasswordExporter with a fake one to avoid being
+// blocked with a reauth prompt, and return the fake reauthentication module.
+MockReauthenticationModule*
+SetUpAndReturnMockReauthenticationModuleForExport() {
+  MockReauthenticationModule* mock_reauthentication_module =
+      [[MockReauthenticationModule alloc] init];
+  // TODO(crbug.com/754642): Stop using TopPresentedViewController();
+  SettingsNavigationController* settings_navigation_controller =
+      base::mac::ObjCCastStrict<SettingsNavigationController>(
+          top_view_controller::TopPresentedViewController());
+  PasswordsTableViewController* passwords_table_view_controller =
+      base::mac::ObjCCastStrict<PasswordsTableViewController>(
+          settings_navigation_controller.topViewController);
+  [passwords_table_view_controller
+      setReauthenticationModuleForExporter:mock_reauthentication_module];
   return mock_reauthentication_module;
 }
 

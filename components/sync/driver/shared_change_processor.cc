@@ -7,7 +7,6 @@
 #include <utility>
 
 #include "base/threading/sequenced_task_runner_handle.h"
-#include "base/threading/thread_task_runner_handle.h"
 #include "components/sync/base/data_type_histogram.h"
 #include "components/sync/driver/generic_change_processor.h"
 #include "components/sync/driver/generic_change_processor_factory.h"
@@ -20,12 +19,10 @@ using base::AutoLock;
 
 namespace syncer {
 
-class AttachmentService;
-
 SharedChangeProcessor::SharedChangeProcessor(ModelType type)
     : disconnected_(false),
       type_(type),
-      frontend_task_runner_(base::ThreadTaskRunnerHandle::Get()),
+      frontend_task_runner_(base::SequencedTaskRunnerHandle::Get()),
       generic_change_processor_(nullptr) {
   DCHECK_NE(type_, UNSPECIFIED);
 }
@@ -35,11 +32,11 @@ SharedChangeProcessor::~SharedChangeProcessor() {
   // the SyncableService stops syncing (on |backend_task_runner_|).
   // |generic_change_processor_|, if non-null, must be deleted on
   // |backend_task_runner_|.
-  if (backend_task_runner_.get()) {
+  if (backend_task_runner_) {
     if (backend_task_runner_->RunsTasksInCurrentSequence()) {
       delete generic_change_processor_;
     } else {
-      DCHECK(frontend_task_runner_->BelongsToCurrentThread());
+      DCHECK(frontend_task_runner_->RunsTasksInCurrentSequence());
       if (!backend_task_runner_->DeleteSoon(FROM_HERE,
                                             generic_change_processor_)) {
         NOTREACHED();
@@ -69,7 +66,7 @@ void SharedChangeProcessor::StartAssociation(
   local_service_ =
       Connect(sync_client, processor_factory, user_share,
               std::move(error_handler), weak_ptr_factory.GetWeakPtr());
-  if (!local_service_.get()) {
+  if (!local_service_) {
     SyncError error(FROM_HERE, SyncError::DATATYPE_ERROR,
                     "Failed to connect to syncer.", type_);
     local_merge_result.set_error(error);
@@ -110,12 +107,6 @@ void SharedChangeProcessor::StartAssociation(
       return;
     }
 
-    std::string datatype_context;
-    if (GetDataTypeContext(&datatype_context)) {
-      local_service_->UpdateDataTypeContext(
-          type_, SyncChangeProcessor::NO_REFRESH, datatype_context);
-    }
-
     syncer_merge_result.set_num_items_before_association(
         initial_sync_data.size());
     // Passes a reference to |shared_change_processor|.
@@ -153,8 +144,9 @@ base::WeakPtr<SyncableService> SharedChangeProcessor::Connect(
   error_handler_ = std::move(error_handler);
   base::WeakPtr<SyncableService> local_service =
       sync_client->GetSyncableServiceForType(type_);
-  if (!local_service.get()) {
-    LOG(WARNING) << "SyncableService destroyed before DTC was stopped.";
+  if (!local_service) {
+    DLOG(WARNING) << "SyncableService destroyed before DTC was stopped for "
+                  << ModelTypeToString(type_);
     disconnected_ = true;
     return base::WeakPtr<SyncableService>();
   }
@@ -162,14 +154,8 @@ base::WeakPtr<SyncableService> SharedChangeProcessor::Connect(
   generic_change_processor_ = processor_factory
                                   ->CreateGenericChangeProcessor(
                                       type_, user_share, error_handler_->Copy(),
-                                      local_service, merge_result, sync_client)
+                                      local_service, merge_result)
                                   .release();
-  // If available, propagate attachment service to the syncable service.
-  std::unique_ptr<AttachmentService> attachment_service =
-      generic_change_processor_->GetAttachmentService();
-  if (attachment_service) {
-    local_service->SetAttachmentService(std::move(attachment_service));
-  }
   return local_service;
 }
 
@@ -188,7 +174,7 @@ ChangeProcessor* SharedChangeProcessor::generic_change_processor() {
 }
 
 int SharedChangeProcessor::GetSyncCount() {
-  DCHECK(backend_task_runner_.get());
+  DCHECK(backend_task_runner_);
   DCHECK(backend_task_runner_->RunsTasksInCurrentSequence());
   AutoLock lock(monitor_lock_);
   if (disconnected_) {
@@ -201,7 +187,7 @@ int SharedChangeProcessor::GetSyncCount() {
 SyncError SharedChangeProcessor::ProcessSyncChanges(
     const base::Location& from_here,
     const SyncChangeList& list_of_changes) {
-  DCHECK(backend_task_runner_.get());
+  DCHECK(backend_task_runner_);
   DCHECK(backend_task_runner_->RunsTasksInCurrentSequence());
   AutoLock lock(monitor_lock_);
   if (disconnected_) {
@@ -224,7 +210,7 @@ SyncDataList SharedChangeProcessor::GetAllSyncData(ModelType type) const {
 SyncError SharedChangeProcessor::GetAllSyncDataReturnError(
     ModelType type,
     SyncDataList* data) const {
-  DCHECK(backend_task_runner_.get());
+  DCHECK(backend_task_runner_);
   DCHECK(backend_task_runner_->RunsTasksInCurrentSequence());
   AutoLock lock(monitor_lock_);
   if (disconnected_) {
@@ -239,7 +225,7 @@ SyncError SharedChangeProcessor::UpdateDataTypeContext(
     ModelType type,
     SyncChangeProcessor::ContextRefreshStatus refresh_status,
     const std::string& context) {
-  DCHECK(backend_task_runner_.get());
+  DCHECK(backend_task_runner_);
   DCHECK(backend_task_runner_->RunsTasksInCurrentSequence());
   AutoLock lock(monitor_lock_);
   if (disconnected_) {
@@ -253,7 +239,7 @@ SyncError SharedChangeProcessor::UpdateDataTypeContext(
 
 void SharedChangeProcessor::AddLocalChangeObserver(
     LocalChangeObserver* observer) {
-  DCHECK(backend_task_runner_.get());
+  DCHECK(backend_task_runner_);
   DCHECK(backend_task_runner_->RunsTasksInCurrentSequence());
 
   generic_change_processor_->AddLocalChangeObserver(observer);
@@ -261,14 +247,14 @@ void SharedChangeProcessor::AddLocalChangeObserver(
 
 void SharedChangeProcessor::RemoveLocalChangeObserver(
     LocalChangeObserver* observer) {
-  DCHECK(backend_task_runner_.get());
+  DCHECK(backend_task_runner_);
   DCHECK(backend_task_runner_->RunsTasksInCurrentSequence());
 
   generic_change_processor_->RemoveLocalChangeObserver(observer);
 }
 
 bool SharedChangeProcessor::SyncModelHasUserCreatedNodes(bool* has_nodes) {
-  DCHECK(backend_task_runner_.get());
+  DCHECK(backend_task_runner_);
   DCHECK(backend_task_runner_->RunsTasksInCurrentSequence());
   AutoLock lock(monitor_lock_);
   if (disconnected_) {
@@ -279,7 +265,7 @@ bool SharedChangeProcessor::SyncModelHasUserCreatedNodes(bool* has_nodes) {
 }
 
 bool SharedChangeProcessor::CryptoReadyIfNecessary() {
-  DCHECK(backend_task_runner_.get());
+  DCHECK(backend_task_runner_);
   DCHECK(backend_task_runner_->RunsTasksInCurrentSequence());
   AutoLock lock(monitor_lock_);
   if (disconnected_) {
@@ -290,7 +276,7 @@ bool SharedChangeProcessor::CryptoReadyIfNecessary() {
 }
 
 bool SharedChangeProcessor::GetDataTypeContext(std::string* context) const {
-  DCHECK(backend_task_runner_.get());
+  DCHECK(backend_task_runner_);
   DCHECK(backend_task_runner_->RunsTasksInCurrentSequence());
   AutoLock lock(monitor_lock_);
   if (disconnected_) {
@@ -319,7 +305,7 @@ void SharedChangeProcessor::RecordAssociationTime(base::TimeDelta time) {
 }
 
 void SharedChangeProcessor::StopLocalService() {
-  if (local_service_.get())
+  if (local_service_)
     local_service_->StopSyncing(type_);
   local_service_.reset();
 }

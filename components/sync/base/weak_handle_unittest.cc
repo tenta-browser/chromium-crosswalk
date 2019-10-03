@@ -4,6 +4,7 @@
 
 #include "components/sync/base/weak_handle.h"
 
+#include "base/bind.h"
 #include "base/run_loop.h"
 #include "base/test/scoped_task_environment.h"
 #include "base/threading/thread.h"
@@ -18,7 +19,7 @@ using ::testing::StrictMock;
 
 class Base {
  public:
-  Base() : weak_ptr_factory_(this) {}
+  Base() {}
 
   WeakHandle<Base> AsWeakHandle() {
     return MakeWeakHandle(weak_ptr_factory_.GetWeakPtr());
@@ -35,7 +36,7 @@ class Base {
   MOCK_METHOD1(TestWithSelf, void(const WeakHandle<Base>&));
 
  private:
-  base::WeakPtrFactory<Base> weak_ptr_factory_;
+  base::WeakPtrFactory<Base> weak_ptr_factory_{this};
 };
 
 class Derived : public Base, public base::SupportsWeakPtr<Derived> {};
@@ -54,7 +55,7 @@ class WeakHandleTest : public ::testing::Test {
     base::Thread t("Test thread");
     ASSERT_TRUE(t.Start());
     t.task_runner()->PostTask(
-        from_here, base::Bind(&WeakHandleTest::CallTest, from_here, h));
+        from_here, base::BindOnce(&WeakHandleTest::CallTest, from_here, h));
   }
 
  private:
@@ -211,8 +212,8 @@ TEST_F(WeakHandleTest, WithDestroyedThread) {
   {
     base::Thread t("Test thread");
     ASSERT_TRUE(t.Start());
-    t.task_runner()->PostTask(FROM_HERE,
-                              base::Bind(&CallTestWithSelf, b1.AsWeakHandle()));
+    t.task_runner()->PostTask(
+        FROM_HERE, base::BindOnce(&CallTestWithSelf, b1.AsWeakHandle()));
   }
 
   // Calls b1.TestWithSelf().

@@ -12,11 +12,9 @@
 #include "base/json/json_reader.h"
 #include "base/json/json_writer.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/syslog_logging.h"
-#include "base/threading/sequenced_worker_pool.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/values.h"
 #include "chrome/browser/chromeos/policy/upload_job_impl.h"
@@ -27,10 +25,6 @@
 namespace policy {
 
 namespace {
-
-// Determines the time, measured from the time of issue, after which the command
-// queue will consider this command expired if the command has not been started.
-const int kCommandExpirationTimeInMinutes = 10;
 
 // String constant identifying the result field in the result payload.
 const char* const kResultFieldName = "result";
@@ -90,7 +84,7 @@ DeviceCommandScreenshotJob::Payload::Payload(ResultCode result_code) {
 }
 
 std::unique_ptr<std::string> DeviceCommandScreenshotJob::Payload::Serialize() {
-  return base::MakeUnique<std::string>(payload_);
+  return std::make_unique<std::string>(payload_);
 }
 
 DeviceCommandScreenshotJob::DeviceCommandScreenshotJob(
@@ -112,9 +106,8 @@ enterprise_management::RemoteCommand_Type DeviceCommandScreenshotJob::GetType()
 void DeviceCommandScreenshotJob::OnSuccess() {
   SYSLOG(INFO) << "Upload successful.";
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE,
-      base::BindOnce(succeeded_callback_,
-                     base::Passed(base::MakeUnique<Payload>(SUCCESS))));
+      FROM_HERE, base::BindOnce(std::move(succeeded_callback_),
+                                std::make_unique<Payload>(SUCCESS)));
 }
 
 void DeviceCommandScreenshotJob::OnFailure(UploadJob::ErrorCode error_code) {
@@ -130,20 +123,14 @@ void DeviceCommandScreenshotJob::OnFailure(UploadJob::ErrorCode error_code) {
       break;
   }
   base::ThreadTaskRunnerHandle::Get()->PostTask(
-      FROM_HERE,
-      base::BindOnce(failed_callback_,
-                     base::Passed(base::MakeUnique<Payload>(result_code))));
-}
-
-bool DeviceCommandScreenshotJob::IsExpired(base::TimeTicks now) {
-  return now > issued_time() + base::TimeDelta::FromMinutes(
-                                   kCommandExpirationTimeInMinutes);
+      FROM_HERE, base::BindOnce(std::move(failed_callback_),
+                                std::make_unique<Payload>(result_code)));
 }
 
 bool DeviceCommandScreenshotJob::ParseCommandPayload(
     const std::string& command_payload) {
   std::unique_ptr<base::Value> root(
-      base::JSONReader().ReadToValue(command_payload));
+      base::JSONReader().ReadToValueDeprecated(command_payload));
   if (!root.get())
     return false;
   base::DictionaryValue* payload = nullptr;
@@ -175,8 +162,8 @@ void DeviceCommandScreenshotJob::StartScreenshotUpload() {
     header_fields.insert(std::make_pair(net::HttpRequestHeaders::kContentType,
                                         kContentTypeImagePng));
     header_fields.insert(std::make_pair(kCommandIdHeaderName,
-                                        base::Uint64ToString(unique_id())));
-    std::unique_ptr<std::string> data = base::MakeUnique<std::string>(
+                                        base::NumberToString(unique_id())));
+    std::unique_ptr<std::string> data = std::make_unique<std::string>(
         (const char*)screenshot_entry.second->front(),
         screenshot_entry.second->size());
     upload_job_->AddDataSegment(
@@ -187,11 +174,10 @@ void DeviceCommandScreenshotJob::StartScreenshotUpload() {
   upload_job_->Start();
 }
 
-void DeviceCommandScreenshotJob::RunImpl(
-    const CallbackWithResult& succeeded_callback,
-    const CallbackWithResult& failed_callback) {
-  succeeded_callback_ = succeeded_callback;
-  failed_callback_ = failed_callback;
+void DeviceCommandScreenshotJob::RunImpl(CallbackWithResult succeeded_callback,
+                                         CallbackWithResult failed_callback) {
+  succeeded_callback_ = std::move(succeeded_callback);
+  failed_callback_ = std::move(failed_callback);
 
   SYSLOG(INFO) << "Executing screenshot command.";
 
@@ -200,8 +186,8 @@ void DeviceCommandScreenshotJob::RunImpl(
     SYSLOG(ERROR) << "Screenshots are not allowed.";
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::BindOnce(failed_callback_, base::Passed(base::MakeUnique<Payload>(
-                                             FAILURE_USER_INPUT))));
+        base::BindOnce(std::move(failed_callback_),
+                       std::make_unique<Payload>(FAILURE_USER_INPUT)));
   }
 
   aura::Window::Windows root_windows = ash::Shell::GetAllRootWindows();
@@ -211,8 +197,8 @@ void DeviceCommandScreenshotJob::RunImpl(
     SYSLOG(ERROR) << upload_url_ << " is not a valid URL.";
     base::ThreadTaskRunnerHandle::Get()->PostTask(
         FROM_HERE,
-        base::BindOnce(failed_callback_, base::Passed(base::MakeUnique<Payload>(
-                                             FAILURE_INVALID_URL))));
+        base::BindOnce(std::move(failed_callback_),
+                       std::make_unique<Payload>(FAILURE_INVALID_URL)));
     return;
   }
 
@@ -220,9 +206,9 @@ void DeviceCommandScreenshotJob::RunImpl(
   if (root_windows.size() == 0) {
     SYSLOG(ERROR) << "No attached screens.";
     base::ThreadTaskRunnerHandle::Get()->PostTask(
-        FROM_HERE,
-        base::BindOnce(failed_callback_, base::Passed(base::MakeUnique<Payload>(
-                                             FAILURE_SCREENSHOT_ACQUISITION))));
+        FROM_HERE, base::BindOnce(std::move(failed_callback_),
+                                  std::make_unique<Payload>(
+                                      FAILURE_SCREENSHOT_ACQUISITION)));
     return;
   }
 

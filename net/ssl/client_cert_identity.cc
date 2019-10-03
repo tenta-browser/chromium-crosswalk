@@ -4,7 +4,10 @@
 
 #include "net/ssl/client_cert_identity.h"
 
+#include <utility>
+
 #include "base/bind.h"
+#include "net/cert/x509_util.h"
 #include "net/ssl/ssl_private_key.h"
 
 namespace net {
@@ -13,10 +16,9 @@ namespace {
 
 void IdentityOwningPrivateKeyCallback(
     std::unique_ptr<ClientCertIdentity> identity,
-    const base::Callback<void(scoped_refptr<SSLPrivateKey>)>&
-        private_key_callback,
+    base::OnceCallback<void(scoped_refptr<SSLPrivateKey>)> private_key_callback,
     scoped_refptr<SSLPrivateKey> private_key) {
-  private_key_callback.Run(std::move(private_key));
+  std::move(private_key_callback).Run(std::move(private_key));
 }
 
 }  // namespace
@@ -28,17 +30,17 @@ ClientCertIdentity::~ClientCertIdentity() = default;
 // static
 void ClientCertIdentity::SelfOwningAcquirePrivateKey(
     std::unique_ptr<ClientCertIdentity> self,
-    const base::Callback<void(scoped_refptr<SSLPrivateKey>)>&
+    base::OnceCallback<void(scoped_refptr<SSLPrivateKey>)>
         private_key_callback) {
   ClientCertIdentity* self_ptr = self.get();
   auto wrapped_private_key_callback =
-      base::Bind(&IdentityOwningPrivateKeyCallback, base::Passed(&self),
-                 private_key_callback);
-  self_ptr->AcquirePrivateKey(wrapped_private_key_callback);
+      base::BindOnce(&IdentityOwningPrivateKeyCallback, std::move(self),
+                     std::move(private_key_callback));
+  self_ptr->AcquirePrivateKey(std::move(wrapped_private_key_callback));
 }
 
 void ClientCertIdentity::SetIntermediates(
-    X509Certificate::OSCertHandles intermediates) {
+    std::vector<bssl::UniquePtr<CRYPTO_BUFFER>> intermediates) {
   // Allow UTF-8 inside PrintableStrings in client certificates. See
   // crbug.com/770323.
   // TODO(mattm): Perhaps X509Certificate should have a method to clone the
@@ -47,9 +49,9 @@ void ClientCertIdentity::SetIntermediates(
   // X509Certificate was initially created.)
   X509Certificate::UnsafeCreateOptions options;
   options.printable_string_is_utf8 = true;
-  cert_ = X509Certificate::CreateFromHandleUnsafeOptions(
-      cert_->os_cert_handle(), intermediates, options);
-  // |cert_->os_cert_handle()| was already successfully parsed, so this should
+  cert_ = X509Certificate::CreateFromBufferUnsafeOptions(
+      bssl::UpRef(cert_->cert_buffer()), std::move(intermediates), options);
+  // |cert_->cert_buffer()| was already successfully parsed, so this should
   // never fail.
   DCHECK(cert_);
 }
@@ -82,10 +84,8 @@ bool ClientCertIdentitySorter::operator()(
     return a->valid_start() > b->valid_start();
 
   // Otherwise, prefer client certificates with shorter chains.
-  const X509Certificate::OSCertHandles& a_intermediates =
-      a->GetIntermediateCertificates();
-  const X509Certificate::OSCertHandles& b_intermediates =
-      b->GetIntermediateCertificates();
+  const auto& a_intermediates = a->intermediate_buffers();
+  const auto& b_intermediates = b->intermediate_buffers();
   return a_intermediates.size() < b_intermediates.size();
 }
 

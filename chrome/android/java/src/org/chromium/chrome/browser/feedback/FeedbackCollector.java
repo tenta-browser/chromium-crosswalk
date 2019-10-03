@@ -15,7 +15,10 @@ import org.chromium.base.Callback;
 import org.chromium.base.CollectionUtil;
 import org.chromium.base.ThreadUtils;
 import org.chromium.base.VisibleForTesting;
+import org.chromium.base.task.PostTask;
+import org.chromium.chrome.browser.AppHooks;
 import org.chromium.chrome.browser.profiles.Profile;
+import org.chromium.content_public.browser.UiThreadTaskTraits;
 
 import java.util.ArrayList;
 import java.util.HashMap;
@@ -43,14 +46,15 @@ public class FeedbackCollector implements Runnable {
     private Callback<FeedbackCollector> mCallback;
 
     public FeedbackCollector(Activity activity, Profile profile, @Nullable String url,
-            @Nullable String categoryTag, @Nullable String description, boolean takeScreenshot,
+            @Nullable String categoryTag, @Nullable String description,
+            @Nullable String feedbackContext, boolean takeScreenshot,
             Callback<FeedbackCollector> callback) {
         mCategoryTag = categoryTag;
         mDescription = description;
         mCallback = callback;
 
         // 1. Build all synchronous and asynchronous sources.
-        mSynchronousSources = buildSynchronousFeedbackSources(profile, url);
+        mSynchronousSources = buildSynchronousFeedbackSources(profile, url, feedbackContext);
         mAsynchronousSources = buildAsynchronousFeedbackSources(profile);
 
         // 2. Build the screenshot task if necessary.
@@ -69,18 +73,27 @@ public class FeedbackCollector implements Runnable {
 
     @VisibleForTesting
     protected List<FeedbackSource> buildSynchronousFeedbackSources(
-            Profile profile, @Nullable String url) {
+            Profile profile, @Nullable String url, @Nullable String feedbackContext) {
         List<FeedbackSource> sources = new ArrayList<>();
 
         // This is the list of all synchronous sources of feedback.  Please add new synchronous
         // entries here.
+        sources.addAll(AppHooks.get().getAdditionalFeedbackSources().getSynchronousSources());
         sources.add(new UrlFeedbackSource(url));
         sources.add(new VariationsFeedbackSource(profile));
         sources.add(new DataReductionProxyFeedbackSource(profile));
         sources.add(new HistogramFeedbackSource(profile));
-        sources.add(new ChromeHomeFeedbackSource(profile));
         sources.add(new LowEndDeviceFeedbackSource());
         sources.add(new IMEFeedbackSource());
+        sources.add(new PermissionFeedbackSource());
+        sources.add(new FeedbackContextFeedbackSource(feedbackContext));
+        sources.add(new DuetFeedbackSource());
+        sources.add(new InterestFeedFeedbackSource());
+
+        // Sanity check in case a source is added to the wrong list.
+        for (FeedbackSource source : sources) {
+            assert !(source instanceof AsyncFeedbackSource);
+        }
 
         return sources;
     }
@@ -91,8 +104,10 @@ public class FeedbackCollector implements Runnable {
 
         // This is the list of all asynchronous sources of feedback.  Please add new asynchronous
         // entries here.
+        sources.addAll(AppHooks.get().getAdditionalFeedbackSources().getAsynchronousSources());
         sources.add(new ConnectivityFeedbackSource(profile));
         sources.add(new SystemInfoFeedbackSource());
+        sources.add(new ProcessIdFeedbackSource());
 
         return sources;
     }
@@ -203,7 +218,7 @@ public class FeedbackCollector implements Runnable {
         final Callback<FeedbackCollector> callback = mCallback;
         mCallback = null;
 
-        ThreadUtils.postOnUiThread(new Runnable() {
+        PostTask.postTask(UiThreadTaskTraits.DEFAULT, new Runnable() {
             @Override
             public void run() {
                 callback.onResult(FeedbackCollector.this);

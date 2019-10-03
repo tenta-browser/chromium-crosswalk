@@ -13,6 +13,7 @@ namespace web {
 TestNavigationManager::TestNavigationManager()
     : items_index_(-1),
       pending_item_(nullptr),
+      pending_item_index_(-1),
       last_committed_item_(nullptr),
       visible_item_(nullptr),
       browser_state_(nullptr),
@@ -104,8 +105,11 @@ int TestNavigationManager::GetLastCommittedItemIndex() const {
 }
 
 int TestNavigationManager::GetPendingItemIndex() const {
-  NOTREACHED();
-  return 0;
+  return pending_item_index_;
+}
+
+void TestNavigationManager::SetPendingItemIndex(int index) {
+  pending_item_index_ = index;
 }
 
 bool TestNavigationManager::RemoveItemAtIndex(int index) {
@@ -119,11 +123,11 @@ bool TestNavigationManager::RemoveItemAtIndex(int index) {
 }
 
 bool TestNavigationManager::CanGoBack() const {
-  return false;
+  return items_index_ > 0;
 }
 
 bool TestNavigationManager::CanGoForward() const {
-  return false;
+  return items_index_ < GetItemCount() - 1;
 }
 
 bool TestNavigationManager::CanGoToOffset(int offset) const {
@@ -132,11 +136,11 @@ bool TestNavigationManager::CanGoToOffset(int offset) const {
 }
 
 void TestNavigationManager::GoBack() {
-  NOTREACHED();
+  items_index_--;
 }
 
 void TestNavigationManager::GoForward() {
-  NOTREACHED();
+  items_index_++;
 }
 
 void TestNavigationManager::GoToIndex(int index) {
@@ -148,19 +152,31 @@ void TestNavigationManager::Reload(ReloadType reload_type,
   NOTREACHED();
 }
 
-NavigationItemList TestNavigationManager::GetBackwardItems() const {
+void TestNavigationManager::ReloadWithUserAgentType(
+    UserAgentType user_agent_type) {
   NOTREACHED();
+}
+
+NavigationItemList TestNavigationManager::GetBackwardItems() const {
   return NavigationItemList();
 }
 
 NavigationItemList TestNavigationManager::GetForwardItems() const {
-  NOTREACHED();
   return NavigationItemList();
 }
 
 void TestNavigationManager::Restore(
     int last_committed_item_index,
     std::vector<std::unique_ptr<NavigationItem>> items) {
+  NOTREACHED();
+}
+
+bool TestNavigationManager::IsRestoreSessionInProgress() const {
+  return false;
+}
+
+void TestNavigationManager::AddRestoreCompletionCallback(
+    base::OnceClosure callback) {
   NOTREACHED();
 }
 

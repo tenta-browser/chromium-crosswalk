@@ -115,6 +115,9 @@ class NET_EXPORT CertPathBuilder {
     // if there was none.
     const CertPathBuilderResultPath* GetBestValidPath() const;
 
+    // Returns the best CertPathBuilderResultPath or nullptr if there was none.
+    const CertPathBuilderResultPath* GetBestPathPossiblyInvalid() const;
+
     // Resets to the initial value.
     void Clear();
 
@@ -125,6 +128,14 @@ class NET_EXPORT CertPathBuilder {
     // NOTE: currently the definition of "best" is fairly limited. Valid is
     // better than invalid, but otherwise nothing is guaranteed.
     size_t best_result_index = 0;
+
+    // True if the search stopped because it exceeded the iteration limit
+    // configured with |SetIterationLimit|.
+    bool exceeded_iteration_limit = false;
+
+    // True if the search stopped because it exceeded the deadline configured
+    // with |SetDeadline|.
+    bool exceeded_deadline = false;
 
    private:
     DISALLOW_COPY_AND_ASSIGN(Result);
@@ -166,6 +177,16 @@ class NET_EXPORT CertPathBuilder {
   // it is a trust anchor or is directly signed by a trust anchor.)
   void AddCertIssuerSource(CertIssuerSource* cert_issuer_source);
 
+  // Sets a limit to the number of times to repeat the process of considering a
+  // new intermediate over all potential paths.
+  void SetIterationLimit(uint32_t limit);
+
+  // Sets a deadline for completing path building. If |deadline| has passed and
+  // path building has not completed, path building will stop. Note that this
+  // is not a hard limit, there is no guarantee how far past |deadline| time
+  // will be when path building is aborted.
+  void SetDeadline(base::TimeTicks deadline);
+
   // Executes verification of the target certificate.
   //
   // Upon return results are written to the |result| object passed into the
@@ -184,6 +205,8 @@ class NET_EXPORT CertPathBuilder {
   const std::set<der::Input> user_initial_policy_set_;
   const InitialPolicyMappingInhibit initial_policy_mapping_inhibit_;
   const InitialAnyPolicyInhibit initial_any_policy_inhibit_;
+  uint32_t max_iteration_count_ = 0;
+  base::TimeTicks deadline_;
 
   Result* out_result_;
 

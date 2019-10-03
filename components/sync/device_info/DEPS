@@ -1,8 +1,0 @@
-include_rules = [
-  "+components/metrics",
-  "+components/sync/base",
-  "+components/sync/driver",
-  "+components/sync/engine",
-  "+components/sync/model",
-  "+components/sync/protocol",
-]

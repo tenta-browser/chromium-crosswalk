@@ -2,6 +2,8 @@
 // Use of this source code is governed by a BSD-style license that can be
 // found in the LICENSE file.
 
+#include <utility>
+
 #include "components/safe_browsing/base_ui_manager.h"
 
 #include "base/bind.h"
@@ -33,7 +35,7 @@ const void* const kWhitelistKey = &kWhitelistKey;
 class WhitelistUrlSet : public base::SupportsUserData::Data {
  public:
   WhitelistUrlSet() {}
-  bool Contains(const GURL url, SBThreatType* threat_type) {
+  bool Contains(const GURL& url, SBThreatType* threat_type) {
     auto found = map_.find(url);
     if (found == map_.end())
       return false;
@@ -47,7 +49,7 @@ class WhitelistUrlSet : public base::SupportsUserData::Data {
       pending_.erase(url);
   }
   void Remove(const GURL& url) { map_.erase(url); }
-  void Insert(const GURL url, SBThreatType threat_type) {
+  void Insert(const GURL& url, SBThreatType threat_type) {
     if (Contains(url, nullptr))
       return;
     map_[url] = threat_type;
@@ -113,11 +115,6 @@ namespace safe_browsing {
 
 BaseUIManager::BaseUIManager() {}
 
-void BaseUIManager::StopOnIOThread(bool shutdown) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
-  return;
-}
-
 BaseUIManager::~BaseUIManager() {}
 
 bool BaseUIManager::IsWhitelisted(const UnsafeResource& resource) {
@@ -169,7 +166,7 @@ void BaseUIManager::OnBlockingPageDone(
     if (!resource.callback.is_null()) {
       DCHECK(resource.callback_thread);
       resource.callback_thread->PostTask(
-          FROM_HERE, base::Bind(resource.callback, proceed));
+          FROM_HERE, base::BindOnce(resource.callback, proceed));
     }
 
     GURL whitelist_url = GetWhitelistUrl(
@@ -202,10 +199,9 @@ void BaseUIManager::DisplayBlockingPage(
              ThreatPatternType::MALWARE_LANDING)) {
       if (!resource.callback.is_null()) {
         DCHECK(resource.callback_thread);
-        resource.callback_thread->PostTask(FROM_HERE,
-                                           base::Bind(resource.callback, true));
+        resource.callback_thread->PostTask(
+            FROM_HERE, base::BindOnce(resource.callback, true));
       }
-
       return;
     }
   }
@@ -226,13 +222,17 @@ void BaseUIManager::DisplayBlockingPage(
   if (IsWhitelisted(resource)) {
     if (!resource.callback.is_null()) {
       DCHECK(resource.callback_thread);
-      resource.callback_thread->PostTask(FROM_HERE,
-                                         base::Bind(resource.callback, true));
+      resource.callback_thread->PostTask(
+          FROM_HERE, base::BindOnce(resource.callback, true));
     }
+
     return;
   }
 
-  if (resource.threat_type != SB_THREAT_TYPE_SAFE) {
+  if (resource.threat_type != SB_THREAT_TYPE_SAFE &&
+      resource.threat_type != SB_THREAT_TYPE_BILLING) {
+    // TODO(vakh): crbug/883462: The reports for SB_THREAT_TYPE_BILLING should
+    // be disabled for M70 but enabled for a later release (M71?).
     CreateAndSendHitReport(resource);
   }
 
@@ -240,6 +240,16 @@ void BaseUIManager::DisplayBlockingPage(
                        resource.web_contents_getter.Run(),
                        true /* A decision is now pending */,
                        resource.threat_type);
+  if (SafeBrowsingInterstitialsAreCommittedNavigations() &&
+      resource.IsMainPageLoadBlocked()) {
+    AddUnsafeResource(resource.url, resource);
+    // With committed interstitials we just cancel the load from here, the
+    // actual interstitial will be shown from the
+    // SafeBrowsingNavigationThrottle.
+    resource.callback_thread->PostTask(
+        FROM_HERE, base::BindOnce(resource.callback, false));
+    return;
+  }
   ShowBlockingPageForResource(resource);
 }
 
@@ -255,19 +265,17 @@ void BaseUIManager::ShowBlockingPageForResource(
   BaseBlockingPage::ShowBlockingPage(this, resource);
 }
 
+bool BaseUIManager::SafeBrowsingInterstitialsAreCommittedNavigations() {
+  return false;
+}
+
 // A SafeBrowsing hit is sent after a blocking page for malware/phishing
 // or after the warning dialog for download urls, only for extended_reporting
 // users who are not in incognito mode.
 void BaseUIManager::MaybeReportSafeBrowsingHit(
     const HitReport& hit_report,
-    const content::WebContents* web_contents) {
+    content::WebContents* web_contents) {
   DCHECK_CURRENTLY_ON(BrowserThread::UI);
-  return;
-}
-
-void BaseUIManager::ReportSafeBrowsingHitOnIOThread(
-    const HitReport& hit_report) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
   return;
 }
 
@@ -275,7 +283,7 @@ void BaseUIManager::ReportSafeBrowsingHitOnIOThread(
 // when the report is ready.
 void BaseUIManager::SendSerializedThreatDetails(
     const std::string& serialized) {
-  DCHECK_CURRENTLY_ON(BrowserThread::IO);
+  DCHECK_CURRENTLY_ON(BrowserThread::UI);
   return;
 }
 
@@ -313,12 +321,31 @@ const std::string BaseUIManager::app_locale() const {
 
 history::HistoryService* BaseUIManager::history_service(
     content::WebContents* web_contents) {
-  // TODO(jialiul): figure out how to get HistoryService from webview.
   return nullptr;
 }
 
 const GURL BaseUIManager::default_safe_page() const {
   return GURL(url::kAboutBlankURL);
+}
+
+void BaseUIManager::AddUnsafeResource(
+    GURL url,
+    security_interstitials::UnsafeResource resource) {
+  unsafe_resources_.push_back(std::make_pair(url, resource));
+}
+
+bool BaseUIManager::PopUnsafeResourceForURL(
+    GURL url,
+    security_interstitials::UnsafeResource* resource) {
+  for (auto it = unsafe_resources_.begin(); it != unsafe_resources_.end();
+       it++) {
+    if (it->first == url) {
+      *resource = it->second;
+      unsafe_resources_.erase(it);
+      return true;
+    }
+  }
+  return false;
 }
 
 void BaseUIManager::RemoveWhitelistUrlSet(const GURL& whitelist_url,
@@ -351,8 +378,9 @@ void BaseUIManager::RemoveWhitelistUrlSet(const GURL& whitelist_url,
   // remove the main-frame URL from the pending whitelist, so the
   // main-frame URL will have already been removed when the subsequent
   // blocking pages are dismissed.
-  if (site_list && site_list->ContainsPending(whitelist_url, nullptr))
+  if (site_list && site_list->ContainsPending(whitelist_url, nullptr)) {
     site_list->RemovePending(whitelist_url);
+  }
 
   if (!from_pending_only && site_list &&
       site_list->Contains(whitelist_url, nullptr)) {

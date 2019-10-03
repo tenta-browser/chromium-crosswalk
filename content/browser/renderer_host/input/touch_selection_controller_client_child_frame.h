@@ -5,6 +5,8 @@
 #ifndef CONTENT_BROWSER_RENDERER_HOST_INPUT_TOUCH_SELECTION_CONTROLLER_CLIENT_CHILD_FRAME_H_
 #define CONTENT_BROWSER_RENDERER_HOST_INPUT_TOUCH_SELECTION_CONTROLLER_CLIENT_CHILD_FRAME_H_
 
+#include <memory>
+
 #include "base/macros.h"
 #include "components/viz/common/quads/selection.h"
 #include "content/common/content_export.h"
@@ -37,6 +39,8 @@ class CONTENT_EXPORT TouchSelectionControllerClientChildFrame
       float device_scale_factor);
 
  private:
+  void TransformSelectionBoundsAndUpdate();
+
   // ui::TouchSelectionControllerClient:
   bool SupportsAnimation() const override;
   void SetNeedsAnimate() override;
@@ -45,6 +49,7 @@ class CONTENT_EXPORT TouchSelectionControllerClientChildFrame
   void SelectBetweenCoordinates(const gfx::PointF& base,
                                 const gfx::PointF& extent) override;
   void OnSelectionEvent(ui::SelectionEventType event) override;
+  void OnDragUpdate(const gfx::PointF& position) override;
   std::unique_ptr<ui::TouchHandleDrawable> CreateDrawable() override;
   void DidScroll() override;
 
@@ -52,6 +57,8 @@ class CONTENT_EXPORT TouchSelectionControllerClientChildFrame
   bool IsCommandIdEnabled(int command_id) const override;
   void ExecuteCommand(int command_id, int event_flags) override;
   void RunContextMenu() override;
+  bool ShouldShowQuickMenu() override;
+  base::string16 GetSelectedText() override;
 
   gfx::Point ConvertFromRoot(const gfx::PointF& point) const;
 
@@ -59,11 +66,9 @@ class CONTENT_EXPORT TouchSelectionControllerClientChildFrame
   RenderWidgetHostViewChildFrame* rwhv_;
   TouchSelectionControllerClientManager* manager_;
 
-  // The last selection bounds reported by the view.
+  // The last selection bounds reported by the view, in view coordinates.
   gfx::SelectionBound selection_start_;
   gfx::SelectionBound selection_end_;
-  // Keep track of the view origin as of the last time selection was updated.
-  gfx::Point view_origin_at_last_update_;
 
   DISALLOW_COPY_AND_ASSIGN(TouchSelectionControllerClientChildFrame);
 };

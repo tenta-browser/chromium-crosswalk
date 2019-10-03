@@ -8,6 +8,7 @@
 
 #include "base/lazy_instance.h"
 #include "base/logging.h"
+#include "base/memory/ptr_util.h"
 #include "base/strings/string_split.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -17,6 +18,7 @@
 #include "extensions/common/features/feature_provider.h"
 #include "extensions/common/install_warning.h"
 #include "extensions/common/manifest_constants.h"
+#include "extensions/common/manifest_handler_helpers.h"
 
 namespace extensions {
 
@@ -110,27 +112,69 @@ Manifest::Location Manifest::GetHigherPriorityLocation(
   return (loc1_rank > loc2_rank ? loc1 : loc2 );
 }
 
+// static
+Manifest::Type Manifest::GetTypeFromManifestValue(
+    const base::DictionaryValue& value,
+    bool for_login_screen) {
+  Type type = TYPE_UNKNOWN;
+  if (value.HasKey(keys::kTheme)) {
+    type = TYPE_THEME;
+  } else if (value.HasKey(keys::kExport)) {
+    type = TYPE_SHARED_MODULE;
+  } else if (value.HasKey(keys::kApp)) {
+    if (value.Get(keys::kWebURLs, nullptr) ||
+        value.Get(keys::kLaunchWebURL, nullptr)) {
+      type = TYPE_HOSTED_APP;
+    } else if (value.Get(keys::kPlatformAppBackground, nullptr)) {
+      type = TYPE_PLATFORM_APP;
+    } else {
+      type = TYPE_LEGACY_PACKAGED_APP;
+    }
+  } else if (for_login_screen) {
+    type = TYPE_LOGIN_SCREEN_EXTENSION;
+  } else {
+    type = TYPE_EXTENSION;
+  }
+  DCHECK_NE(type, TYPE_UNKNOWN);
+
+  return type;
+}
+
+// static
+bool Manifest::ShouldAlwaysLoadExtension(Manifest::Location location,
+                                         bool is_theme) {
+  if (location == Manifest::COMPONENT)
+    return true;  // Component extensions are always allowed.
+
+  if (is_theme)
+    return true;  // Themes are allowed, even with --disable-extensions.
+
+  // TODO(devlin): This seems wrong. See https://crbug.com/833540.
+  if (Manifest::IsExternalLocation(location))
+    return true;
+
+  return false;
+}
+
+// static
+std::unique_ptr<Manifest> Manifest::CreateManifestForLoginScreen(
+    Location location,
+    std::unique_ptr<base::DictionaryValue> value) {
+  CHECK(IsPolicyLocation(location));
+  // Use base::WrapUnique + new because the constructor is private.
+  return base::WrapUnique(new Manifest(location, std::move(value), true));
+}
+
 Manifest::Manifest(Location location,
                    std::unique_ptr<base::DictionaryValue> value)
-    : location_(location), value_(std::move(value)), type_(TYPE_UNKNOWN) {
-  if (value_->HasKey(keys::kTheme)) {
-    type_ = TYPE_THEME;
-  } else if (value_->HasKey(keys::kExport)) {
-    type_ = TYPE_SHARED_MODULE;
-  } else if (value_->HasKey(keys::kApp)) {
-    if (value_->Get(keys::kWebURLs, NULL) ||
-        value_->Get(keys::kLaunchWebURL, NULL)) {
-      type_ = TYPE_HOSTED_APP;
-    } else if (value_->Get(keys::kPlatformAppBackground, NULL)) {
-      type_ = TYPE_PLATFORM_APP;
-    } else {
-      type_ = TYPE_LEGACY_PACKAGED_APP;
-    }
-  } else {
-    type_ = TYPE_EXTENSION;
-  }
-  CHECK_NE(type_, TYPE_UNKNOWN);
-}
+    : Manifest(location, std::move(value), false) {}
+
+Manifest::Manifest(Location location,
+                   std::unique_ptr<base::DictionaryValue> value,
+                   bool for_login_screen)
+    : location_(location),
+      value_(std::move(value)),
+      type_(GetTypeFromManifestValue(*value_, for_login_screen)) {}
 
 Manifest::~Manifest() {
 }
@@ -216,14 +260,35 @@ bool Manifest::GetDictionary(
   return CanAccessPath(path) && value_->GetDictionary(path, out_value);
 }
 
+bool Manifest::GetDictionary(const std::string& path,
+                             const base::Value** out_value) const {
+  return GetPathOfType(path, base::Value::Type::DICTIONARY, out_value);
+}
+
 bool Manifest::GetList(
     const std::string& path, const base::ListValue** out_value) const {
   return CanAccessPath(path) && value_->GetList(path, out_value);
 }
 
-Manifest* Manifest::DeepCopy() const {
-  Manifest* manifest = new Manifest(
-      location_, std::unique_ptr<base::DictionaryValue>(value_->DeepCopy()));
+bool Manifest::GetList(const std::string& path,
+                       const base::Value** out_value) const {
+  return GetPathOfType(path, base::Value::Type::LIST, out_value);
+}
+
+bool Manifest::GetPathOfType(const std::string& path,
+                             base::Value::Type type,
+                             const base::Value** out_value) const {
+  const std::vector<base::StringPiece> components =
+      manifest_handler_helpers::TokenizeDictionaryPath(path);
+  if (!CanAccessPath(components))
+    return false;
+  *out_value = value_->FindPathOfType(components, type);
+  return *out_value != nullptr;
+}
+
+std::unique_ptr<Manifest> Manifest::CreateDeepCopy() const {
+  auto manifest =
+      std::make_unique<Manifest>(location_, value_->CreateDeepCopy());
   manifest->SetExtensionId(extension_id_);
   return manifest;
 }
@@ -241,9 +306,12 @@ int Manifest::GetManifestVersion() const {
 }
 
 bool Manifest::CanAccessPath(const std::string& path) const {
+  return CanAccessPath(manifest_handler_helpers::TokenizeDictionaryPath(path));
+}
+
+bool Manifest::CanAccessPath(base::span<const base::StringPiece> path) const {
   std::string key;
-  for (const base::StringPiece& component : base::SplitStringPiece(
-           path, ".", base::TRIM_WHITESPACE, base::SPLIT_WANT_ALL)) {
+  for (base::StringPiece component : path) {
     component.AppendToString(&key);
     if (!CanAccessKey(key))
       return false;

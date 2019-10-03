@@ -8,9 +8,10 @@
 #include <string>
 #include <vector>
 
-#include "base/macros.h"
+#include "base/bind.h"
 #include "base/memory/ref_counted.h"
 #include "base/run_loop.h"
+#include "base/stl_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/autocomplete/chrome_autocomplete_provider_client.h"
 #include "chrome/browser/autocomplete/chrome_autocomplete_scheme_classifier.h"
@@ -23,7 +24,7 @@
 #include "components/omnibox/browser/shortcuts_backend.h"
 #include "components/omnibox/browser/shortcuts_provider_test_util.h"
 #include "content/public/test/test_browser_thread_bundle.h"
-#include "extensions/features/features.h"
+#include "extensions/buildflags/buildflags.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 #if BUILDFLAG(ENABLE_EXTENSIONS)
@@ -39,8 +40,9 @@ namespace {
 struct TestShortcutData shortcut_test_db[] = {
     {"BD85DBA2-8C29-49F9-84AE-48E1E90880F1", "echo echo", "echo echo",
      "chrome-extension://cedabbhfglmiikkmdgcpjdkocfcmbkee/?q=echo",
-     "Run Echo command: echo", "0,0", "Echo", "0,4", ui::PAGE_TRANSITION_TYPED,
-     AutocompleteMatchType::EXTENSION_APP, "echo", 1, 1},
+     AutocompleteMatch::DocumentType::NONE, "Run Echo command: echo", "0,0",
+     "Echo", "0,4", ui::PAGE_TRANSITION_TYPED,
+     AutocompleteMatchType::EXTENSION_APP_DEPRECATED, "", 1, 1},
 };
 
 }  // namespace
@@ -67,14 +69,16 @@ ShortcutsProviderExtensionTest::ShortcutsProviderExtensionTest()
 
 void ShortcutsProviderExtensionTest::SetUp() {
   ShortcutsBackendFactory::GetInstance()->SetTestingFactoryAndUse(
-      &profile_, &ShortcutsBackendFactory::BuildProfileNoDatabaseForTesting);
+      &profile_,
+      base::BindRepeating(
+          &ShortcutsBackendFactory::BuildProfileNoDatabaseForTesting));
   backend_ = ShortcutsBackendFactory::GetForProfile(&profile_);
   ASSERT_TRUE(backend_.get());
   ASSERT_TRUE(profile_.CreateHistoryService(true, false));
   provider_ = new ShortcutsProvider(&client_);
   PopulateShortcutsBackendWithTestData(client_.GetShortcutsBackend(),
                                        shortcut_test_db,
-                                       arraysize(shortcut_test_db));
+                                       base::size(shortcut_test_db));
 }
 
 void ShortcutsProviderExtensionTest::TearDown() {
@@ -98,11 +102,7 @@ TEST_F(ShortcutsProviderExtensionTest, Extension) {
 
   // Claim the extension has been unloaded.
   scoped_refptr<const extensions::Extension> extension =
-      extensions::ExtensionBuilder()
-          .SetManifest(extensions::DictionaryBuilder()
-                           .Set("name", "Echo")
-                           .Set("version", "1.0")
-                           .Build())
+      extensions::ExtensionBuilder("Echo")
           .SetID("cedabbhfglmiikkmdgcpjdkocfcmbkee")
           .Build();
   extensions::ExtensionRegistry::Get(&profile_)->TriggerOnUnloaded(

@@ -17,14 +17,17 @@ cast_shared_library("libcast_shell_android") {
     "//base",
     "//chromecast:cast_shell_jni_registration",
     "//chromecast:cast_shell_lib",
-    "//chromecast:chromecast_features",
+    "//chromecast:chromecast_buildflags",
     "//chromecast/app",
     "//chromecast/app:cast_crash_client",
     "//chromecast/base",
-    "//chromecast/base:cast_sys_info",
+    "//chromecast/base:android_create_sys_info",
     "//chromecast/base:jni_headers",
     "//chromecast/base/metrics",
     "//chromecast/browser",
+    "//chromecast/media/cma/backend/android:cast_media_android",
+    "//components/crash/android:crash_android",
+    "//components/minidump_uploader",
     "//content/public/app:both",
     "//content/public/browser",
     "//skia",
@@ -36,15 +39,10 @@ cast_shared_library("libcast_shell_android") {
     deps += [
       "//device/bluetooth",
       "//device/gamepad",
-      "//device/sensors",
       "//media/midi",
       "//ui/android",
       "//ui/events/devices",
       "//ui/shell_dialogs",
     ]
-  }
-
-  if (is_cast_using_cma_backend) {
-    deps += [ "//chromecast/media/cma/backend/android:cast_media_android" ]
   }
 }

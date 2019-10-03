@@ -10,8 +10,12 @@
         "export_header": "content/common/content_export.h",
         "options": [
             {
+                "domain": "BackgroundService",
+                "async": ["startObserving"]
+            },
+            {
                 "domain": "Browser",
-                "include": ["getVersion"]
+                "include": ["getVersion", "getHistograms", "getHistogram", "getBrowserCommandLine", "grantPermissions", "resetPermissions", "crash", "crashGpuProcess"]
             },
             {
                 "domain": "DOM",
@@ -20,11 +24,11 @@
             },
             {
                 "domain": "Emulation",
-                "include": ["setGeolocationOverride", "clearGeolocationOverride", "setEmitTouchEventsForMouse", "canEmulate", "setDeviceMetricsOverride", "clearDeviceMetricsOverride", "setVisibleSize"]
+                "include": ["setGeolocationOverride", "clearGeolocationOverride", "setEmitTouchEventsForMouse", "canEmulate", "setDeviceMetricsOverride", "clearDeviceMetricsOverride", "setVisibleSize", "setUserAgentOverride"]
             },
             {
                 "domain": "Input",
-                "async": ["dispatchKeyEvent", "dispatchMouseEvent", "dispatchTouchEvent", "synthesizePinchGesture", "synthesizeScrollGesture", "synthesizeTapGesture"]
+                "async": ["dispatchKeyEvent", "insertText", "dispatchMouseEvent", "dispatchTouchEvent", "synthesizePinchGesture", "synthesizeScrollGesture", "synthesizeTapGesture"]
             },
             {
                 "domain": "Inspector"
@@ -36,21 +40,26 @@
             },
             {
                 "domain": "Memory",
-                "include": ["setPressureNotificationsSuppressed", "simulatePressureNotification"]
+                "include": ["getBrowserSamplingProfile", "setPressureNotificationsSuppressed", "simulatePressureNotification", "prepareForLeakDetection"],
+                "async": ["prepareForLeakDetection"]
             },
             {
                 "domain": "Network",
-                "include": ["enable", "disable", "clearBrowserCache", "clearBrowserCookies", "getCookies", "getAllCookies", "deleteCookies", "setCookie", "setCookies", "setUserAgentOverride", "setExtraHTTPHeaders", "canEmulateNetworkConditions", "emulateNetworkConditions", "setBypassServiceWorker", "setRequestInterception", "continueInterceptedRequest", "getResponseBodyForInterception"],
-                "include_events": ["requestWillBeSent", "responseReceived", "loadingFinished", "loadingFailed", "requestIntercepted"],
-                "async": ["clearBrowserCookies", "clearBrowserCache", "getCookies", "getAllCookies", "deleteCookies", "setCookie", "setCookies", "continueInterceptedRequest", "getResponseBodyForInterception"]
+                "include": ["enable", "disable", "clearBrowserCache", "clearBrowserCookies", "getCookies", "getAllCookies", "deleteCookies", "setCookie", "setCookies", "setExtraHTTPHeaders", "canEmulateNetworkConditions", "emulateNetworkConditions", "setBypassServiceWorker", "setRequestInterception", "continueInterceptedRequest", "getResponseBodyForInterception", "setCacheDisabled", "takeResponseBodyForInterceptionAsStream"],
+                "include_events": ["requestWillBeSent", "responseReceived", "loadingFinished", "loadingFailed", "requestIntercepted", "signedExchangeReceived", "requestWillBeSentExtraInfo", "responseReceivedExtraInfo"],
+                "async": ["clearBrowserCookies", "clearBrowserCache", "getCookies", "getAllCookies", "deleteCookies", "setCookie", "setCookies", "continueInterceptedRequest", "getResponseBodyForInterception", "takeResponseBodyForInterceptionAsStream"]
+            },
+            {
+                "domain": "Overlay",
+                "include": ["setInspectMode", "setPausedInDebuggerMessage"]
             },
             {
                 "domain": "Page",
-                "include": ["enable", "disable", "reload", "navigate", "stopLoading", "getNavigationHistory", "navigateToHistoryEntry", "captureScreenshot",
-                    "startScreencast", "stopScreencast", "screencastFrameAck", "handleJavaScriptDialog", "setColorPickerEnabled", "requestAppBanner",
-                    "printToPDF", "bringToFront", "setDownloadBehavior"],
-                "include_events": ["colorPicked", "interstitialShown", "interstitialHidden", "javascriptDialogOpening", "javascriptDialogClosed", "screencastVisibilityChanged", "screencastFrame"],
-                "async": ["captureScreenshot", "printToPDF", "navigate"]
+                "include": ["enable", "disable", "reload", "navigate", "stopLoading", "getNavigationHistory", "navigateToHistoryEntry", "resetNavigationHistory", "captureScreenshot",
+                    "startScreencast", "stopScreencast", "screencastFrameAck", "handleJavaScriptDialog", "setColorPickerEnabled",
+                    "printToPDF", "bringToFront", "setDownloadBehavior", "getAppManifest", "crash", "close", "setWebLifecycleState", "captureSnapshot", "getInstallabilityErrors", "setInterceptFileChooserDialog", "handleFileChooser"],
+                "include_events": ["colorPicked", "interstitialShown", "interstitialHidden", "javascriptDialogOpening", "javascriptDialogClosed", "downloadWillBegin", "screencastVisibilityChanged", "screencastFrame", "fileChooserOpened"],
+                "async": ["captureScreenshot", "printToPDF", "navigate", "getAppManifest", "reload", "captureSnapshot", "getInstallabilityErrors"]
             },
             {
                 "domain": "Runtime",
@@ -69,14 +78,15 @@
             },
             {
                 "domain": "Storage",
-                "async": ["getUsageAndQuota"]
+                "async": ["getUsageAndQuota", "clearDataForOrigin"]
             },
             {
                 "domain": "SystemInfo",
-                "async": ["getInfo"]
+                "async": ["getInfo", "getProcessInfo"]
             },
             {
-                "domain": "Target"
+                "domain": "Target",
+                "async": ["disposeBrowserContext", "setAutoAttach"]
             },
             {
                 "domain": "Tethering",
@@ -84,7 +94,15 @@
             },
             {
                 "domain": "Tracing",
-                "async": ["start", "end", "getCategories", "requestMemoryDump"]
+                "async": ["start", "getCategories", "requestMemoryDump"]
+            },
+            {
+                "domain": "Fetch",
+                "async": ["enable", "continueRequest", "failRequest", "fulfillRequest", "continueWithAuth", "getResponseBody", "takeResponseBodyAsStream"]
+            },
+            {
+                "domain": "WebAuthn",
+                "include": ["enable", "disable", "addVirtualAuthenticator", "removeVirtualAuthenticator", "addCredential", "clearCredentials", "getCredentials", "setUserVerified"]
             }
         ]
     },
@@ -92,8 +110,16 @@
     "lib": {
         "package": "content/browser/devtools/protocol",
         "output": "protocol",
-        "string_header": "content/browser/devtools/protocol_string.h",
+        "string_header": "content/browser/devtools/protocol/base_string_adapter.h",
         "export_macro": "CONTENT_EXPORT",
         "export_header": "content/common/content_export.h"
+    },
+
+    "encoding_lib": {
+        "namespace": "inspector_protocol_encoding"
+    },
+
+    "bindings_lib": {
+        "namespace": "inspector_protocol_bindings"
     }
 }

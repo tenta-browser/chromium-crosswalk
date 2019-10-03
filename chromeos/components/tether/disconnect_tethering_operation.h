@@ -11,9 +11,15 @@
 
 namespace chromeos {
 
-namespace tether {
+namespace device_sync {
+class DeviceSyncClient;
+}  // namespace device_sync
 
-class BleConnectionManager;
+namespace secure_channel {
+class SecureChannelClient;
+}  // namespace secure_channel
+
+namespace tether {
 
 // Operation which sends a disconnect message to a tether host.
 class DisconnectTetheringOperation : public MessageTransferOperation {
@@ -21,15 +27,17 @@ class DisconnectTetheringOperation : public MessageTransferOperation {
   class Factory {
    public:
     static std::unique_ptr<DisconnectTetheringOperation> NewInstance(
-        const cryptauth::RemoteDevice& device_to_connect,
-        BleConnectionManager* connection_manager);
+        multidevice::RemoteDeviceRef device_to_connect,
+        device_sync::DeviceSyncClient* device_sync_client,
+        secure_channel::SecureChannelClient* secure_channel_client);
 
     static void SetInstanceForTesting(Factory* factory);
 
    protected:
     virtual std::unique_ptr<DisconnectTetheringOperation> BuildInstance(
-        const cryptauth::RemoteDevice& device_to_connect,
-        BleConnectionManager* connection_manager);
+        multidevice::RemoteDeviceRef device_to_connect,
+        device_sync::DeviceSyncClient* device_sync_client,
+        secure_channel::SecureChannelClient* secure_channel_client);
 
    private:
     static Factory* factory_instance_;
@@ -44,34 +52,41 @@ class DisconnectTetheringOperation : public MessageTransferOperation {
                                      bool success) = 0;
   };
 
-  DisconnectTetheringOperation(const cryptauth::RemoteDevice& device_to_connect,
-                               BleConnectionManager* connection_manager);
   ~DisconnectTetheringOperation() override;
 
   void AddObserver(Observer* observer);
   void RemoveObserver(Observer* observer);
 
  protected:
+  DisconnectTetheringOperation(
+      multidevice::RemoteDeviceRef device_to_connect,
+      device_sync::DeviceSyncClient* device_sync_client,
+      secure_channel::SecureChannelClient* secure_channel_client);
+
   void NotifyObserversOperationFinished(bool success);
 
   // MessageTransferOperation:
   void OnDeviceAuthenticated(
-      const cryptauth::RemoteDevice& remote_device) override;
+      multidevice::RemoteDeviceRef remote_device) override;
   void OnOperationFinished() override;
   MessageType GetMessageTypeForConnection() override;
   void OnMessageSent(int sequence_number) override;
 
  private:
   friend class DisconnectTetheringOperationTest;
+  FRIEND_TEST_ALL_PREFIXES(DisconnectTetheringOperationTest, TestSuccess);
+  FRIEND_TEST_ALL_PREFIXES(DisconnectTetheringOperationTest, TestFailure);
+  FRIEND_TEST_ALL_PREFIXES(DisconnectTetheringOperationTest,
+                           DisconnectRequestSentOnceAuthenticated);
 
-  void SetClockForTest(std::unique_ptr<base::Clock> clock_for_test);
+  void SetClockForTest(base::Clock* clock_for_test);
 
-  base::ObserverList<Observer> observer_list_;
-  cryptauth::RemoteDevice remote_device_;
+  base::ObserverList<Observer>::Unchecked observer_list_;
+  multidevice::RemoteDeviceRef remote_device_;
   int disconnect_message_sequence_number_ = -1;
   bool has_sent_message_;
 
-  std::unique_ptr<base::Clock> clock_;
+  base::Clock* clock_;
   base::Time disconnect_start_time_;
 
   DISALLOW_COPY_AND_ASSIGN(DisconnectTetheringOperation);

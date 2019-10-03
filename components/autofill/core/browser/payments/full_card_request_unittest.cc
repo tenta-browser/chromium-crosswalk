@@ -7,21 +7,21 @@
 #include "base/command_line.h"
 #include "base/macros.h"
 #include "base/memory/weak_ptr.h"
-#include "base/message_loop/message_loop.h"
 #include "base/strings/stringprintf.h"
+#include "base/test/scoped_task_environment.h"
 #include "base/threading/thread_task_runner_handle.h"
 #include "base/time/time.h"
 #include "components/autofill/core/browser/autofill_test_utils.h"
-#include "components/autofill/core/browser/credit_card.h"
+#include "components/autofill/core/browser/data_model/credit_card.h"
 #include "components/autofill/core/browser/payments/payments_client.h"
 #include "components/autofill/core/browser/personal_data_manager.h"
 #include "components/autofill/core/browser/test_autofill_client.h"
 #include "components/autofill/core/browser/test_autofill_driver.h"
-#include "components/autofill/core/common/autofill_pref_names.h"
-#include "components/prefs/pref_registry_simple.h"
-#include "components/prefs/pref_service.h"
-#include "components/prefs/testing_pref_service.h"
+#include "components/autofill/core/browser/test_personal_data_manager.h"
 #include "net/url_request/url_request_test_util.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+#include "services/network/public/cpp/weak_wrapper_shared_url_loader_factory.h"
+#include "services/network/test/test_url_loader_factory.h"
 #include "testing/gmock/include/gmock/gmock.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
@@ -54,31 +54,32 @@ class MockUIDelegate : public FullCardRequest::UIDelegate,
 };
 
 // The personal data manager.
-class MockPersonalDataManager : public PersonalDataManager {
+class MockPersonalDataManager : public TestPersonalDataManager {
  public:
-  MockPersonalDataManager() : PersonalDataManager("en-US") {}
+  MockPersonalDataManager() {}
   ~MockPersonalDataManager() override {}
+  MOCK_CONST_METHOD0(IsSyncFeatureEnabled, bool());
   MOCK_METHOD1(UpdateCreditCard, void(const CreditCard& credit_card));
   MOCK_METHOD1(UpdateServerCreditCard, void(const CreditCard& credit_card));
 };
 
+// TODO(crbug.com/881835): Simplify this test setup.
 // The test fixture for full card request.
-class FullCardRequestTest : public testing::Test,
-                            public PaymentsClientUnmaskDelegate {
+class FullCardRequestTest : public testing::Test {
  public:
   FullCardRequestTest()
       : request_context_(new net::TestURLRequestContextGetter(
-            base::ThreadTaskRunnerHandle::Get())) {
-    std::unique_ptr<TestingPrefServiceSimple> pref_service(
-        new TestingPrefServiceSimple());
-    pref_service->registry()->RegisterDoublePref(
-        prefs::kAutofillBillingCustomerNumber, 0.0);
-    autofill_client_.SetPrefs(std::move(pref_service));
+            base::ThreadTaskRunnerHandle::Get())),
+        test_shared_loader_factory_(
+            base::MakeRefCounted<network::WeakWrapperSharedURLLoaderFactory>(
+                &test_url_loader_factory_)) {
     payments_client_ = std::make_unique<PaymentsClient>(
-        request_context_.get(), autofill_client_.GetPrefs(),
-        autofill_client_.GetIdentityProvider(), this, nullptr);
+        test_shared_loader_factory_, autofill_client_.GetIdentityManager(),
+        &personal_data_);
     request_ = std::make_unique<FullCardRequest>(
         &autofill_client_, payments_client_.get(), &personal_data_);
+    personal_data_.SetAccountInfoForPayments(
+        autofill_client_.GetIdentityManager()->GetPrimaryAccountInfo());
     // Silence the warning from PaymentsClient about matching sync and Payments
     // server types.
     base::CommandLine::ForCurrentProcess()->AppendSwitchASCII(
@@ -99,19 +100,20 @@ class FullCardRequestTest : public testing::Test,
 
   MockUIDelegate* ui_delegate() { return &ui_delegate_; }
 
-  // PaymentsClientUnmaskDelegate:
   void OnDidGetRealPan(AutofillClient::PaymentsRpcResult result,
-                       const std::string& real_pan) override {
+                       const std::string& real_pan) {
     request_->OnDidGetRealPan(result, real_pan);
   }
 
  private:
-  base::MessageLoop message_loop_;
+  base::test::ScopedTaskEnvironment task_environment_;
   MockPersonalDataManager personal_data_;
   MockResultDelegate result_delegate_;
   MockUIDelegate ui_delegate_;
   TestAutofillClient autofill_client_;
   scoped_refptr<net::TestURLRequestContextGetter> request_context_;
+  network::TestURLLoaderFactory test_url_loader_factory_;
+  scoped_refptr<network::SharedURLLoaderFactory> test_shared_loader_factory_;
   std::unique_ptr<PaymentsClient> payments_client_;
   std::unique_ptr<FullCardRequest> request_;
 
@@ -135,7 +137,7 @@ MATCHER_P4(CardMatches, record_type, number, month, year, "") {
 }
 
 // Verify getting the full PAN and the CVC for a masked server card.
-TEST_F(FullCardRequestTest, GetFullCardPanAndCvcForMaskedServerCard) {
+TEST_F(FullCardRequestTest, GetFullCardPanAndCvcForMaskedServerCardViaCvc) {
   EXPECT_CALL(*result_delegate(),
               OnFullCardRequestSucceeded(
                   testing::Ref(*request()),
@@ -154,6 +156,21 @@ TEST_F(FullCardRequestTest, GetFullCardPanAndCvcForMaskedServerCard) {
   card_unmask_delegate()->OnUnmaskResponse(response);
   OnDidGetRealPan(AutofillClient::SUCCESS, "4111");
   card_unmask_delegate()->OnUnmaskPromptClosed();
+}
+
+// Verify getting the full PAN for a masked server card.
+TEST_F(FullCardRequestTest, GetFullCardPanAndCvcForMaskedServerCardViaFido) {
+  EXPECT_CALL(*result_delegate(),
+              OnFullCardRequestSucceeded(
+                  testing::Ref(*request()),
+                  CardMatches(CreditCard::FULL_SERVER_CARD, "4111"),
+                  base::ASCIIToUTF16("")));
+
+  request()->GetFullCardViaFIDO(
+      CreditCard(CreditCard::MASKED_SERVER_CARD, "server_id"),
+      AutofillClient::UNMASK_FOR_AUTOFILL, result_delegate()->AsWeakPtr(),
+      base::Value(base::Value::Type::DICTIONARY));
+  OnDidGetRealPan(AutofillClient::SUCCESS, "4111");
 }
 
 // Verify getting the CVC for a local card.

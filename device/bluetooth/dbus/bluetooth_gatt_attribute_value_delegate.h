@@ -9,6 +9,7 @@
 #include <vector>
 
 #include "base/callback_forward.h"
+#include "device/bluetooth/bluetooth_gatt_characteristic.h"
 #include "device/bluetooth/bluetooth_local_gatt_service.h"
 
 namespace dbus {
@@ -40,9 +41,8 @@ class BluetoothGattAttributeValueDelegate {
   // out if left pending for too long causing a disconnection.
   virtual void GetValue(
       const dbus::ObjectPath& device_path,
-      const device::BluetoothLocalGattService::Delegate::ValueCallback&
-          callback,
-      const device::BluetoothLocalGattService::Delegate::ErrorCallback&
+      device::BluetoothLocalGattService::Delegate::ValueCallback callback,
+      device::BluetoothLocalGattService::Delegate::ErrorCallback
           error_callback) = 0;
 
   // This method will be called, when a remote device requests to write the
@@ -55,19 +55,35 @@ class BluetoothGattAttributeValueDelegate {
   virtual void SetValue(
       const dbus::ObjectPath& device_path,
       const std::vector<uint8_t>& value,
-      const base::Closure& callback,
-      const device::BluetoothLocalGattService::Delegate::ErrorCallback&
+      base::OnceClosure callback,
+      device::BluetoothLocalGattService::Delegate::ErrorCallback
           error_callback) = 0;
 
   // This method will be called, when a remote device requests to start sending
   // notifications for this characteristic. This will never be called for
   // descriptors.
-  virtual void StartNotifications() = 0;
+  virtual void StartNotifications(
+      const dbus::ObjectPath& device_path,
+      device::BluetoothGattCharacteristic::NotificationType
+          notification_type) = 0;
 
   // This method will be called, when a remote device requests to stop sending
   // notifications for this characteristic. This will never be called for
   // descriptors.
-  virtual void StopNotifications() = 0;
+  virtual void StopNotifications(const dbus::ObjectPath& device_path) = 0;
+
+  // This method will be called, when a remote device requests to prepare
+  // write the value of the exported GATT characteristic. Invoke |callback| to
+  // report that the request was successful. Invoke |error_callback| to report
+  // a failure. This will never be called for descriptors.
+  virtual void PrepareSetValue(
+      const dbus::ObjectPath& device_path,
+      const std::vector<uint8_t>& value,
+      int offset,
+      bool has_subsequent_request,
+      base::OnceClosure callback,
+      device::BluetoothLocalGattService::Delegate::ErrorCallback
+          error_callback) {}
 
  protected:
   // Gets the Bluetooth device object on the current service's adapter with

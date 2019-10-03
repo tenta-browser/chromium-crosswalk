@@ -39,13 +39,54 @@ class CONTENT_EXPORT ServiceWorkerCacheWriter {
  public:
   using OnWriteCompleteCallback = base::OnceCallback<void(net::Error)>;
 
-  // The |compare_reader| may be null, in which case this instance will
-  // unconditionally write back data supplied to |MaybeWriteHeaders| and
-  // |MaybeWriteData|.
-  ServiceWorkerCacheWriter(
-      std::unique_ptr<ServiceWorkerResponseReader> compare_reader,
+  // This class defines the interfaces of observer that observes write
+  // operations. The observer is notified when response info or data
+  // will be written to storage.
+  class WriteObserver {
+   public:
+    // Called before response info is written to storage.
+    // Returns net::OK if success. Other values are treated as errors.
+    virtual int WillWriteInfo(
+        scoped_refptr<HttpResponseInfoIOBuffer> response_info) = 0;
+
+    // Called before response data is written to storage.
+    // Return value is used by cache writer to decide what to do next. A net
+    // error code should be returned (e.g. net::OK, net::ERR_IO_PENDING). If it
+    // returns net::ERR_IO_PENDING, the cache writer waits until the callback
+    // is called asynchronously. Otherwise the callback should not be called.
+    // The parameter of the callback specifies result of the operation.
+    virtual int WillWriteData(
+        scoped_refptr<net::IOBuffer> data,
+        int length,
+        base::OnceCallback<void(net::Error)> callback) = 0;
+  };
+
+  // Create a cache writer instance that copies a script already in storage. The
+  // script is read by |copy_reader|.
+  static std::unique_ptr<ServiceWorkerCacheWriter> CreateForCopy(
       std::unique_ptr<ServiceWorkerResponseReader> copy_reader,
       std::unique_ptr<ServiceWorkerResponseWriter> writer);
+
+  // Create a cache writer instance that unconditionally write back data
+  // supplied to |MaybeWriteHeaders| and |MaybeWriteData| to storage.
+  static std::unique_ptr<ServiceWorkerCacheWriter> CreateForWriteBack(
+      std::unique_ptr<ServiceWorkerResponseWriter> writer);
+
+  // Create a cache writer that compares between a script in storage and data
+  // from network (supplied with |MaybeWriteHeaders| and |MaybeWriteData|).
+  // Nothing would be written to storage if it compares to be identical.
+  // When |pause_when_not_identical| is true and the cache writer detects a
+  // difference between bodies from the network and from the storage, the
+  // comparison stops immediately and the cache writer is paused and returns
+  // net::ERR_IO_PENDING, with nothing written to the storage. It can be
+  // resumed later. If |pause_when_not_identical| is false, and the data is
+  // different, it would be written to storage directly. |copy_reader| is used
+  // for copying identical data blocks during writing.
+  static std::unique_ptr<ServiceWorkerCacheWriter> CreateForComparison(
+      std::unique_ptr<ServiceWorkerResponseReader> compare_reader,
+      std::unique_ptr<ServiceWorkerResponseReader> copy_reader,
+      std::unique_ptr<ServiceWorkerResponseWriter> writer,
+      bool pause_when_not_identical);
 
   ~ServiceWorkerCacheWriter();
 
@@ -73,8 +114,33 @@ class CONTENT_EXPORT ServiceWorkerCacheWriter {
   // Returns a count of bytes written back to the cache.
   size_t bytes_written() const { return bytes_written_; }
   bool did_replace() const { return did_replace_; }
+  bool is_pausing() const { return state_ == STATE_PAUSING; }
+
+  // Resumes a cache writer which were paused when a block of data from the
+  // network wasn't identical to the data in the storage. It is valid to call
+  // this method only when |pause_when_not_identical| is true in the constructor
+  // and |state_| is STATE_PAUSING.
+  net::Error Resume(OnWriteCompleteCallback callback);
+
+  // Start to copy a script in storage to a new position. |callback| is
+  // called when the work is done. This is used when an installed script
+  // is used by a new service worker with no content change, thus downloading
+  // could be avoided.
+  net::Error StartCopy(OnWriteCompleteCallback callback);
+
+  // Returns true when the cache writer is created by CreateForCopy().
+  bool IsCopying() const;
+
+  // Returns the resource ID being written to storage.
+  int64_t WriterResourceId() const;
+
+  void set_write_observer(WriteObserver* write_observer) {
+    write_observer_ = write_observer;
+  }
 
  private:
+  friend class ServiceWorkerUpdateCheckTestUtils;
+
   // States for the state machine.
   //
   // The state machine flows roughly like this: if there is no existing cache
@@ -102,11 +168,16 @@ class CONTENT_EXPORT ServiceWorkerCacheWriter {
     STATE_READ_DATA_FOR_COMPARE,
     STATE_READ_DATA_FOR_COMPARE_DONE,
 
+    // The cache writer is paused because the network data wasn't identical with
+    // the stored data, and |pause_when_not_identical| is true.
+    STATE_PAUSING,
+
     // Control flows linearly through these states, with each pass from
     // READ_DATA_FOR_COPY to WRITE_DATA_FOR_COPY_DONE copying one block of data
     // at a time. Control loops from WRITE_DATA_FOR_COPY_DONE back to
-    // READ_DATA_FOR_COPY if there is more data to copy, or exits to
-    // WRITE_DATA_FOR_PASSTHROUGH.
+    // READ_DATA_FOR_COPY if there is more data to copy. If there is no more
+    // data, it exits to WRITE_DATA_FOR_PASSTHROUGH in case IsCopying()
+    // returns false or exits to DONE in case IsCopying() returns true.
     STATE_READ_HEADERS_FOR_COPY,
     STATE_READ_HEADERS_FOR_COPY_DONE,
     STATE_WRITE_HEADERS_FOR_COPY,
@@ -126,6 +197,12 @@ class CONTENT_EXPORT ServiceWorkerCacheWriter {
     // This state means "done with the current call; ready for another one."
     STATE_DONE,
   };
+
+  ServiceWorkerCacheWriter(
+      std::unique_ptr<ServiceWorkerResponseReader> compare_reader,
+      std::unique_ptr<ServiceWorkerResponseReader> copy_reader,
+      std::unique_ptr<ServiceWorkerResponseWriter> writer,
+      bool pause_when_not_identical);
 
   // Drives this class's state machine. This function steps the state machine
   // until one of:
@@ -170,13 +247,22 @@ class CONTENT_EXPORT ServiceWorkerCacheWriter {
   int ReadDataHelper(const std::unique_ptr<ServiceWorkerResponseReader>& reader,
                      net::IOBuffer* buf,
                      int buf_len);
-  int WriteInfoHelper(
-      const std::unique_ptr<ServiceWorkerResponseWriter>& writer,
-      HttpResponseInfoIOBuffer* buf);
-  int WriteDataHelper(
-      const std::unique_ptr<ServiceWorkerResponseWriter>& writer,
-      net::IOBuffer* buf,
-      int buf_len);
+  // If no write observer is set through set_write_observer(),
+  // WriteInfo() operates the same as WriteInfoToResponseWriter() and
+  // WriteData() operates the same as WriteDataToResponseWriter().
+  // If observer is set, the argument |response_info| or |data| is first sent
+  // to observer then WriteInfoToResponseWriter() or
+  // WriteDataToResponseWriter() is called.
+  int WriteInfo(scoped_refptr<HttpResponseInfoIOBuffer> response_info);
+  int WriteData(scoped_refptr<net::IOBuffer> data, int length);
+  int WriteInfoToResponseWriter(
+      scoped_refptr<HttpResponseInfoIOBuffer> response_info);
+  int WriteDataToResponseWriter(scoped_refptr<net::IOBuffer> data, int length);
+
+  // Called when |write_observer_| finishes its WillWriteData() operation.
+  void OnWillWriteDataCompleted(scoped_refptr<net::IOBuffer> data,
+                                int length,
+                                net::Error error);
 
   // Callback used by the above helpers for their IO operations. This is only
   // run when those IO operations complete asynchronously, in which case it
@@ -202,18 +288,36 @@ class CONTENT_EXPORT ServiceWorkerCacheWriter {
 
   size_t cached_length_;
 
+  // The amount of data from the network (|data_to_write_|) which has already
+  // been compared with data from storage (|data_to_read_|). This is
+  // initialized to 0 for every new arrival of network data.
+  size_t compare_offset_;
+
+  // Count of bytes which has been read from the network for comparison, and
+  // known as identical with the stored scripts. It is incremented only when a
+  // full block of network data is compared, to avoid having to use only
+  // fragments of the buffered network data.
   size_t bytes_compared_;
+
+  // Count of bytes copied from |copy_reader_| to |writer_|.
   size_t bytes_copied_;
+
+  // Count of bytes written back to |writer_|.
   size_t bytes_written_;
 
-  bool did_replace_;
+  bool did_replace_ = false;
 
-  size_t compare_offset_;
+  // When the cache writer finds any differences between bodies from the network
+  // and from the storage, and the |pause_when_not_identical_| is true, the
+  // cache writer pauses immediately.
+  const bool pause_when_not_identical_;
+
+  WriteObserver* write_observer_ = nullptr;
 
   std::unique_ptr<ServiceWorkerResponseReader> compare_reader_;
   std::unique_ptr<ServiceWorkerResponseReader> copy_reader_;
   std::unique_ptr<ServiceWorkerResponseWriter> writer_;
-  base::WeakPtrFactory<ServiceWorkerCacheWriter> weak_factory_;
+  base::WeakPtrFactory<ServiceWorkerCacheWriter> weak_factory_{this};
 };
 
 }  // namespace content

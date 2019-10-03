@@ -11,7 +11,8 @@
 #include "base/bind.h"
 #include "base/command_line.h"
 #include "base/logging.h"
-#include "chromeos/dbus/dbus_thread_manager.h"
+#include "chromeos/dbus/power_manager/backlight.pb.h"
+#include "ui/display/manager/touch_device_manager.h"
 
 namespace ash {
 
@@ -19,16 +20,13 @@ BacklightsForcedOffSetter::BacklightsForcedOffSetter()
     : power_manager_observer_(this), weak_ptr_factory_(this) {
   InitDisableTouchscreenWhileScreenOff();
 
-  power_manager_observer_.Add(
-      chromeos::DBusThreadManager::Get()->GetPowerManagerClient());
+  power_manager_observer_.Add(chromeos::PowerManagerClient::Get());
   GetInitialBacklightsForcedOff();
 }
 
 BacklightsForcedOffSetter::~BacklightsForcedOffSetter() {
   if (active_backlights_forced_off_count_ > 0) {
-    chromeos::DBusThreadManager::Get()
-        ->GetPowerManagerClient()
-        ->SetBacklightsForcedOff(false);
+    chromeos::PowerManagerClient::Get()->SetBacklightsForcedOff(false);
   }
 }
 
@@ -51,10 +49,14 @@ BacklightsForcedOffSetter::ForceBacklightsOff() {
   return scoped_backlights_forced_off;
 }
 
-void BacklightsForcedOffSetter::BrightnessChanged(int level,
-                                                  bool user_initiated) {
+void BacklightsForcedOffSetter::ScreenBrightnessChanged(
+    const power_manager::BacklightBrightnessChange& change) {
+  const bool user_initiated =
+      change.cause() ==
+      power_manager::BacklightBrightnessChange_Cause_USER_REQUEST;
+
   const ScreenState old_state = screen_state_;
-  if (level != 0)
+  if (change.percent() > 0.0)
     screen_state_ = ScreenState::ON;
   else
     screen_state_ = user_initiated ? ScreenState::OFF : ScreenState::OFF_AUTO;
@@ -75,9 +77,8 @@ void BacklightsForcedOffSetter::BrightnessChanged(int level,
 
 void BacklightsForcedOffSetter::PowerManagerRestarted() {
   if (backlights_forced_off_.has_value()) {
-    chromeos::DBusThreadManager::Get()
-        ->GetPowerManagerClient()
-        ->SetBacklightsForcedOff(backlights_forced_off_.value());
+    chromeos::PowerManagerClient::Get()->SetBacklightsForcedOff(
+        backlights_forced_off_.value());
   } else {
     GetInitialBacklightsForcedOff();
   }
@@ -85,9 +86,7 @@ void BacklightsForcedOffSetter::PowerManagerRestarted() {
 
 void BacklightsForcedOffSetter::ResetForTest() {
   if (active_backlights_forced_off_count_ > 0) {
-    chromeos::DBusThreadManager::Get()
-        ->GetPowerManagerClient()
-        ->SetBacklightsForcedOff(false);
+    chromeos::PowerManagerClient::Get()->SetBacklightsForcedOff(false);
   }
 
   // Cancel all backlights forced off requests.
@@ -107,11 +106,9 @@ void BacklightsForcedOffSetter::InitDisableTouchscreenWhileScreenOff() {
 }
 
 void BacklightsForcedOffSetter::GetInitialBacklightsForcedOff() {
-  chromeos::DBusThreadManager::Get()
-      ->GetPowerManagerClient()
-      ->GetBacklightsForcedOff(base::BindOnce(
-          &BacklightsForcedOffSetter::OnGotInitialBacklightsForcedOff,
-          weak_ptr_factory_.GetWeakPtr()));
+  chromeos::PowerManagerClient::Get()->GetBacklightsForcedOff(base::BindOnce(
+      &BacklightsForcedOffSetter::OnGotInitialBacklightsForcedOff,
+      weak_ptr_factory_.GetWeakPtr()));
 }
 
 void BacklightsForcedOffSetter::OnGotInitialBacklightsForcedOff(
@@ -141,9 +138,7 @@ void BacklightsForcedOffSetter::SetBacklightsForcedOff(bool forced_off) {
   }
 
   backlights_forced_off_ = forced_off;
-  chromeos::DBusThreadManager::Get()
-      ->GetPowerManagerClient()
-      ->SetBacklightsForcedOff(forced_off);
+  chromeos::PowerManagerClient::Get()->SetBacklightsForcedOff(forced_off);
 
   UpdateTouchscreenStatus();
 
@@ -152,11 +147,17 @@ void BacklightsForcedOffSetter::SetBacklightsForcedOff(bool forced_off) {
 }
 
 void BacklightsForcedOffSetter::UpdateTouchscreenStatus() {
+  // If there is an external touch display connected to the device, then we want
+  // to allow users to wake up the device using this external touch device. The
+  // kernel blocks wake up events from internal input devices when the screen is
+  // off or is in the suspended state.
+  // See https://crbug/797411 for more details.
   const bool disable_touchscreen = backlights_forced_off_.value_or(false) ||
                                    (screen_state_ == ScreenState::OFF_AUTO &&
-                                    disable_touchscreen_while_screen_off_);
+                                    disable_touchscreen_while_screen_off_ &&
+                                    !display::HasExternalTouchscreenDevice());
   Shell::Get()->touch_devices_controller()->SetTouchscreenEnabled(
-      !disable_touchscreen, TouchscreenEnabledSource::GLOBAL);
+      !disable_touchscreen, TouchDeviceEnabledSource::GLOBAL);
 }
 
 }  // namespace ash

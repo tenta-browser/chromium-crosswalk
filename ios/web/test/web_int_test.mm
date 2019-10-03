@@ -4,18 +4,23 @@
 
 #import "ios/web/test/web_int_test.h"
 
+#include "base/base_paths.h"
 #import "base/ios/block_types.h"
 #include "base/memory/ptr_util.h"
+#include "base/path_service.h"
 #include "base/scoped_observer.h"
 #import "base/test/ios/wait_util.h"
+#import "ios/web/common/web_view_creation_util.h"
 #import "ios/web/public/test/http_server/http_server.h"
 #import "ios/web/public/test/js_test_util.h"
 #include "ios/web/public/web_state/web_state_observer.h"
-#import "ios/web/public/web_view_creation_util.h"
 
 #if !defined(__has_feature) || !__has_feature(objc_arc)
 #error "This file requires ARC support."
 #endif
+
+using base::test::ios::kWaitForPageLoadTimeout;
+using base::test::ios::WaitUntilConditionOrTimeout;
 
 namespace web {
 
@@ -59,7 +64,10 @@ void WebIntTest::SetUp() {
   // Start the http server.
   web::test::HttpServer& server = web::test::HttpServer::GetSharedInstance();
   ASSERT_FALSE(server.IsRunning());
-  server.StartOrDie();
+
+  base::FilePath test_data_dir;
+  ASSERT_TRUE(base::PathService::Get(base::DIR_SOURCE_ROOT, &test_data_dir));
+  server.StartOrDie(test_data_dir.Append("."));
 
   // Remove any previously existing WKWebView data.
   RemoveWKWebViewCreatedData([WKWebsiteDataStore defaultDataStore],
@@ -74,6 +82,7 @@ void WebIntTest::SetUp() {
       [UIApplication sharedApplication].keyWindow.bounds;
 
   web_state()->SetDelegate(&web_state_delegate_);
+  web_state()->SetKeepRenderProcessAlive(true);
 }
 
 void WebIntTest::TearDown() {
@@ -88,10 +97,11 @@ void WebIntTest::TearDown() {
 }
 
 id WebIntTest::ExecuteJavaScript(NSString* script) {
-  return web::ExecuteJavaScript(web_state()->GetJSInjectionReceiver(), script);
+  return web::test::ExecuteJavaScript(web_state()->GetJSInjectionReceiver(),
+                                      script);
 }
 
-void WebIntTest::ExecuteBlockAndWaitForLoad(const GURL& url,
+bool WebIntTest::ExecuteBlockAndWaitForLoad(const GURL& url,
                                             ProceduralBlock block) {
   DCHECK(block);
 
@@ -104,21 +114,21 @@ void WebIntTest::ExecuteBlockAndWaitForLoad(const GURL& url,
   // Need to use a pointer to |observer| as the block wants to capture it by
   // value (even if marked with __block) which would not work.
   IntTestWebStateObserver* observer_ptr = &observer;
-  base::test::ios::WaitUntilCondition(^bool {
+  return WaitUntilConditionOrTimeout(kWaitForPageLoadTimeout, ^{
     return observer_ptr->IsExpectedPageLoaded();
   });
 }
 
-void WebIntTest::LoadUrl(const GURL& url) {
+bool WebIntTest::LoadUrl(const GURL& url) {
   web::NavigationManager::WebLoadParams params(url);
   params.transition_type = ui::PageTransition::PAGE_TRANSITION_TYPED;
-  LoadWithParams(params);
+  return LoadWithParams(params);
 }
 
-void WebIntTest::LoadWithParams(
+bool WebIntTest::LoadWithParams(
     const NavigationManager::WebLoadParams& params) {
   NavigationManager::WebLoadParams block_params(params);
-  ExecuteBlockAndWaitForLoad(params.url, ^{
+  return ExecuteBlockAndWaitForLoad(params.url, ^{
     navigation_manager()->LoadURLWithParams(block_params);
   });
 }

@@ -5,9 +5,9 @@
 package org.chromium.chrome.browser.signin;
 
 import android.app.Activity;
-import android.app.Fragment;
 import android.content.Intent;
 import android.provider.Settings;
+import android.support.v4.app.Fragment;
 import android.support.v7.app.AlertDialog;
 
 import org.chromium.base.VisibleForTesting;
@@ -53,7 +53,7 @@ public class AccountAdder {
 
     private void onOpenAddGoogleAccountPageFailed(final Activity activity, final int result) {
         AlertDialog.Builder builder =
-                new AlertDialog.Builder(activity, R.style.SigninAlertDialogTheme);
+                new AlertDialog.Builder(activity, R.style.Theme_Chromium_AlertDialog);
         builder.setMessage(R.string.signin_open_add_google_account_page_failed);
         builder.setPositiveButton(R.string.signin_open_settings_accounts, (dialog, which) -> {
             // Open Accounts page in device's Settings app.

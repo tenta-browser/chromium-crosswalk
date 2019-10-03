@@ -4,17 +4,19 @@
 
 #include "chrome/browser/extensions/extension_service_test_with_install.h"
 
+#include "base/bind.h"
 #include "base/files/file_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "chrome/browser/extensions/chrome_test_extension_loader.h"
 #include "chrome/browser/extensions/crx_installer.h"
-#include "chrome/browser/extensions/extension_creator.h"
-#include "chrome/browser/extensions/extension_error_reporter.h"
+#include "chrome/browser/extensions/load_error_reporter.h"
 #include "chrome/browser/profiles/profile.h"
 #include "content/public/browser/notification_service.h"
 #include "content/public/test/test_utils.h"
+#include "extensions/browser/extension_creator.h"
 #include "extensions/browser/extension_registry.h"
 #include "extensions/browser/notification_types.h"
+#include "extensions/common/verifier_formats.h"
 #include "testing/gtest/include/gtest/gtest.h"
 
 namespace extensions {
@@ -61,7 +63,7 @@ void ExtensionServiceTestWithInstall::InitializeExtensionService(
 // static
 std::vector<base::string16> ExtensionServiceTestWithInstall::GetErrors() {
   const std::vector<base::string16>* errors =
-      ExtensionErrorReporter::GetInstance()->GetErrors();
+      LoadErrorReporter::GetInstance()->GetErrors();
   std::vector<base::string16> ret_val;
 
   for (const base::string16& error : *errors) {
@@ -228,8 +230,7 @@ const Extension* ExtensionServiceTestWithInstall::VerifyCrxInstall(
           << path.value();
     }
 
-    for (std::vector<base::string16>::iterator err = errors.begin();
-      err != errors.end(); ++err) {
+    for (auto err = errors.begin(); err != errors.end(); ++err) {
       LOG(ERROR) << *err;
     }
   } else {
@@ -242,7 +243,7 @@ const Extension* ExtensionServiceTestWithInstall::VerifyCrxInstall(
   was_update_ = false;
   old_name_ = "";
   loaded_.clear();
-  ExtensionErrorReporter::GetInstance()->ClearErrors();
+  LoadErrorReporter::GetInstance()->ClearErrors();
   return extension;
 }
 
@@ -281,8 +282,8 @@ void ExtensionServiceTestWithInstall::UpdateExtension(
   content::WindowedNotificationObserver observer(
       extensions::NOTIFICATION_CRX_INSTALLER_DONE,
       base::Bind(&IsCrxInstallerDone, &installer));
-  service()->UpdateExtension(extensions::CRXFileInfo(id, path), true,
-                             &installer);
+  service()->UpdateExtension(CRXFileInfo(id, GetTestVerifierFormat(), path),
+                             true, &installer);
 
   if (installer)
     observer.Wait();
@@ -320,50 +321,30 @@ void ExtensionServiceTestWithInstall::UpdateExtension(
   EXPECT_FALSE(base::PathExists(path));
 }
 
-void ExtensionServiceTestWithInstall::UninstallExtension(const std::string& id,
-                                                         bool use_helper) {
-  UninstallExtension(id, use_helper, Extension::ENABLED);
-}
-
 void ExtensionServiceTestWithInstall::UninstallExtension(
-    const std::string& id,
-    bool use_helper,
-    Extension::State expected_state) {
+    const std::string& id) {
   // Verify that the extension is installed.
+  ASSERT_TRUE(registry()->GetExtensionById(id, ExtensionRegistry::EVERYTHING));
   base::FilePath extension_path = extensions_install_dir().AppendASCII(id);
   EXPECT_TRUE(base::PathExists(extension_path));
-  size_t pref_key_count = GetPrefKeyCount();
-  EXPECT_GT(pref_key_count, 0u);
-  ValidateIntegerPref(id, "state", expected_state);
+  ExtensionPrefs* prefs = ExtensionPrefs::Get(profile());
+  EXPECT_TRUE(prefs->GetInstalledExtensionInfo(id));
 
   // We make a copy of the extension's id since the extension can be deleted
   // once it's uninstalled.
   std::string extension_id = id;
   // Uninstall it.
-  if (use_helper) {
-    EXPECT_TRUE(ExtensionService::UninstallExtensionHelper(
-        service(), id, extensions::UNINSTALL_REASON_FOR_TESTING));
-  } else {
-    EXPECT_TRUE(service()->UninstallExtension(
-        id, extensions::UNINSTALL_REASON_FOR_TESTING, nullptr));
-  }
+  EXPECT_TRUE(service()->UninstallExtension(
+      id, extensions::UNINSTALL_REASON_FOR_TESTING, nullptr));
   --expected_extensions_count_;
 
   // We should get an unload notification.
   EXPECT_FALSE(unloaded_id_.empty());
   EXPECT_EQ(extension_id, unloaded_id_);
 
-  // Verify uninstalled state.
-  size_t new_pref_key_count = GetPrefKeyCount();
-  if (new_pref_key_count == pref_key_count) {
-    ValidateIntegerPref(id, "state",
-                        Extension::EXTERNAL_EXTENSION_UNINSTALLED);
-  } else {
-    EXPECT_EQ(new_pref_key_count, pref_key_count - 1);
-  }
-
   // The extension should not be in the service anymore.
   EXPECT_FALSE(service()->GetInstalledExtension(extension_id));
+  EXPECT_FALSE(prefs->GetInstalledExtensionInfo(extension_id));
   content::RunAllTasksUntilIdle();
 
   // The directory should be gone.
@@ -394,13 +375,12 @@ void ExtensionServiceTestWithInstall::OnExtensionUnloaded(
     UnloadedExtensionReason reason) {
   unloaded_id_ = extension->id();
   unloaded_reason_ = reason;
-  extensions::ExtensionList::iterator i =
-      std::find(loaded_.begin(), loaded_.end(), extension);
-      // TODO(erikkay) fix so this can be an assert.  Right now the tests
-      // are manually calling clear() on loaded_, so this isn't doable.
-      if (i == loaded_.end())
-        return;
-      loaded_.erase(i);
+  auto i = std::find(loaded_.begin(), loaded_.end(), extension);
+  // TODO(erikkay) fix so this can be an assert.  Right now the tests
+  // are manually calling clear() on loaded_, so this isn't doable.
+  if (i == loaded_.end())
+    return;
+  loaded_.erase(i);
 }
 
 void ExtensionServiceTestWithInstall::OnExtensionWillBeInstalled(

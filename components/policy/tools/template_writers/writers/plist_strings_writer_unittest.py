@@ -2,9 +2,7 @@
 # Copyright (c) 2012 The Chromium Authors. All rights reserved.
 # Use of this source code is governed by a BSD-style license that can be
 # found in the LICENSE file.
-
 '''Unit tests for writers.plist_strings_writer'''
-
 
 import os
 import sys
@@ -24,21 +22,21 @@ class PListStringsWriterUnittest(writer_unittest_common.WriterUnittestCommon):
     policy_json = '''
       {
         'policy_definitions': [],
+        'policy_atomic_group_definitions': [],
         'placeholders': [],
         'messages': {
           'mac_chrome_preferences': {
-            'text': '$1 preferen"ces',
+            'text': 'Chromium preferen"ces',
             'desc': 'blah'
           }
         }
       }'''
-    output = self.GetOutput(
-        policy_json,
-        {'_chromium': '1', 'mac_bundle_id': 'com.example.Test'},
-        'plist_strings')
-    expected_output = (
-        'Chromium.pfm_title = "Chromium";\n'
-        'Chromium.pfm_description = "Chromium preferen\\"ces";')
+    output = self.GetOutput(policy_json, {
+        '_chromium': '1',
+        'mac_bundle_id': 'com.example.Test'
+    }, 'plist_strings')
+    expected_output = ('Chromium.pfm_title = "Chromium";\n'
+                       'Chromium.pfm_description = "Chromium preferen\\"ces";')
     self.assertEquals(output.strip(), expected_output.strip())
 
   def testEmptyVersion(self):
@@ -46,24 +44,24 @@ class PListStringsWriterUnittest(writer_unittest_common.WriterUnittestCommon):
     policy_json = '''
       {
         'policy_definitions': [],
+        'policy_atomic_group_definitions': [],
         'placeholders': [],
         'messages': {
           'mac_chrome_preferences': {
-            'text': '$1 preferen"ces',
+            'text': 'Chromium preferen"ces',
             'desc': 'blah'
           }
         }
       }'''
     output = self.GetOutput(
-        policy_json,
-        {'_chromium': '1',
-         'mac_bundle_id': 'com.example.Test',
-         'version': '39.0.0.0'},
-        'plist_strings')
-    expected_output = (
-        '/* chromium version: 39.0.0.0 */\n'
-        'Chromium.pfm_title = "Chromium";\n'
-        'Chromium.pfm_description = "Chromium preferen\\"ces";')
+        policy_json, {
+            '_chromium': '1',
+            'mac_bundle_id': 'com.example.Test',
+            'version': '39.0.0.0'
+        }, 'plist_strings')
+    expected_output = ('/* chromium version: 39.0.0.0 */\n'
+                       'Chromium.pfm_title = "Chromium";\n'
+                       'Chromium.pfm_description = "Chromium preferen\\"ces";')
     self.assertEquals(output.strip(), expected_output.strip())
 
   def testMainPolicy(self):
@@ -86,18 +84,19 @@ class PListStringsWriterUnittest(writer_unittest_common.WriterUnittestCommon):
             'desc': 'Description of main policy.',
           },
         ],
+        'policy_atomic_group_definitions': [],
         'placeholders': [],
         'messages': {
           'mac_chrome_preferences': {
-            'text': 'Preferences of $1',
+            'text': 'Preferences of Google Chrome',
             'desc': 'blah'
           }
         }
       }'''
-    output = self.GetOutput(
-        policy_json,
-        {'_google_chrome' : '1', 'mac_bundle_id': 'com.example.Test'},
-        'plist_strings')
+    output = self.GetOutput(policy_json, {
+        '_google_chrome': '1',
+        'mac_bundle_id': 'com.example.Test'
+    }, 'plist_strings')
     expected_output = (
         'Google_Chrome.pfm_title = "Google Chrome";\n'
         'Google_Chrome.pfm_description = "Preferences of Google Chrome";\n'
@@ -128,24 +127,24 @@ With a newline.""",
             'supported_on': ['chrome.mac:8-'],
           },
         ],
+        'policy_atomic_group_definitions': [],
         'placeholders': [],
         'messages': {
           'mac_chrome_preferences': {
-            'text': 'Preferences of $1',
+            'text': 'Preferences of Chromium',
             'desc': 'blah'
           }
         }
       }'''
-    output = self.GetOutput(
-        policy_json,
-        {'_chromium' : '1', 'mac_bundle_id': 'com.example.Test'},
-        'plist_strings')
-    expected_output = (
-        'Chromium.pfm_title = "Chromium";\n'
-        'Chromium.pfm_description = "Preferences of Chromium";\n'
-        'StringPolicy.pfm_title = "Caption of policy.";\n'
-        'StringPolicy.pfm_description = '
-            '"Description of policy.\\nWith a newline.";')
+    output = self.GetOutput(policy_json, {
+        '_chromium': '1',
+        'mac_bundle_id': 'com.example.Test'
+    }, 'plist_strings')
+    expected_output = ('Chromium.pfm_title = "Chromium";\n'
+                       'Chromium.pfm_description = "Preferences of Chromium";\n'
+                       'StringPolicy.pfm_title = "Caption of policy.";\n'
+                       'StringPolicy.pfm_description = '
+                       '"Description of policy.\\nWith a newline.";')
     self.assertEquals(output.strip(), expected_output.strip())
 
   def testStringListPolicy(self):
@@ -173,24 +172,24 @@ With a newline.""",
             'supported_on': ['chrome.mac:8-'],
           },
         ],
+        'policy_atomic_group_definitions': [],
         'placeholders': [],
         'messages': {
           'mac_chrome_preferences': {
-            'text': 'Preferences of $1',
+            'text': 'Preferences of Chromium',
             'desc': 'blah'
           }
         }
       }'''
-    output = self.GetOutput(
-        policy_json,
-        {'_chromium' : '1', 'mac_bundle_id': 'com.example.Test'},
-        'plist_strings')
-    expected_output = (
-        'Chromium.pfm_title = "Chromium";\n'
-        'Chromium.pfm_description = "Preferences of Chromium";\n'
-        'ListPolicy.pfm_title = "Caption of policy.";\n'
-        'ListPolicy.pfm_description = '
-            '"Description of policy.\\nWith a newline.";')
+    output = self.GetOutput(policy_json, {
+        '_chromium': '1',
+        'mac_bundle_id': 'com.example.Test'
+    }, 'plist_strings')
+    expected_output = ('Chromium.pfm_title = "Chromium";\n'
+                       'Chromium.pfm_description = "Preferences of Chromium";\n'
+                       'ListPolicy.pfm_title = "Caption of policy.";\n'
+                       'ListPolicy.pfm_description = '
+                       '"Description of policy.\\nWith a newline.";')
     self.assertEquals(output.strip(), expected_output.strip())
 
   def testStringEnumListPolicy(self):
@@ -230,25 +229,25 @@ With a newline.""",
             'supported_on': ['chrome.mac:8-'],
           },
         ],
+        'policy_atomic_group_definitions': [],
         'placeholders': [],
         'messages': {
           'mac_chrome_preferences': {
-            'text': 'Preferences of $1',
+            'text': 'Preferences of Chromium',
             'desc': 'blah'
           }
         }
       }'''
-    output = self.GetOutput(
-        policy_json,
-        {'_chromium' : '1', 'mac_bundle_id': 'com.example.Test'},
-        'plist_strings')
-    expected_output = (
-        'Chromium.pfm_title = "Chromium";\n'
-        'Chromium.pfm_description = "Preferences of Chromium";\n'
-        'EnumPolicy.pfm_title = "Caption of policy.";\n'
-        'EnumPolicy.pfm_description = '
-            '"one - Option1\\ntwo - Option2\\n'
-            'Description of policy.\\nWith a newline.";')
+    output = self.GetOutput(policy_json, {
+        '_chromium': '1',
+        'mac_bundle_id': 'com.example.Test'
+    }, 'plist_strings')
+    expected_output = ('Chromium.pfm_title = "Chromium";\n'
+                       'Chromium.pfm_description = "Preferences of Chromium";\n'
+                       'EnumPolicy.pfm_title = "Caption of policy.";\n'
+                       'EnumPolicy.pfm_description = '
+                       '"one - Option1\\ntwo - Option2\\n'
+                       'Description of policy.\\nWith a newline.";')
     self.assertEquals(output.strip(), expected_output.strip())
 
   def testIntEnumPolicy(self):
@@ -283,24 +282,25 @@ With a newline.""",
             'supported_on': ['chrome.mac:8-'],
           },
         ],
+        'policy_atomic_group_definitions': [],
         'placeholders': [],
         'messages': {
           'mac_chrome_preferences': {
-            'text': '$1 preferences',
+            'text': 'Google Chrome preferences',
             'desc': 'blah'
           }
         }
       }'''
-    output = self.GetOutput(
-        policy_json,
-        {'_google_chrome': '1', 'mac_bundle_id': 'com.example.Test2'},
-        'plist_strings')
+    output = self.GetOutput(policy_json, {
+        '_google_chrome': '1',
+        'mac_bundle_id': 'com.example.Test2'
+    }, 'plist_strings')
     expected_output = (
         'Google_Chrome.pfm_title = "Google Chrome";\n'
         'Google_Chrome.pfm_description = "Google Chrome preferences";\n'
         'EnumPolicy.pfm_title = "Caption of policy.";\n'
         'EnumPolicy.pfm_description = '
-            '"0 - Option1\\n1 - Option2\\nDescription of policy.";\n')
+        '"0 - Option1\\n1 - Option2\\nDescription of policy.";\n')
 
     self.assertEquals(output.strip(), expected_output.strip())
 
@@ -336,24 +336,25 @@ With a newline.""",
             'supported_on': ['chrome.mac:8-'],
           },
         ],
+        'policy_atomic_group_definitions': [],
         'placeholders': [],
         'messages': {
           'mac_chrome_preferences': {
-            'text': '$1 preferences',
+            'text': 'Google Chrome preferences',
             'desc': 'blah'
           }
         }
       }'''
-    output = self.GetOutput(
-        policy_json,
-        {'_google_chrome': '1', 'mac_bundle_id': 'com.example.Test2'},
-        'plist_strings')
+    output = self.GetOutput(policy_json, {
+        '_google_chrome': '1',
+        'mac_bundle_id': 'com.example.Test2'
+    }, 'plist_strings')
     expected_output = (
         'Google_Chrome.pfm_title = "Google Chrome";\n'
         'Google_Chrome.pfm_description = "Google Chrome preferences";\n'
         'EnumPolicy.pfm_title = "Caption of policy.";\n'
         'EnumPolicy.pfm_description = '
-            '"one - Option1\\ntwo - Option2\\nDescription of policy.";\n')
+        '"one - Option1\\ntwo - Option2\\nDescription of policy.";\n')
 
     self.assertEquals(output.strip(), expected_output.strip())
 
@@ -378,18 +379,19 @@ With a newline.""",
             'supported_on': ['chrome_os:8-'],
           },
         ],
+        'policy_atomic_group_definitions': [],
         'placeholders': [],
         'messages': {
           'mac_chrome_preferences': {
-            'text': '$1 preferences',
+            'text': 'Google Chrome preferences',
             'desc': 'blah'
           }
         }
       }'''
-    output = self.GetOutput(
-        policy_json,
-        {'_google_chrome': '1', 'mac_bundle_id': 'com.example.Test2'},
-        'plist_strings')
+    output = self.GetOutput(policy_json, {
+        '_google_chrome': '1',
+        'mac_bundle_id': 'com.example.Test2'
+    }, 'plist_strings')
     expected_output = (
         'Google_Chrome.pfm_title = "Google Chrome";\n'
         'Google_Chrome.pfm_description = "Google Chrome preferences";')

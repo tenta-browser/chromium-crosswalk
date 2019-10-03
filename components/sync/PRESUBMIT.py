@@ -13,19 +13,28 @@ import re
 
 # Some definitions don't follow all the conventions we want to enforce.
 # It's either difficult or impossible to fix this, so we ignore the problem(s).
-GRANDFATHERED_MODEL_TYPES = [
+EXCEPTION_MODEL_TYPES = [
+  # Grandfathered types:
   'UNSPECIFIED',  # Doesn't have a root tag or notification type.
   'TOP_LEVEL_FOLDER',  # Doesn't have a root tag or notification type.
   'AUTOFILL_WALLET_DATA',  # Root tag and model type string lack DATA suffix.
   'APP_SETTINGS',  # Model type string has inconsistent capitalization.
   'EXTENSION_SETTINGS',  # Model type string has inconsistent capitalization.
-  'SUPERVISED_USER_SETTINGS',  # Root tag and model type string replace
-                 # 'Supervised' with 'Managed'
-  'SUPERVISED_USERS',  # See previous.
-  'SUPERVISED_USER_WHITELISTS',  # See previous.
-  'SUPERVISED_USER_SHARED_SETTINGS',  # See previous.
   'PROXY_TABS',  # Doesn't have a root tag or notification type.
-  'NIGORI']  # Model type string is 'encryption keys'.
+  'NIGORI',  # Model type string is 'encryption keys'.
+  'SUPERVISED_USER_SETTINGS',  # Root tag and model type string replace
+                               # 'Supervised' with 'Managed'
+  'SUPERVISED_USER_WHITELISTS',  # See previous.
+
+  # Deprecated types:
+  'DEPRECATED_APP_NOTIFICATIONS',
+  'DEPRECATED_ARTICLES',
+  'DEPRECATED_SUPERVISED_USERS',
+  'DEPRECATED_SUPERVISED_USER_SHARED_SETTINGS',
+  'DEPRECATED_SYNCED_NOTIFICATIONS',
+  'DEPRECATED_SYNCED_NOTIFICATION_APP_INFO',
+  'DEPRECATED_WIFI_CREDENTIALS',
+  'DEPRECATED_EXPERIMENTS']
 
 # Root tags are used as prefixes when creating storage keys, so certain strings
 # are blacklisted in order to prevent prefix collision.
@@ -45,7 +54,7 @@ FIELD_NUMBER_PREFIX = 'sync_pb::EntitySpecifics::k'
 
 # Start and end regexes for finding the EntitySpecifics definition in
 # sync.proto.
-PROTO_DEFINITION_START_PATTERN = '^message EntitySpecifics'
+PROTO_DEFINITION_START_PATTERN = '^  oneof specifics_variant \{'
 PROTO_DEFINITION_END_PATTERN = '^\}'
 
 # Start and end regexes for finding the ModelTypeInfoMap definition
@@ -57,6 +66,7 @@ MODEL_TYPE_END_PATTERN = '^\};'
 # model_type.cc is where the ModelTypeInfoMap is
 # sync.proto is where the proto definitions for ModelTypes are.
 PROTO_FILE_PATH = './protocol/sync.proto'
+PROTO_FILE_NAME = 'sync.proto'
 MODEL_TYPE_FILE_NAME = 'model_type.cc'
 
 SYNC_SOURCE_FILES = (r'^components[\\/]sync[\\/].*\.(cc|h)$',)
@@ -108,7 +118,7 @@ def CheckModelTypeInfoMap(input_api, output_api, model_type_file):
         output_api, map_entry, proto_field_definitions))
     entry_problems.extend(CheckRootTagNotInBlackList(output_api, map_entry))
 
-    if map_entry.model_type not in GRANDFATHERED_MODEL_TYPES:
+    if map_entry.model_type not in EXCEPTION_MODEL_TYPES:
       entry_problems.extend(
         CheckModelTypeStringMatchesModelType(output_api, map_entry))
       entry_problems.extend(
@@ -162,8 +172,12 @@ def ParseModelTypeEntries(input_api, model_type_cc_path):
   end_pattern = input_api.re.compile(MODEL_TYPE_END_PATTERN)
   results, definition_strings, definition_lines = [], [], []
   inside_enum = False
-  current_line_number = 1
+  current_line_number = 0
   for line in file_contents.splitlines():
+    current_line_number += 1
+    if line.strip().startswith('//'):
+        # Ignore comments.
+        continue
     if start_pattern.match(line):
       inside_enum = True
       continue
@@ -177,7 +191,6 @@ def ParseModelTypeEntries(input_api, model_type_cc_path):
         results.append(ModelTypeEnumEntry(definition_strings, definition_lines))
         definition_strings = []
         definition_lines = []
-    current_line_number += 1
   return results
 
 
@@ -208,11 +221,10 @@ def ParseSyncProtoFieldIdentifiers(input_api, sync_proto_path):
       if '//' in line or len(split_proto_line) < 3:
         continue
 
-      field_typename = split_proto_line[1]
-      field_identifier = split_proto_line[2]
+      field_typename = split_proto_line[0]
+      field_identifier = split_proto_line[1]
       proto_field_definitions[field_typename] = field_identifier
   return proto_field_definitions
-
 
 def StripTrailingS(string):
   return string.rstrip('sS')
@@ -378,8 +390,9 @@ def CheckChanges(input_api, output_api):
   results = []
   results += CheckChangeLintsClean(input_api, output_api)
   for f in input_api.AffectedFiles():
-    if f.LocalPath().endswith(MODEL_TYPE_FILE_NAME):
-      return CheckModelTypeInfoMap(input_api, output_api, f)
+    if (f.LocalPath().endswith(MODEL_TYPE_FILE_NAME) or
+        f.LocalPath().endswith(PROTO_FILE_NAME)):
+      results += CheckModelTypeInfoMap(input_api, output_api, f)
   return results
 
 def CheckChangeOnUpload(input_api, output_api):

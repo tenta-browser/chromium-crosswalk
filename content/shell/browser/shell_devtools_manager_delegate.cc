@@ -13,7 +13,6 @@
 #include "base/command_line.h"
 #include "base/files/file_path.h"
 #include "base/macros.h"
-#include "base/memory/ptr_util.h"
 #include "base/strings/string_number_conversions.h"
 #include "base/strings/stringprintf.h"
 #include "base/strings/utf_string_conversions.h"
@@ -28,8 +27,8 @@
 #include "content/public/common/content_switches.h"
 #include "content/public/common/url_constants.h"
 #include "content/public/common/user_agent.h"
-#include "content/shell/browser/layout_test/secondary_test_window_observer.h"
 #include "content/shell/browser/shell.h"
+#include "content/shell/browser/web_test/secondary_test_window_observer.h"
 #include "content/shell/common/shell_content_client.h"
 #include "content/shell/common/shell_switches.h"
 #include "content/shell/grit/shell_resources.h"
@@ -51,11 +50,6 @@ namespace content {
 
 namespace {
 
-#if defined(OS_ANDROID)
-const char kFrontEndURL[] =
-    "http://chrome-devtools-frontend.appspot.com/serve_rev/%s/inspector.html";
-#endif
-
 const int kBackLog = 10;
 
 base::subtle::Atomic32 g_last_used_port;
@@ -70,8 +64,9 @@ class UnixDomainServerSocketFactory : public content::DevToolsSocketFactory {
   // content::DevToolsSocketFactory.
   std::unique_ptr<net::ServerSocket> CreateForHttpServer() override {
     std::unique_ptr<net::UnixDomainServerSocket> socket(
-        new net::UnixDomainServerSocket(base::Bind(&CanUserConnectToDevTools),
-                                        true /* use_abstract_namespace */));
+        new net::UnixDomainServerSocket(
+            base::BindRepeating(&CanUserConnectToDevTools),
+            true /* use_abstract_namespace */));
     if (socket->BindAndListen(socket_name_, kBackLog) != net::OK)
       return std::unique_ptr<net::ServerSocket>();
 
@@ -164,12 +159,8 @@ int ShellDevToolsManagerDelegate::GetHttpHandlerPort() {
 void ShellDevToolsManagerDelegate::StartHttpHandler(
     BrowserContext* browser_context) {
   std::string frontend_url;
-#if defined(OS_ANDROID)
-  frontend_url = base::StringPrintf(kFrontEndURL, GetWebKitRevision().c_str());
-#endif
   DevToolsAgentHost::StartRemoteDebuggingServer(
-      CreateSocketFactory(), frontend_url, browser_context->GetPath(),
-      base::FilePath());
+      CreateSocketFactory(), browser_context->GetPath(), base::FilePath());
 
   const base::CommandLine& command_line =
       *base::CommandLine::ForCurrentProcess();
@@ -190,13 +181,31 @@ ShellDevToolsManagerDelegate::ShellDevToolsManagerDelegate(
 ShellDevToolsManagerDelegate::~ShellDevToolsManagerDelegate() {
 }
 
+BrowserContext* ShellDevToolsManagerDelegate::GetDefaultBrowserContext() {
+  return browser_context_;
+}
+
+void ShellDevToolsManagerDelegate::ClientAttached(
+    content::DevToolsAgentHost* agent_host,
+    content::DevToolsAgentHostClient* client) {
+  // Make sure we don't receive notifications twice for the same client.
+  CHECK(clients_.find(client) == clients_.end());
+  clients_.insert(client);
+}
+
+void ShellDevToolsManagerDelegate::ClientDetached(
+    content::DevToolsAgentHost* agent_host,
+    content::DevToolsAgentHostClient* client) {
+  clients_.erase(client);
+}
+
 scoped_refptr<DevToolsAgentHost>
 ShellDevToolsManagerDelegate::CreateNewTarget(const GURL& url) {
   Shell* shell = Shell::CreateNewWindow(browser_context_,
                                         url,
                                         nullptr,
                                         gfx::Size());
-  if (switches::IsRunLayoutTestSwitchPresent())
+  if (switches::IsRunWebTestsSwitchPresent())
     SecondaryTestWindowObserver::CreateForWebContents(shell->web_contents());
   return DevToolsAgentHost::GetOrCreateFor(shell->web_contents());
 }
@@ -211,13 +220,11 @@ std::string ShellDevToolsManagerDelegate::GetDiscoveryPageHTML() {
 #endif
 }
 
-std::string ShellDevToolsManagerDelegate::GetFrontendResource(
-    const std::string& path) {
+bool ShellDevToolsManagerDelegate::HasBundledFrontendResources() {
 #if defined(OS_ANDROID)
-  return std::string();
-#else
-  return content::DevToolsFrontendHost::GetFrontendResource(path).as_string();
+  return false;
 #endif
+  return true;
 }
 
 }  // namespace content

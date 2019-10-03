@@ -8,14 +8,15 @@
 #include <string>
 #include <utility>
 
+#include "base/bind.h"
 #include "base/values.h"
 #include "content/public/renderer/v8_value_converter.h"
 #include "extensions/renderer/script_context.h"
-#include "third_party/WebKit/public/platform/WebCryptoAlgorithm.h"
-#include "third_party/WebKit/public/platform/WebCryptoAlgorithmParams.h"
-#include "third_party/WebKit/public/platform/WebString.h"
-#include "third_party/WebKit/public/platform/WebVector.h"
-#include "third_party/WebKit/public/web/WebCryptoNormalize.h"
+#include "third_party/blink/public/platform/web_crypto_algorithm.h"
+#include "third_party/blink/public/platform/web_crypto_algorithm_params.h"
+#include "third_party/blink/public/platform/web_string.h"
+#include "third_party/blink/public/platform/web_vector.h"
+#include "third_party/blink/public/web/web_crypto_normalize.h"
 
 namespace extensions {
 
@@ -94,10 +95,13 @@ std::unique_ptr<base::DictionaryValue> WebCryptoAlgorithmToBaseValue(
 }  // namespace
 
 PlatformKeysNatives::PlatformKeysNatives(ScriptContext* context)
-    : ObjectBackedNativeHandler(context) {
-  RouteFunction("NormalizeAlgorithm",
-                base::Bind(&PlatformKeysNatives::NormalizeAlgorithm,
-                           base::Unretained(this)));
+    : ObjectBackedNativeHandler(context) {}
+
+void PlatformKeysNatives::AddRoutes() {
+  RouteHandlerFunction(
+      "NormalizeAlgorithm",
+      base::BindRepeating(&PlatformKeysNatives::NormalizeAlgorithm,
+                          base::Unretained(this)));
 }
 
 void PlatformKeysNatives::NormalizeAlgorithm(
@@ -107,8 +111,9 @@ void PlatformKeysNatives::NormalizeAlgorithm(
   DCHECK(call_info[1]->IsString());
 
   blink::WebCryptoOperation operation;
-  if (!StringToWebCryptoOperation(*v8::String::Utf8Value(call_info[1]),
-                                  &operation)) {
+  if (!StringToWebCryptoOperation(
+          *v8::String::Utf8Value(call_info.GetIsolate(), call_info[1]),
+          &operation)) {
     return;
   }
 

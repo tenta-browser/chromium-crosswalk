@@ -25,11 +25,6 @@
 
 @implementation UIActivityImageSource
 
-- (instancetype)init {
-  NOTREACHED();
-  return nil;
-}
-
 - (instancetype)initWithImage:(UIImage*)image {
   DCHECK(image);
   self = [super init];
@@ -57,7 +52,7 @@
 
 @interface UIActivityURLSource () {
   NSString* _subject;
-  ThumbnailGeneratorBlock _thumbnailGenerator;
+  ChromeActivityItemThumbnailGenerator* _thumbnailGenerator;
 }
 
 // URL to be shared with share extensions.
@@ -72,15 +67,11 @@
 @synthesize shareURL = _shareURL;
 @synthesize passwordManagerURL = _passwordManagerURL;
 
-- (instancetype)init {
-  NOTREACHED();
-  return nil;
-}
-
 - (instancetype)initWithShareURL:(NSURL*)shareURL
               passwordManagerURL:(NSURL*)passwordManagerURL
                          subject:(NSString*)subject
-              thumbnailGenerator:(ThumbnailGeneratorBlock)thumbnailGenerator {
+              thumbnailGenerator:
+                  (ChromeActivityItemThumbnailGenerator*)thumbnailGenerator {
   DCHECK(shareURL);
   DCHECK(passwordManagerURL);
   DCHECK(subject);
@@ -161,7 +152,7 @@
                 (UIActivityViewController*)activityViewController
      thumbnailImageForActivityType:(UIActivityType)activityType
                      suggestedSize:(CGSize)size {
-  return _thumbnailGenerator(size);
+  return [_thumbnailGenerator thumbnailWithSize:size];
 }
 
 @end

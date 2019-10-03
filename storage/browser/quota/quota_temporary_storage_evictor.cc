@@ -10,14 +10,10 @@
 
 #include "base/auto_reset.h"
 #include "base/bind.h"
-#include "base/metrics/histogram_macros.h"
+#include "storage/browser/quota/quota_macros.h"
 #include "storage/browser/quota/quota_manager.h"
+#include "third_party/blink/public/mojom/quota/quota_types.mojom.h"
 #include "url/gurl.h"
-
-#define UMA_HISTOGRAM_MBYTES(name, sample)          \
-  UMA_HISTOGRAM_CUSTOM_COUNTS(                      \
-      (name), static_cast<int>((sample) / kMBytes), \
-      1, 10 * 1024 * 1024 /* 10TB */, 100)
 
 #define UMA_HISTOGRAM_MINUTES(name, sample) \
   UMA_HISTOGRAM_CUSTOM_TIMES(             \
@@ -38,7 +34,6 @@ namespace storage {
 QuotaTemporaryStorageEvictor::EvictionRoundStatistics::EvictionRoundStatistics()
     : in_round(false),
       is_initialized(false),
-      usage_overage_at_round(-1),
       diskspace_shortage_at_round(-1),
       usage_on_beginning_of_round(-1),
       usage_on_end_of_round(-1),
@@ -61,10 +56,9 @@ QuotaTemporaryStorageEvictor::~QuotaTemporaryStorageEvictor() {
 
 void QuotaTemporaryStorageEvictor::GetStatistics(
     std::map<std::string, int64_t>* statistics) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(statistics);
 
-  (*statistics)["errors-on-evicting-origin"] =
-      statistics_.num_errors_on_evicting_origin;
   (*statistics)["errors-on-getting-usage-and-quota"] =
       statistics_.num_errors_on_getting_usage_and_quota;
   (*statistics)["evicted-origins"] =
@@ -76,6 +70,7 @@ void QuotaTemporaryStorageEvictor::GetStatistics(
 }
 
 void QuotaTemporaryStorageEvictor::ReportPerRoundHistogram() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK(round_statistics_.in_round);
   DCHECK(round_statistics_.is_initialized);
 
@@ -85,8 +80,6 @@ void QuotaTemporaryStorageEvictor::ReportPerRoundHistogram() {
   if (!time_of_end_of_last_round_.is_null())
     UMA_HISTOGRAM_MINUTES("Quota.TimeDeltaOfEvictionRounds",
                           now - time_of_end_of_last_round_);
-  UMA_HISTOGRAM_MBYTES("Quota.UsageOverageOfTemporaryGlobalStorage",
-                       round_statistics_.usage_overage_at_round);
   UMA_HISTOGRAM_MBYTES("Quota.DiskspaceShortage",
                        round_statistics_.diskspace_shortage_at_round);
   UMA_HISTOGRAM_MBYTES("Quota.EvictedBytesPerRound",
@@ -97,14 +90,11 @@ void QuotaTemporaryStorageEvictor::ReportPerRoundHistogram() {
 }
 
 void QuotaTemporaryStorageEvictor::ReportPerHourHistogram() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   Statistics stats_in_hour(statistics_);
   stats_in_hour.subtract_assign(previous_statistics_);
   previous_statistics_ = statistics_;
 
-  UMA_HISTOGRAM_COUNTS_1M("Quota.ErrorsOnEvictingOriginPerHour",
-                          stats_in_hour.num_errors_on_evicting_origin);
-  UMA_HISTOGRAM_COUNTS_1M("Quota.ErrorsOnGettingUsageAndQuotaPerHour",
-                          stats_in_hour.num_errors_on_getting_usage_and_quota);
   UMA_HISTOGRAM_COUNTS_1M("Quota.EvictedOriginsPerHour",
                           stats_in_hour.num_evicted_origins);
   UMA_HISTOGRAM_COUNTS_1M("Quota.EvictionRoundsPerHour",
@@ -114,6 +104,7 @@ void QuotaTemporaryStorageEvictor::ReportPerHourHistogram() {
 }
 
 void QuotaTemporaryStorageEvictor::OnEvictionRoundStarted() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (round_statistics_.in_round)
     return;
   round_statistics_.in_round = true;
@@ -122,7 +113,7 @@ void QuotaTemporaryStorageEvictor::OnEvictionRoundStarted() {
 }
 
 void QuotaTemporaryStorageEvictor::OnEvictionRoundFinished() {
-  in_progress_eviction_origins_.clear();
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   // Check if skipped round
   if (round_statistics_.num_evicted_origins_in_round) {
@@ -149,7 +140,9 @@ void QuotaTemporaryStorageEvictor::Start() {
       this, &QuotaTemporaryStorageEvictor::ReportPerHourHistogram);
 }
 
-void QuotaTemporaryStorageEvictor::StartEvictionTimerWithDelay(int delay_ms) {
+void QuotaTemporaryStorageEvictor::StartEvictionTimerWithDelay(
+    int64_t delay_ms) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   if (eviction_timer_.IsRunning() || timer_disabled_for_testing_)
     return;
   eviction_timer_.Start(FROM_HERE, base::TimeDelta::FromMilliseconds(delay_ms),
@@ -157,25 +150,27 @@ void QuotaTemporaryStorageEvictor::StartEvictionTimerWithDelay(int delay_ms) {
 }
 
 void QuotaTemporaryStorageEvictor::ConsiderEviction() {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   OnEvictionRoundStarted();
   quota_eviction_handler_->GetEvictionRoundInfo(
-      base::Bind(&QuotaTemporaryStorageEvictor::OnGotEvictionRoundInfo,
-                 weak_factory_.GetWeakPtr()));
+      base::BindOnce(&QuotaTemporaryStorageEvictor::OnGotEvictionRoundInfo,
+                     weak_factory_.GetWeakPtr()));
 }
 
 void QuotaTemporaryStorageEvictor::OnGotEvictionRoundInfo(
-    QuotaStatusCode status,
+    blink::mojom::QuotaStatusCode status,
     const QuotaSettings& settings,
     int64_t available_space,
     int64_t total_space,
     int64_t current_usage,
     bool current_usage_is_complete) {
+  DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
   DCHECK_GE(current_usage, 0);
 
   // Note: if there is no storage pressure, |current_usage|
   // may not be fully calculated and may be 0.
 
-  if (status != kQuotaStatusOk)
+  if (status != blink::mojom::QuotaStatusCode::kOk)
     ++statistics_.num_errors_on_getting_usage_and_quota;
 
   int64_t usage_overage = std::max(
@@ -195,7 +190,6 @@ void QuotaTemporaryStorageEvictor::OnGotEvictionRoundInfo(
   }
 
   if (!round_statistics_.is_initialized) {
-    round_statistics_.usage_overage_at_round = usage_overage;
     round_statistics_.diskspace_shortage_at_round = diskspace_shortage;
     round_statistics_.usage_on_beginning_of_round = current_usage;
     round_statistics_.is_initialized = true;
@@ -203,15 +197,14 @@ void QuotaTemporaryStorageEvictor::OnGotEvictionRoundInfo(
   round_statistics_.usage_on_end_of_round = current_usage;
 
   int64_t amount_to_evict = std::max(usage_overage, diskspace_shortage);
-  if (status == kQuotaStatusOk && amount_to_evict > 0) {
+  if (status == blink::mojom::QuotaStatusCode::kOk && amount_to_evict > 0) {
     // Space is getting tight. Get the least recently used origin and continue.
     // TODO(michaeln): if the reason for eviction is low physical disk space,
     // make 'unlimited' origins subject to eviction too.
     quota_eviction_handler_->GetEvictionOrigin(
-        kStorageTypeTemporary, in_progress_eviction_origins_,
-        settings.pool_size,
-        base::Bind(&QuotaTemporaryStorageEvictor::OnGotEvictionOrigin,
-                   weak_factory_.GetWeakPtr()));
+        blink::mojom::StorageType::kTemporary, settings.pool_size,
+        base::BindOnce(&QuotaTemporaryStorageEvictor::OnGotEvictionOrigin,
+                       weak_factory_.GetWeakPtr()));
     return;
   }
 
@@ -228,25 +221,26 @@ void QuotaTemporaryStorageEvictor::OnGotEvictionRoundInfo(
   OnEvictionRoundFinished();
 }
 
-void QuotaTemporaryStorageEvictor::OnGotEvictionOrigin(const GURL& origin) {
+void QuotaTemporaryStorageEvictor::OnGotEvictionOrigin(
+    const base::Optional<url::Origin>& origin) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
-  if (origin.is_empty()) {
+  if (!origin.has_value()) {
     StartEvictionTimerWithDelay(interval_ms_);
     OnEvictionRoundFinished();
     return;
   }
 
-  in_progress_eviction_origins_.insert(origin);
+  DCHECK(!origin->GetURL().is_empty());
 
-  quota_eviction_handler_->EvictOriginData(origin, kStorageTypeTemporary,
-      base::Bind(
-          &QuotaTemporaryStorageEvictor::OnEvictionComplete,
-          weak_factory_.GetWeakPtr()));
+  quota_eviction_handler_->EvictOriginData(
+      *origin, blink::mojom::StorageType::kTemporary,
+      base::BindOnce(&QuotaTemporaryStorageEvictor::OnEvictionComplete,
+                     weak_factory_.GetWeakPtr()));
 }
 
 void QuotaTemporaryStorageEvictor::OnEvictionComplete(
-    QuotaStatusCode status) {
+    blink::mojom::QuotaStatusCode status) {
   DCHECK_CALLED_ON_VALID_SEQUENCE(sequence_checker_);
 
   // Just calling ConsiderEviction() or StartEvictionTimerWithDelay() here is
@@ -255,13 +249,12 @@ void QuotaTemporaryStorageEvictor::OnEvictionComplete(
   // origin permanently.  The evictor skips origins which had deletion errors
   // a few times.
 
-  if (status == kQuotaStatusOk) {
+  if (status == blink::mojom::QuotaStatusCode::kOk) {
     ++statistics_.num_evicted_origins;
     ++round_statistics_.num_evicted_origins_in_round;
     // We many need to get rid of more space so reconsider immediately.
     ConsiderEviction();
   } else {
-    ++statistics_.num_errors_on_evicting_origin;
     // Sleep for a while and retry again until we see too many errors.
     StartEvictionTimerWithDelay(interval_ms_);
     OnEvictionRoundFinished();

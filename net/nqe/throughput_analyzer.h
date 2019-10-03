@@ -7,11 +7,14 @@
 
 #include <stdint.h>
 
+#include <unordered_map>
+#include <unordered_set>
+
 #include "base/callback.h"
-#include "base/containers/hash_tables.h"
 #include "base/macros.h"
 #include "base/memory/ref_counted.h"
-#include "base/threading/thread_checker.h"
+#include "base/optional.h"
+#include "base/sequence_checker.h"
 #include "base/time/time.h"
 #include "net/base/net_export.h"
 #include "net/log/net_log_with_source.h"
@@ -28,7 +31,7 @@ class TickClock;
 namespace net {
 
 class NetworkQualityEstimatorParams;
-class NetworkQualityProvider;
+class NetworkQualityEstimator;
 class URLRequest;
 
 namespace nqe {
@@ -59,11 +62,11 @@ class NET_EXPORT_PRIVATE ThroughputAnalyzer {
   // estimation.
   // Virtualized for testing.
   ThroughputAnalyzer(
-      const NetworkQualityProvider* network_quality_provider,
+      const NetworkQualityEstimator* network_quality_estimator,
       const NetworkQualityEstimatorParams* params,
       scoped_refptr<base::SingleThreadTaskRunner> task_runner,
       ThroughputObservationCallback throughput_observation_callback,
-      base::TickClock* tick_clock,
+      const base::TickClock* tick_clock,
       const NetLogWithSource& net_log);
   virtual ~ThroughputAnalyzer();
 
@@ -75,6 +78,13 @@ class NET_EXPORT_PRIVATE ThroughputAnalyzer {
 
   // Notifies |this| that |request| has completed.
   void NotifyRequestCompleted(const URLRequest& request);
+
+  // Notifies |this| that |request| has an expected response body size in octets
+  // (8-bit bytes). |expected_content_size| is an estimate of total body length
+  // based on the Content-Length header field when available or a general size
+  // estimate when the Content-Length is not provided.
+  void NotifyExpectedResponseContentSize(const URLRequest& request,
+                                         int64_t expected_content_size);
 
   // Notifies |this| of a change in connection type.
   void OnConnectionTypeChanged();
@@ -89,13 +99,7 @@ class NET_EXPORT_PRIVATE ThroughputAnalyzer {
   bool IsCurrentlyTrackingThroughput() const;
 
   // Overrides the tick clock used by |this| for testing.
-  void SetTickClockForTesting(base::TickClock* tick_clock);
-
- protected:
-  // Exposed for testing.
-  bool disable_throughput_measurements() const {
-    return disable_throughput_measurements_;
-  }
+  void SetTickClockForTesting(const base::TickClock* tick_clock);
 
   // Returns the number of bits received by Chromium so far. The count may not
   // start from zero, so the caller should only look at difference from a prior
@@ -106,24 +110,56 @@ class NET_EXPORT_PRIVATE ThroughputAnalyzer {
 
   // Returns the number of in-flight requests that can be used for computing
   // throughput.
-  size_t CountInFlightRequests() const;
+  size_t CountActiveInFlightRequests() const;
+
+  // Returns the total number of in-flight requests. This also includes hanging
+  // requests.
+  size_t CountTotalInFlightRequests() const;
+
+  // Returns the sum of expected response content size in bytes for all inflight
+  // requests. Request with an unknown response content size have the default
+  // response content size.
+  int64_t CountTotalContentSizeBytes() const;
+
+ protected:
+  // Exposed for testing.
+  bool disable_throughput_measurements_for_testing() const {
+    return disable_throughput_measurements_;
+  }
 
   // Removes hanging requests from |requests_|. If any hanging requests are
   // detected to be in-flight, the observation window is ended. Protected for
   // testing.
   void EraseHangingRequests(const URLRequest& request);
 
+  // Returns true if the current throughput observation window is heuristically
+  // determined to contain hanging requests.
+  bool IsHangingWindow(int64_t bits_received,
+                       base::TimeDelta duration,
+                       double downstream_kbps_double) const;
+
  private:
   friend class TestThroughputAnalyzer;
 
+  // Mapping from URL request to the expected content size of the response body
+  // for that request. The map tracks all inflight requests. If the expected
+  // content size is not available, the value is set to the default value.
+  typedef std::unordered_map<const URLRequest*, int64_t> ResponseContentSizes;
+
   // Mapping from URL request to the last time data was received for that
   // request.
-  typedef base::hash_map<const URLRequest*, base::TimeTicks> Requests;
+  typedef std::unordered_map<const URLRequest*, base::TimeTicks> Requests;
 
   // Set of URL requests to hold the requests that reduce the accuracy of
   // throughput computation. These requests are not used in throughput
   // computation.
-  typedef base::hash_set<const URLRequest*> AccuracyDegradingRequests;
+  typedef std::unordered_set<const URLRequest*> AccuracyDegradingRequests;
+
+  // Updates the response content size map for |request|. Also keeps the total
+  // response content size counter updated. Adds an new entry if there is no
+  // matching record in the map.
+  void UpdateResponseContentSize(const URLRequest* request,
+                                 int64_t response_size);
 
   // Returns true if downstream throughput can be recorded. In that case,
   // |downstream_kbps| is set to the computed downstream throughput (in
@@ -156,7 +192,7 @@ class NET_EXPORT_PRIVATE ThroughputAnalyzer {
   void BoundRequestsSize();
 
   // Guaranteed to be non-null during the duration of |this|.
-  const NetworkQualityProvider* network_quality_provider_;
+  const NetworkQualityEstimator* network_quality_estimator_;
 
   // Guaranteed to be non-null during the duration of |this|.
   const NetworkQualityEstimatorParams* params_;
@@ -167,7 +203,7 @@ class NET_EXPORT_PRIVATE ThroughputAnalyzer {
   ThroughputObservationCallback throughput_observation_callback_;
 
   // Guaranteed to be non-null during the lifetime of |this|.
-  base::TickClock* tick_clock_;
+  const base::TickClock* tick_clock_;
 
   // Time when last connection change was observed.
   base::TimeTicks last_connection_change_;
@@ -189,6 +225,13 @@ class NET_EXPORT_PRIVATE ThroughputAnalyzer {
   // throughput computation. These requests are used in throughput computation.
   Requests requests_;
 
+  // Container that holds inflight request sizes. These requests are used in
+  // computing the total of response content size for all inflight requests.
+  ResponseContentSizes response_content_sizes_;
+
+  // The running total of response content size for all inflight requests.
+  int64_t total_response_content_size_;
+
   // Last time when the check for hanging requests was run.
   base::TimeTicks last_hanging_request_check_;
 
@@ -202,7 +245,7 @@ class NET_EXPORT_PRIVATE ThroughputAnalyzer {
   // network quality. Set to true only for tests.
   bool use_localhost_requests_for_tests_;
 
-  base::ThreadChecker thread_checker_;
+  SEQUENCE_CHECKER(sequence_checker_);
 
   NetLogWithSource net_log_;
 

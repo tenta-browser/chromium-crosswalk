@@ -14,60 +14,57 @@
  *     given.
  */
 function waitForFunctionResult(funcName, filename, expectedResult) {
+  var caller = getCaller();
   return repeatUntil(function() {
     return remoteCallVideoPlayer.callRemoteTestUtil(funcName, null, [filename])
         .then(function(result) {
-          if (result === expectedResult)
+          if (result === expectedResult) {
             return true;
-          return pending('Waiting for %s return %s.', funcName, expectedResult);
+          }
+          return pending(
+              caller, 'Waiting for %s return %s.', funcName, expectedResult);
         });
   });
 }
 
 /**
- * The openSingleImage test for Downloads.
- * @return {Promise} Promise to be fulfilled with on success.
+ * Confirms that native media keys are dispatched correctly.
+ * @return {Promise} Promise to be fulfilled on success.
  */
-testcase.clickControlButtons = function() {
-  var openVideo = openSingleVideo('local', 'downloads', ENTRIES.world);
-  var appId;
-  return openVideo.then(function(args) {
-    appId = args[0];
-    // Video player starts playing given file automatically.
-    return waitForFunctionResult('isPlaying', 'world.ogv', true);
-  }).then(function() {
-    // Play will finish in 2 seconds (world.ogv is 2-second short movie.)
-    return waitForFunctionResult('isPlaying', 'world.ogv', false);
-  }).then(function() {
-    // Conform that clicking play button will re-play the video.
-    return remoteCallVideoPlayer.callRemoteTestUtil(
-        'fakeMouseClick', appId, ['.media-button.play']); }).then(function() {
-    return waitForFunctionResult('isPlaying', 'world.ogv', true);
-  }).then(function() {
-    // Confirm that clicking volume button mutes the video.
-    return remoteCallVideoPlayer.callRemoteTestUtil(
-        'fakeMouseClick', appId, ['.media-button.sound']);
-  }).then(function() {
-    return waitForFunctionResult('isMuted', 'world.ogv', true);
-  }).then(function() {
-    // Confirm that clicking volume button again unmutes the video.
-    return remoteCallVideoPlayer.callRemoteTestUtil(
-        'fakeMouseClick', appId, ['.media-button.sound']);
-  }).then(function() {
-    return waitForFunctionResult('isMuted', 'world.ogv', false);
-  }).then(function() {
-    // Confirm that clicking fullscreen button enables fullscreen mode.
-    return remoteCallVideoPlayer.callRemoteTestUtil(
-        'fakeMouseClick', appId, ['.media-button.fullscreen']);
-  }).then(function() {
-    return remoteCallVideoPlayer.waitForElement(appId,
-        '#controls[fullscreen]');
-  }).then(function() {
-    // Confirm that clicking fullscreen-exit button disables fullscreen mode.
-    return remoteCallVideoPlayer.callRemoteTestUtil(
-        'fakeMouseClick', appId, ['.media-button.fullscreen']);
-  }).then(function() {
-    return remoteCallVideoPlayer.waitForElement(appId,
-        '#controls:not([fullscreen])');
-  });
+testcase.mediaKeyNative = function() {
+  const openVideo = openVideos('local', 'downloads', [ENTRIES.video]);
+  let appId;
+  function ensurePlaying() {
+    return waitForFunctionResult('isPlaying', 'video_long.ogv', true);
+  }
+  function ensurePaused() {
+    return waitForFunctionResult('isPlaying', 'video_long.ogv', false);
+  }
+  function sendMediaKey() {
+    return sendTestMessage({name: 'dispatchNativeMediaKey'}).then((result) => {
+      chrome.test.assertEq(
+          result, 'mediaKeyDispatched', 'Key dispatch failure');
+    });
+  }
+  function pauseAndUnpause() {
+    // Video player should be playing when this is called,
+    return Promise.resolve()
+        .then(ensurePlaying)
+        .then(sendMediaKey)
+        .then(ensurePaused)
+        .then(sendMediaKey)
+        .then(ensurePlaying);
+  }
+  function enableTabletMode() {
+    return sendTestMessage({name: 'enableTabletMode'}).then((result) => {
+      chrome.test.assertEq(result, 'tabletModeEnabled');
+    });
+  }
+  return openVideo
+      .then((args) => {
+        appId = args[0];
+      })
+      .then(pauseAndUnpause)
+      .then(enableTabletMode)
+      .then(pauseAndUnpause);
 };

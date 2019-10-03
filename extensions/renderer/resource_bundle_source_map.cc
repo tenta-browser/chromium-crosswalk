@@ -5,6 +5,7 @@
 #include "extensions/renderer/resource_bundle_source_map.h"
 
 #include "base/logging.h"
+#include "base/stl_util.h"
 #include "base/strings/string_piece.h"
 #include "extensions/renderer/static_v8_external_one_byte_string_resource.h"
 #include "third_party/zlib/google/compression_utils.h"
@@ -17,16 +18,16 @@ namespace {
 v8::Local<v8::String> ConvertString(v8::Isolate* isolate,
                                     const base::StringPiece& string) {
   // v8 takes ownership of the StaticV8ExternalOneByteStringResource (see
-  // v8::String::NewExternal()).
-  return v8::String::NewExternal(
-      isolate, new StaticV8ExternalOneByteStringResource(string));
+  // v8::String::NewExternalOneByte()).
+  return v8::String::NewExternalOneByte(
+             isolate, new StaticV8ExternalOneByteStringResource(string))
+      .FromMaybe(v8::Local<v8::String>());
 }
 
 }  // namespace
 
 ResourceBundleSourceMap::ResourceInfo::ResourceInfo() = default;
-ResourceBundleSourceMap::ResourceInfo::ResourceInfo(int in_id, bool in_gzipped)
-    : id(in_id), gzipped(in_gzipped) {}
+ResourceBundleSourceMap::ResourceInfo::ResourceInfo(int in_id) : id(in_id) {}
 ResourceBundleSourceMap::ResourceInfo::ResourceInfo(ResourceInfo&& other) =
     default;
 
@@ -44,9 +45,8 @@ ResourceBundleSourceMap::~ResourceBundleSourceMap() {
 }
 
 void ResourceBundleSourceMap::RegisterSource(const char* const name,
-                                             int resource_id,
-                                             bool gzipped) {
-  resource_map_[name] = {resource_id, gzipped};
+                                             int resource_id) {
+  resource_map_.emplace(name, resource_id);
 }
 
 v8::Local<v8::String> ResourceBundleSourceMap::GetSource(
@@ -69,7 +69,8 @@ v8::Local<v8::String> ResourceBundleSourceMap::GetSource(
     return v8::Local<v8::String>();
   }
 
-  if (info.gzipped) {
+  bool is_gzipped = resource_bundle_->IsGzipped(info.id);
+  if (is_gzipped) {
     info.cached = std::make_unique<std::string>();
     uint32_t size = compression::GetUncompressedSize(resource);
     info.cached->resize(size);
@@ -88,7 +89,7 @@ v8::Local<v8::String> ResourceBundleSourceMap::GetSource(
 }
 
 bool ResourceBundleSourceMap::Contains(const std::string& name) const {
-  return !!resource_map_.count(name);
+  return base::Contains(resource_map_, name);
 }
 
 }  // namespace extensions

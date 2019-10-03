@@ -4,6 +4,11 @@
 
 #include "services/preferences/public/cpp/pref_service_factory.h"
 
+#include <memory>
+#include <utility>
+
+#include "base/bind.h"
+#include "base/bind_helpers.h"
 #include "base/callback_helpers.h"
 #include "components/prefs/overlay_user_pref_store.h"
 #include "components/prefs/persistent_pref_store.h"
@@ -14,7 +19,7 @@
 #include "services/preferences/public/cpp/persistent_pref_store_client.h"
 #include "services/preferences/public/cpp/pref_registry_serializer.h"
 #include "services/preferences/public/cpp/pref_store_client.h"
-#include "services/preferences/public/interfaces/preferences.mojom.h"
+#include "services/preferences/public/mojom/preferences.mojom.h"
 #include "services/service_manager/public/cpp/connector.h"
 
 namespace prefs {
@@ -37,12 +42,10 @@ class RefCountedInterfacePtr
   mojo::InterfacePtr<Interface> ptr_;
 };
 
-void DoNothingHandleReadError(PersistentPrefStore::PrefReadError error) {}
-
 scoped_refptr<PrefStore> CreatePrefStoreClient(
     PrefValueStore::PrefStoreType store_type,
-    std::unordered_map<PrefValueStore::PrefStoreType,
-                       mojom::PrefStoreConnectionPtr>* connections) {
+    base::flat_map<PrefValueStore::PrefStoreType,
+                   mojom::PrefStoreConnectionPtr>* connections) {
   auto pref_store_it = connections->find(store_type);
   if (pref_store_it != connections->end()) {
     return base::MakeRefCounted<PrefStoreClient>(
@@ -78,8 +81,8 @@ void OnConnect(
     mojom::PersistentPrefStoreConnectionPtr persistent_pref_store_connection,
     mojom::IncognitoPersistentPrefStoreConnectionPtr incognito_connection,
     std::vector<mojom::PrefRegistrationPtr> defaults,
-    std::unordered_map<PrefValueStore::PrefStoreType,
-                       mojom::PrefStoreConnectionPtr> connections) {
+    base::flat_map<PrefValueStore::PrefStoreType, mojom::PrefStoreConnectionPtr>
+        connections) {
   scoped_refptr<PrefStore> managed_prefs =
       CreatePrefStoreClient(PrefValueStore::MANAGED_STORE, &connections);
   scoped_refptr<PrefStore> supervised_user_prefs = CreatePrefStoreClient(
@@ -102,25 +105,27 @@ void OnConnect(
         persistent_pref_store.get(),
         new PersistentPrefStoreClient(
             std::move(incognito_connection->pref_store_connection)));
-    for (const auto& overlay_pref_name :
-         incognito_connection->overlay_pref_names) {
-      overlay_pref_store->RegisterOverlayPref(overlay_pref_name);
+    for (const auto& persistent_pref_name :
+         incognito_connection->persistent_pref_names) {
+      overlay_pref_store->RegisterPersistentPref(persistent_pref_name);
     }
     persistent_pref_store = overlay_pref_store;
   }
-  PrefNotifierImpl* pref_notifier = new PrefNotifierImpl();
-  auto* pref_value_store = new PrefValueStore(
+  auto pref_notifier = std::make_unique<PrefNotifierImpl>();
+  auto pref_value_store = std::make_unique<PrefValueStore>(
       managed_prefs.get(), supervised_user_prefs.get(), extension_prefs.get(),
       command_line_prefs.get(), persistent_pref_store.get(),
-      recommended_prefs.get(), pref_registry->defaults().get(), pref_notifier);
+      recommended_prefs.get(), pref_registry->defaults().get(),
+      pref_notifier.get());
   auto pref_service = std::make_unique<PrefService>(
-      pref_notifier, pref_value_store, persistent_pref_store.get(),
-      pref_registry.get(), base::Bind(&DoNothingHandleReadError), true);
+      std::move(pref_notifier), std::move(pref_value_store),
+      persistent_pref_store.get(), pref_registry.get(), base::DoNothing(),
+      true);
   switch (pref_service->GetAllPrefStoresInitializationStatus()) {
     case PrefService::INITIALIZATION_STATUS_WAITING:
-      pref_service->AddPrefInitObserver(base::Bind(&OnPrefServiceInit,
-                                                   base::Passed(&pref_service),
-                                                   base::Passed(&callback)));
+      pref_service->AddPrefInitObserver(
+          base::BindOnce(&OnPrefServiceInit, base::Passed(&pref_service),
+                         base::Passed(&callback)));
       break;
     case PrefService::INITIALIZATION_STATUS_SUCCESS:
     case PrefService::INITIALIZATION_STATUS_CREATED_NEW_PREF_STORE:

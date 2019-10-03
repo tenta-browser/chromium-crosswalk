@@ -18,11 +18,13 @@
 #include "base/rand_util.h"
 #include "base/strings/utf_string_conversions.h"
 #include "base/time/time.h"
+#include "base/timer/timer.h"
 #include "chromeos/geolocation/geoposition.h"
 #include "chromeos/geolocation/simple_geolocation_provider.h"
 #include "chromeos/timezone/timezone_provider.h"
 #include "components/prefs/pref_registry_simple.h"
 #include "components/prefs/pref_service.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
 
 namespace chromeos {
 
@@ -203,8 +205,8 @@ void TZRequest::OnLocationResolved(const Geoposition& position,
                                    bool server_error,
                                    const base::TimeDelta elapsed) {
   base::ScopedClosureRunner on_request_finished(
-      base::Bind(&TimeZoneResolver::TimeZoneResolverImpl::RequestIsFinished,
-                 base::Unretained(resolver_)));
+      base::BindOnce(&TimeZoneResolver::TimeZoneResolverImpl::RequestIsFinished,
+                     base::Unretained(resolver_)));
 
   // Ignore invalid position.
   if (!position.Valid())
@@ -232,8 +234,8 @@ void TZRequest::OnTimezoneResolved(
     std::unique_ptr<TimeZoneResponseData> timezone,
     bool server_error) {
   base::ScopedClosureRunner on_request_finished(
-      base::Bind(&TimeZoneResolver::TimeZoneResolverImpl::RequestIsFinished,
-                 base::Unretained(resolver_)));
+      base::BindOnce(&TimeZoneResolver::TimeZoneResolverImpl::RequestIsFinished,
+                     base::Unretained(resolver_)));
 
   DCHECK(timezone);
   VLOG(1) << "Refreshed local timezone={" << timezone->ToStringForDebug()
@@ -260,17 +262,16 @@ TimeZoneResolver::TimeZoneResolverImpl::TimeZoneResolverImpl(
     const TimeZoneResolver* resolver)
     : resolver_(resolver),
       geolocation_provider_(
-          resolver->context().get(),
+          resolver->shared_url_loader_factory(),
           SimpleGeolocationProvider::DefaultGeolocationProviderURL()),
-      timezone_provider_(resolver->context().get(),
+      timezone_provider_(resolver->shared_url_loader_factory(),
                          DefaultTimezoneProviderURL()),
       requests_count_(0),
       weak_ptr_factory_(this) {
   DCHECK(!resolver_->apply_timezone().is_null());
   DCHECK(!resolver_->delay_network_call().is_null());
 
-  base::PowerMonitor* power_monitor = base::PowerMonitor::Get();
-  power_monitor->AddObserver(this);
+  base::PowerMonitor::AddObserver(this);
 
   const int64_t last_refresh_at_raw =
       resolver_->local_state()->GetInt64(kLastTimeZoneRefreshTime);
@@ -287,9 +288,7 @@ TimeZoneResolver::TimeZoneResolverImpl::TimeZoneResolverImpl(
 }
 
 TimeZoneResolver::TimeZoneResolverImpl::~TimeZoneResolverImpl() {
-  base::PowerMonitor* power_monitor = base::PowerMonitor::Get();
-  if (power_monitor)
-    power_monitor->RemoveObserver(this);
+  base::PowerMonitor::RemoveObserver(this);
 }
 
 void TimeZoneResolver::TimeZoneResolverImpl::Start() {
@@ -397,13 +396,13 @@ TimeZoneResolver::Delegate::~Delegate() = default;
 
 TimeZoneResolver::TimeZoneResolver(
     Delegate* delegate,
-    scoped_refptr<net::URLRequestContextGetter> context,
+    scoped_refptr<network::SharedURLLoaderFactory> factory,
     const GURL& url,
     const ApplyTimeZoneCallback& apply_timezone,
     const DelayNetworkCallClosure& delay_network_call,
     PrefService* local_state)
     : delegate_(delegate),
-      context_(context),
+      shared_url_loader_factory_(std::move(factory)),
       url_(url),
       apply_timezone_(apply_timezone),
       delay_network_call_(delay_network_call),
@@ -451,6 +450,11 @@ bool TimeZoneResolver::ShouldSendWiFiGeolocationData() const {
 
 bool TimeZoneResolver::ShouldSendCellularGeolocationData() const {
   return delegate_->ShouldSendCellularGeolocationData();
+}
+
+scoped_refptr<network::SharedURLLoaderFactory>
+TimeZoneResolver::shared_url_loader_factory() const {
+  return shared_url_loader_factory_;
 }
 
 }  // namespace chromeos

@@ -5,9 +5,12 @@
 #include "android_webview/browser/aw_variations_service_client.h"
 
 #include "base/bind.h"
-#include "base/threading/thread_restrictions.h"
+#include "base/threading/scoped_blocking_call.h"
 #include "build/build_config.h"
-#include "components/version_info/version_info.h"
+#include "components/version_info/android/channel_getter.h"
+#include "services/network/public/cpp/shared_url_loader_factory.h"
+
+using version_info::Channel;
 
 namespace android_webview {
 namespace {
@@ -15,8 +18,9 @@ namespace {
 // Gets the version number to use for variations seed simulation. Must be called
 // on a thread where IO is allowed.
 base::Version GetVersionForSimulation() {
-  base::AssertBlockingAllowed();
-  return base::Version(version_info::GetVersionNumber());
+  base::ScopedBlockingCall scoped_blocking_call(FROM_HERE,
+                                                base::BlockingType::MAY_BLOCK);
+  return version_info::GetVersion();
 }
 
 }  // namespace
@@ -25,17 +29,13 @@ AwVariationsServiceClient::AwVariationsServiceClient() {}
 
 AwVariationsServiceClient::~AwVariationsServiceClient() {}
 
-std::string AwVariationsServiceClient::GetApplicationLocale() {
-  return std::string();
-}
-
 base::Callback<base::Version(void)>
 AwVariationsServiceClient::GetVersionForSimulationCallback() {
-  return base::Bind(&GetVersionForSimulation);
+  return base::BindRepeating(&GetVersionForSimulation);
 }
 
-net::URLRequestContextGetter*
-AwVariationsServiceClient::GetURLRequestContext() {
+scoped_refptr<network::SharedURLLoaderFactory>
+AwVariationsServiceClient::GetURLLoaderFactory() {
   return nullptr;
 }
 
@@ -44,10 +44,8 @@ AwVariationsServiceClient::GetNetworkTimeTracker() {
   return nullptr;
 }
 
-version_info::Channel AwVariationsServiceClient::GetChannel() {
-  // TODO(kmilka): Investigate the proper value to return here so experiments
-  // are correctly filtered.
-  return version_info::Channel::UNKNOWN;
+Channel AwVariationsServiceClient::GetChannel() {
+  return version_info::android::GetChannel();
 }
 
 bool AwVariationsServiceClient::OverridesRestrictParameter(

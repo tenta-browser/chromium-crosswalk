@@ -23,7 +23,7 @@ import org.chromium.chrome.browser.tab.Tab;
 import org.chromium.chrome.test.ChromeActivityTestRule;
 import org.chromium.chrome.test.ChromeJUnit4ClassRunner;
 import org.chromium.chrome.test.util.browser.TabTitleObserver;
-import org.chromium.content.browser.test.util.DOMUtils;
+import org.chromium.content_public.browser.test.util.DOMUtils;
 import org.chromium.net.test.EmbeddedTestServer;
 
 import java.util.concurrent.TimeoutException;
@@ -32,8 +32,7 @@ import java.util.concurrent.TimeoutException;
  *  Simple tests of html5 video.
  */
 @RunWith(ChromeJUnit4ClassRunner.class)
-@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE,
-        ChromeActivityTestRule.DISABLE_NETWORK_PREDICTION_FLAG})
+@CommandLineFlags.Add({ChromeSwitches.DISABLE_FIRST_RUN_EXPERIENCE})
 public class VideoTest {
     @Rule
     public ChromeActivityTestRule<ChromeActivity> mActivityTestRule =
@@ -56,7 +55,7 @@ public class VideoTest {
             Assert.assertEquals("ready_to_play", tab.getTitle());
 
             titleObserver = new TabTitleObserver(tab, "ended");
-            DOMUtils.clickNode(tab.getContentViewCore(), "button1");
+            DOMUtils.clickNode(tab.getWebContents(), "button1");
             // Now the video will play for 5 secs.
             // Makes sure that the video ends and title was changed.
             titleObserver.waitForTitleUpdate(15);

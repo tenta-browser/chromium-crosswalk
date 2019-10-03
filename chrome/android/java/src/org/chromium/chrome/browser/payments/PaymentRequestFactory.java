@@ -4,22 +4,38 @@
 
 package org.chromium.chrome.browser.payments;
 
+import android.support.annotation.Nullable;
+
+import org.chromium.chrome.browser.ChromeActivity;
 import org.chromium.chrome.browser.ChromeFeatureList;
+import org.chromium.chrome.browser.preferences.Pref;
+import org.chromium.chrome.browser.preferences.PrefServiceBridge;
+import org.chromium.chrome.browser.tabmodel.TabModel;
+import org.chromium.chrome.browser.tabmodel.TabModelUtils;
+import org.chromium.components.payments.ErrorStrings;
+import org.chromium.components.payments.OriginSecurityChecker;
 import org.chromium.content_public.browser.RenderFrameHost;
+import org.chromium.content_public.browser.WebContents;
 import org.chromium.mojo.system.MojoException;
 import org.chromium.payments.mojom.CanMakePaymentQueryResult;
+import org.chromium.payments.mojom.HasEnrolledInstrumentQueryResult;
 import org.chromium.payments.mojom.PaymentDetails;
 import org.chromium.payments.mojom.PaymentErrorReason;
 import org.chromium.payments.mojom.PaymentMethodData;
 import org.chromium.payments.mojom.PaymentOptions;
 import org.chromium.payments.mojom.PaymentRequest;
 import org.chromium.payments.mojom.PaymentRequestClient;
+import org.chromium.payments.mojom.PaymentValidationErrors;
 import org.chromium.services.service_manager.InterfaceFactory;
 
 /**
  * Creates instances of PaymentRequest.
  */
 public class PaymentRequestFactory implements InterfaceFactory<PaymentRequest> {
+    // Tests can inject behaviour on future PaymentRequests via these objects.
+    public static PaymentRequestImpl.Delegate sDelegateForTest;
+    public static PaymentRequestImpl.NativeObserverForTest sNativeObserverForTest;
+
     private final RenderFrameHost mRenderFrameHost;
 
     /**
@@ -36,9 +52,10 @@ public class PaymentRequestFactory implements InterfaceFactory<PaymentRequest> {
         }
 
         @Override
-        public void show() {
+        public void show(boolean isUserGesture, boolean waitForUpdatedDetails) {
             if (mClient != null) {
-                mClient.onError(PaymentErrorReason.USER_CANCEL);
+                mClient.onError(
+                        PaymentErrorReason.USER_CANCEL, ErrorStrings.WEB_PAYMENT_API_DISABLED);
                 mClient.close();
             }
         }
@@ -56,9 +73,20 @@ public class PaymentRequestFactory implements InterfaceFactory<PaymentRequest> {
         public void complete(int result) {}
 
         @Override
-        public void canMakePayment() {
+        public void retry(PaymentValidationErrors errors) {}
+
+        @Override
+        public void canMakePayment(boolean legacyMode) {
             if (mClient != null) {
                 mClient.onCanMakePayment(CanMakePaymentQueryResult.CANNOT_MAKE_PAYMENT);
+            }
+        }
+
+        @Override
+        public void hasEnrolledInstrument(boolean perMethodQuota) {
+            if (mClient != null) {
+                mClient.onHasEnrolledInstrument(
+                        HasEnrolledInstrumentQueryResult.HAS_NO_ENROLLED_INSTRUMENT);
             }
         }
 
@@ -67,6 +95,39 @@ public class PaymentRequestFactory implements InterfaceFactory<PaymentRequest> {
 
         @Override
         public void onConnectionError(MojoException e) {}
+    }
+
+    /**
+     * Production implementation of the PaymentRequestImpl's Delegate. Gives true answers
+     * about the system.
+     */
+    public static class PaymentRequestDelegateImpl implements PaymentRequestImpl.Delegate {
+        @Override
+        public boolean isIncognito(@Nullable ChromeActivity activity) {
+            return activity != null && activity.getCurrentTabModel().isIncognito();
+        }
+
+        @Override
+        public String getInvalidSslCertificateErrorMessage(WebContents webContents) {
+            if (!OriginSecurityChecker.isSchemeCryptographic(webContents.getLastCommittedUrl()))
+                return null;
+            return SslValidityChecker.getInvalidSslCertificateErrorMessage(webContents);
+        }
+
+        @Override
+        public boolean isWebContentsActive(TabModel model, WebContents webContents) {
+            return TabModelUtils.getCurrentWebContents(model) == webContents;
+        }
+
+        @Override
+        public boolean prefsCanMakePayment() {
+            return PrefServiceBridge.getInstance().getBoolean(Pref.CAN_MAKE_PAYMENT_ENABLED);
+        }
+
+        @Override
+        public boolean skipUiForBasicCard() {
+            return false; // Only tests do this.
+        }
     }
 
     /**
@@ -86,6 +147,12 @@ public class PaymentRequestFactory implements InterfaceFactory<PaymentRequest> {
 
         if (mRenderFrameHost == null) return new InvalidPaymentRequest();
 
-        return new PaymentRequestImpl(mRenderFrameHost);
+        PaymentRequestImpl.Delegate delegate;
+        if (sDelegateForTest != null) {
+            delegate = sDelegateForTest;
+        } else {
+            delegate = new PaymentRequestDelegateImpl();
+        }
+        return new PaymentRequestImpl(mRenderFrameHost, delegate, sNativeObserverForTest);
     }
 }
