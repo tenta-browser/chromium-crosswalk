@@ -900,7 +900,7 @@ public class NetworkChangeNotifierAutoDetect extends BroadcastReceiver {
         // TODO(iotto): finetune so we don't end up with CONNECTION_UNKNOWN
         if ( usable) {
             final NetworkInfo netInfo = mConnectivityManagerDelegate.getActiveNetworkInfo();
-            if ( netInfo ) {
+            if ( netInfo != null ) {
                 mObserver.onConnectionTypeChanged(convertToConnectionType(netInfo.getType(), netInfo.getSubtype()));
             }
         } else {
