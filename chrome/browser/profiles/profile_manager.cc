@@ -1041,14 +1041,6 @@ void ProfileManager::InitProfileUserPrefs(Profile* profile) {
   if (!profile->GetPrefs()->HasPrefPath(prefs::kProfileName))
     profile->GetPrefs()->SetString(prefs::kProfileName, profile_name);
 
-#if defined(OS_CHROMEOS)
-  const user_manager::User* user =
-      chromeos::ProfileHelper::Get()->GetUserByProfile(profile);
-  if (user && user->GetType() == user_manager::USER_TYPE_CHILD) {
-    profile->GetPrefs()->SetString(prefs::kSupervisedUserId,
-                                   supervised_users::kChildAccountSUID);
-  }
-#endif
   base::CommandLine* command_line = base::CommandLine::ForCurrentProcess();
   bool force_supervised_user_id =
 #if defined(OS_CHROMEOS)

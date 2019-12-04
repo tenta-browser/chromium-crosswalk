@@ -51,10 +51,6 @@ class MojoAudioDecoder : public AudioDecoder, public mojom::AudioDecoderClient {
     writer_capacity_ = capacity;
   }
 
-  void set_writer_capacity_for_testing(uint32_t capacity) {
-    writer_capacity_ = capacity;
-  }
-
  private:
   void BindRemoteDecoder();
 

@@ -273,9 +273,6 @@ public class SingleWebsitePreferences extends PreferenceFragmentCompat
                                 type, other.getContentSettingException(type));
                     }
                 }
-                if (merged.getPopupException() == null && other.getPopupException() != null) {
-                    merged.setPopupException(other.getPopupException());
-                }
             }
 
             // TODO(crbug.com/763982): Deal with this TODO colony.

@@ -43,16 +43,6 @@ SkColor UiTexture::background_color() const {
   return background_color_.value();
 }
 
-SkColor UiTexture::foreground_color() const {
-  DCHECK(foreground_color_);
-  return foreground_color_.value();
-}
-
-SkColor UiTexture::background_color() const {
-  DCHECK(background_color_);
-  return background_color_.value();
-}
-
 void UiTexture::SetForegroundColor(SkColor color) {
   if (foreground_color_ == color)
     return;

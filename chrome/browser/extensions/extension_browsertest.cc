@@ -193,11 +193,6 @@ void ExtensionBrowserTest::SetUpCommandLine(base::CommandLine* command_line) {
         new ScopedInstallVerifierBypassForTest());
   }
 
-  if (!ShouldEnableInstallVerification()) {
-    ignore_install_verification_.reset(
-        new extensions::ScopedInstallVerifierBypassForTest());
-  }
-
 #if defined(OS_CHROMEOS)
   if (set_chromeos_user_) {
     // This makes sure that we create the Default profile first, with no

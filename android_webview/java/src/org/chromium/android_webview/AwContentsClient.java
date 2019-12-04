@@ -73,7 +73,7 @@ public abstract class AwContentsClient {
         }
     }
 
-    final AwContentsClientCallbackHelper getCallbackHelper() {
+    public final AwContentsClientCallbackHelper getCallbackHelper() {
         return mCallbackHelper;
     }
 

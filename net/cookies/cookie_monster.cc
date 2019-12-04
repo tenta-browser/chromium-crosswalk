@@ -560,14 +560,6 @@ void CookieMonster::DumpMemoryStats(
                   total_pending_for_key);
 }
 
-void CookieMonster::TriggerCookieFetch() {
-//    if ( finished_fetching_all_cookies_ && started_fetching_all_cookies_) {
-  finished_fetching_all_cookies_ = false;
-  started_fetching_all_cookies_ = false;
-  FetchAllCookiesIfNecessary();
-//    }
-}
-
 CookieMonster::~CookieMonster() {
   DCHECK(thread_checker_.CalledOnValidThread());
 

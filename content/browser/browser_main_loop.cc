@@ -842,9 +842,6 @@ int BrowserMainLoop::PreCreateThreads() {
   // Record metrics about which site isolation flags have been turned on.
   SiteIsolationPolicy::StartRecordingSiteIsolationFlagUsage();
 
-  // Record metrics about which site isolation flags have been turned on.
-  SiteIsolationPolicy::StartRecordingSiteIsolationFlagUsage();
-
   return result_code_;
 }
 

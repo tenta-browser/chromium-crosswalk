@@ -25,10 +25,6 @@ extern const char kForceSigninVerificationMetricsName[];
 extern const char kForceSigninVerificationSuccessTimeMetricsName[];
 extern const char kForceSigninVerificationFailureTimeMetricsName[];
 
-extern const char kForceSigninVerificationMetricsName[];
-extern const char kForceSigninVerificationSuccessTimeMetricsName[];
-extern const char kForceSigninVerificationFailureTimeMetricsName[];
-
 // ForceSigninVerifier will verify profile's auth token when profile is loaded
 // into memory by the first time via gaia server. It will retry on any transient
 // error.

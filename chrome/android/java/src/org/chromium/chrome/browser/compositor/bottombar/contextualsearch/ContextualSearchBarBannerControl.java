@@ -292,32 +292,4 @@ public class ContextualSearchBarBannerControl extends OverlayPanelInflater {
         });
         disappearance.start();
     }
-
-    /**
-     * Animates the Bar Banner disappearance.
-     */
-    private void animateDisappearance() {
-        mIsHiding = true;
-        CompositorAnimator disappearance =
-                CompositorAnimator.ofFloat(mOverlayPanel.getAnimationHandler(), 1.f, 0.f,
-                        OverlayPanelAnimation.BASE_ANIMATION_DURATION_MS, null);
-        disappearance.addUpdateListener(new AnimatorUpdateListener() {
-            @Override
-            public void onAnimationUpdate(CompositorAnimator animator) {
-                if (isVisible()) {
-                    float percentage = animator.getAnimatedFraction();
-                    mHeightPx = MathUtils.interpolate(getPaddedHeightPx(), 0.f, percentage);
-                }
-            }
-        });
-        disappearance.addListener(new AnimatorListenerAdapter() {
-            @Override
-            public void onAnimationEnd(Animator animation) {
-                mHeightPx = 0.f;
-                mIsHiding = false;
-                hide();
-            }
-        });
-        disappearance.start();
-    }
 }

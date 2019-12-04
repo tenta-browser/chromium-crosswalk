@@ -273,7 +273,7 @@ public class AwContents implements SmartClipProvider {
 
     /**
      * Factory interface used for constructing functors that the Android framework uses for
-     * calling back into Chromium code to render the the contents of a Chromium frame into
+     * calling back into Chromium code to render the contents of a Chromium frame into
      * an Android view.
      */
     public interface NativeDrawFunctorFactory {

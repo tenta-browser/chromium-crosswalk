@@ -31,7 +31,7 @@ public class AwAutofillClient {
         return new AwAutofillClient(nativeClient);
     }
 
-    private AwAutofillClient(long nativeAwAutofillClient) {
+    protected AwAutofillClient(long nativeAwAutofillClient) {
         mNativeAwAutofillClient = nativeAwAutofillClient;
     }
 
