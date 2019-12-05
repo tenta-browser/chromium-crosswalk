@@ -155,7 +155,7 @@ public abstract class CommandLine {
      * @return the tokenized arguments, suitable for passing to init().
      */
     @VisibleForTesting
-    static String[] tokenizeQuotedArguments(char[] buffer) {
+    public static String[] tokenizeQuotedArguments(char[] buffer) {
         // Just field trials can take up to 10K of command line.
         if (buffer.length > 64 * 1024) {
             // Check that our test runners are setting a reasonable number of flags.
