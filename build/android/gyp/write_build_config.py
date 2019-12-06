@@ -1159,7 +1159,7 @@ def main(argv):
   # once we can generate the JNI registration based on APK / module targets as
   # opposed to groups and libraries.
   if is_apk_or_module_target or options.type in (
-      'group', 'java_library', 'junit_binary'):
+      'group', 'java_library', 'junit_binary', 'dist_aar'):
     deps_info['jni'] = {}
     all_java_sources = [c['java_sources_file'] for c in all_library_deps
                         if 'java_sources_file' in c]
@@ -1489,7 +1489,7 @@ def main(argv):
   deps_info['extra_main_r_text_files'] = sorted(extra_main_r_text_files)
 
   if is_apk_or_module_target or options.type in ('group', 'java_library',
-                                                 'junit_binary'):
+                                                 'junit_binary', 'dist_aar'):
     deps_info['jni']['all_source'] = sorted(set(all_java_sources))
 
   system_jars = [c['jar_path'] for c in system_library_deps]
