@@ -68,6 +68,7 @@ enum IPCMessageStart {
   SubresourceFilterMsgStart,
   ChromeAppsMsgStart,
   UnfreezableFrameMsgStart,
+  TentaMsgStart, // For tenta extensions
   LastIPCMsgStart  // Must come last.
 };
 

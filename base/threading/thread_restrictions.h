@@ -100,6 +100,7 @@ class KeyStorageLinux;
 class NativeBackendKWallet;
 class NativeDesktopMediaList;
 class StartupTimeBomb;
+class ScopedAllowWaitForLegacyWebViewApi;
 
 namespace android_webview {
 class AwFormDatabaseService;
@@ -389,6 +390,7 @@ class BASE_EXPORT ScopedAllowBaseSyncPrimitives {
                            ScopedAllowBaseSyncPrimitivesWithBlockingDisallowed);
 
   // Allowed usage:
+  friend class ::ScopedAllowWaitForLegacyWebViewApi;
   friend class SimpleThread;
   friend class base::GetAppOutputScopedAllowBaseSyncPrimitives;
   friend class blink::SourceStream;
