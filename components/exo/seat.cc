@@ -276,7 +276,6 @@ void Seat::DidProcessEvent(const ui::PlatformEvent& event) {
     default:
       break;
   }
-  modifier_flags_ = event->flags();
 }
 
 ////////////////////////////////////////////////////////////////////////////////

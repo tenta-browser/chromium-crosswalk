@@ -2624,11 +2624,6 @@ void HistoryBackend::DatabaseErrorCallback(int error, sql::Statement* stmt) {
 
     db_diagnostics_ = db_->GetDiagnosticInfo(error, stmt);
 
-    // Notify SyncBridge about storage error. It will report failure to sync
-    // engine and stop accepting remote updates.
-    if (typed_url_sync_bridge_)
-      typed_url_sync_bridge_->OnDatabaseError();
-
     // Don't just do the close/delete here, as we are being called by |db| and
     // that seems dangerous.
     // TODO(https://crbug.com/854258): It is also dangerous to kill the database

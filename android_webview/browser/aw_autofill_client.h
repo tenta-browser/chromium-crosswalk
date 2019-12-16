@@ -146,14 +146,13 @@ class AwAutofillClient : public autofill::AutofillClient,
                           const base::android::JavaParamRef<jobject>& obj,
                           jint position);
 
- private:
+ protected:
   explicit AwAutofillClient(content::WebContents* web_contents);
   friend class content::WebContentsUserData<AwAutofillClient>;
 
-  void ShowAutofillPopupImpl(
-      const gfx::RectF& element_bounds,
-      bool is_rtl,
-      const std::vector<autofill::Suggestion>& suggestions);
+  virtual void ShowAutofillPopupImpl(const gfx::RectF& element_bounds, bool is_rtl,
+                                     const std::vector<autofill::Suggestion>& suggestions);
+  virtual void HideAutofillPopupImpl();
 
   // The web_contents associated with this delegate.
   content::WebContents* web_contents_;

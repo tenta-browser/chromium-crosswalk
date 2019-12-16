@@ -220,6 +220,10 @@ void AwAutofillClient::UpdateAutofillPopupDataListValues(
 }
 
 void AwAutofillClient::HideAutofillPopup() {
+  HideAutofillPopupImpl();
+}
+
+void AwAutofillClient::HideAutofillPopupImpl() {
   JNIEnv* env = AttachCurrentThread();
   ScopedJavaLocalRef<jobject> obj = java_ref_.get(env);
   if (obj.is_null())
