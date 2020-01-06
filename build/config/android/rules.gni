@@ -1848,6 +1848,14 @@ if (enable_java_templates) {
           "--abi=$android_app_abi",
         ]
       }
+      # TODO(gabor): remove this once native_libraries are done properly through build_config.
+      if (defined(invoker.native_libraries_norebase) && invoker.native_libraries_norebase != []) {
+        _native_libraries_norebase = invoker.native_libraries_norebase 
+        args += [
+          "--native-libraries=$_native_libraries_norebase",
+          "--abi=$android_app_abi",
+        ]
+      }
       if (defined(invoker.jar_excluded_patterns)) {
         args += [ "--jar-excluded-globs=${invoker.jar_excluded_patterns}" ]
       }
