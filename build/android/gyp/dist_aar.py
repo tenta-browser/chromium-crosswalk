@@ -113,7 +113,7 @@ def main(args):
 
   with tempfile.NamedTemporaryFile(delete=False) as staging_file:
     try:
-      with zipfile.ZipFile(staging_file.name, 'w') as z:
+      with zipfile.ZipFile(staging_file.name, 'w', compression=zipfile.ZIP_DEFLATED) as z:
         build_utils.AddToZipHermetic(
             z, 'AndroidManifest.xml', src_path=options.android_manifest)
 
