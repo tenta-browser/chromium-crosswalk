@@ -148,6 +148,8 @@ class NET_EXPORT CookieStore {
   // Reports the estimate of dynamically allocated memory in bytes.
   virtual void DumpMemoryStats(base::trace_event::ProcessMemoryDump* pmd,
                                const std::string& parent_absolute_name) const;
+
+  virtual void TriggerCookieFetch();
 };
 
 }  // namespace net
