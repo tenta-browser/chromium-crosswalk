@@ -74,6 +74,8 @@ def main(args):
                       help='GN list of R.txt files to merge')
   parser.add_argument('--proguard-configs', required=True,
                       help='GN list of ProGuard flag files to merge.')
+  parser.add_argument('--assets', required=True,
+                      help='GN list of asset files')
   parser.add_argument(
       '--android-manifest',
       help='Path to AndroidManifest.xml to include.',
@@ -103,6 +105,7 @@ def main(args):
       options.dependencies_res_zips)
   options.r_text_files = build_utils.ParseGnList(options.r_text_files)
   options.proguard_configs = build_utils.ParseGnList(options.proguard_configs)
+  options.assets = build_utils.ParseGnList(options.assets)
   options.native_libraries = build_utils.ParseGnList(options.native_libraries)
   options.jar_excluded_globs = build_utils.ParseGnList(
       options.jar_excluded_globs)
@@ -144,6 +147,10 @@ def main(args):
           build_utils.AddToZipHermetic(
               z, os.path.join('jni', options.abi, libname),
               src_path=native_library)
+
+        for asset in options.assets:
+          ext_path, int_path = asset.split(':', 2)
+          build_utils.AddToZipHermetic(z, 'assets/' + int_path, src_path=ext_path)
     except:
       os.unlink(staging_file.name)
       raise

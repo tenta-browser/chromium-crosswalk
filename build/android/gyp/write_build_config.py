@@ -1719,6 +1719,10 @@ def main(argv):
                              if jar not in tested_apk_resource_jars]
     config['java_resources_jars'] = java_resources_jars
 
+  if options.type == 'dist_aar':
+    config['assets'], config['uncompressed_assets'], _ = (
+        _MergeAssets(deps.All('android_assets')))
+
   if options.java_resources_jar_path:
     deps_info['java_resources_jar'] = options.java_resources_jar_path
 
