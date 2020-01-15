@@ -148,8 +148,10 @@ def main(args):
               z, os.path.join('jni', options.abi, libname),
               src_path=native_library)
 
+        assets = []
         for asset in options.assets:
           ext_path, int_path = asset.split(':', 2)
+          assets.append(ext_path)
           build_utils.AddToZipHermetic(z, 'assets/' + int_path, src_path=ext_path)
     except:
       os.unlink(staging_file.name)
@@ -158,7 +160,8 @@ def main(args):
 
   if options.depfile:
     all_inputs = (options.jars + options.dependencies_res_zips +
-                  options.r_text_files + options.proguard_configs)
+                  options.r_text_files + options.proguard_configs + 
+                  options.native_libraries + assets)
     build_utils.WriteDepfile(options.depfile, options.output, all_inputs,
                              add_pydeps=False)
 
