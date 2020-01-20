@@ -1868,6 +1868,11 @@ if (enable_java_templates) {
           "--resource-included-globs=${invoker.resource_included_patterns}",
         ]
       }
+      if (defined(invoker.r_text_renumber) && invoker.r_text_renumber) {
+        args += [
+          "--r-text-renumber"
+        ]
+      }
     }
   }
 
