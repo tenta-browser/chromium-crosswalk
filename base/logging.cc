@@ -492,6 +492,10 @@ bool ShouldCreateLogMessage(int severity) {
 // set, or only LOG_TO_FILE is set, since that is useful for local development
 // and debugging.
 bool ShouldLogToStderr(int severity) {
+#if defined(OS_ANDROID)
+  // (iotto): On android we don't need stderr logging
+  return false;
+#endif
   if (g_logging_destination & LOG_TO_STDERR)
     return true;
   if (severity >= kAlwaysPrintErrorLevel)
