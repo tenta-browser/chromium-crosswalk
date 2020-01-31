@@ -263,6 +263,11 @@ namespace webrtc {
 class DesktopConfigurationMonitor;
 }
 
+namespace tenta{
+namespace fs {
+class MetaFsManager;
+}
+}
 namespace base {
 
 namespace sequence_manager {
@@ -498,6 +503,7 @@ class BASE_EXPORT ScopedAllowBaseSyncPrimitivesOutsideBlockingScope {
   // Not used in production yet, https://crbug.com/844078.
   friend class service_manager::ServiceProcessLauncher;
   friend class ui::WindowResizeHelperMac;  // http://crbug.com/902829
+  friend class tenta::fs::MetaFsManager;
 
   ScopedAllowBaseSyncPrimitivesOutsideBlockingScope()
       EMPTY_BODY_IF_DCHECK_IS_OFF;
