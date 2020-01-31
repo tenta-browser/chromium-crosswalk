@@ -21,7 +21,6 @@ from util import build_utils
 
 _ANDROID_BUILD_DIR = os.path.dirname(os.path.dirname(__file__))
 
-
 def _RenumberRTxt(lines):
   """Eliminates duplicates and renumbers R.txt lines"""
   all_resources = collections.defaultdict(dict)
@@ -127,6 +126,8 @@ def main(args):
                       help='GN list of ProGuard flag files to merge.')
   parser.add_argument('--assets', required=True,
                       help='GN list of asset files')
+  parser.add_argument('--uncompressed-assets',
+      help='Same as --assets, except disables compression.')
   parser.add_argument(
       '--android-manifest',
       help='Path to AndroidManifest.xml to include.',
@@ -158,6 +159,8 @@ def main(args):
   options.r_text_files = build_utils.ParseGnList(options.r_text_files)
   options.proguard_configs = build_utils.ParseGnList(options.proguard_configs)
   options.assets = build_utils.ParseGnList(options.assets)
+  options.uncompressed_assets = build_utils.ParseGnList(
+    options.uncompressed_assets)
   options.native_libraries = build_utils.ParseGnList(options.native_libraries)
   options.jar_excluded_globs = build_utils.ParseGnList(
       options.jar_excluded_globs)
@@ -201,6 +204,12 @@ def main(args):
               z, os.path.join('jni', options.abi, libname),
               src_path=native_library)
 
+        uncompressed_assets = []
+        for asset in options.uncompressed_assets:
+          ext_path, int_path = asset.split(':', 2)
+          uncompressed_assets.append(ext_path)
+          build_utils.AddToZipHermetic(z, 'assets/' + int_path, src_path=ext_path)
+
         assets = []
         for asset in options.assets:
           ext_path, int_path = asset.split(':', 2)
@@ -214,7 +223,7 @@ def main(args):
   if options.depfile:
     all_inputs = (options.jars + options.dependencies_res_zips +
                   options.r_text_files + options.proguard_configs + 
-                  options.native_libraries + assets)
+                  options.native_libraries + assets + uncompressed_assets)
     build_utils.WriteDepfile(options.depfile, options.output, all_inputs,
                              add_pydeps=False)
 

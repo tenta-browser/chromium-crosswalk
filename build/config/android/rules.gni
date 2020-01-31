@@ -1827,6 +1827,7 @@ if (enable_java_templates) {
         "--r-text-files=@FileArg($_rebased_build_config:deps_info:extra_r_text_files)",
         "--proguard-configs=@FileArg($_rebased_build_config:deps_info:proguard_all_configs)",
         "--assets=@FileArg($_rebased_build_config:assets)",
+        "--uncompressed-assets=@FileArg($_rebased_build_config:uncompressed_assets)",
       ]
       if (_direct_deps_only) {
         args += [ "--jars=@FileArg($_rebased_build_config:javac:classpath)" ]
