@@ -25,7 +25,7 @@ namespace base {
 namespace android {
 
 void ConvertJavaStringToUTF8(JNIEnv* env, jstring str, std::string* result) {
-  DCHECK(str);
+  DCHECK(result);
   if (!str) {
 //    LOG(WARNING) << "ConvertJavaStringToUTF8 called with null string.";
     result->clear();
