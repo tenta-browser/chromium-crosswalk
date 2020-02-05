@@ -266,6 +266,7 @@ class DesktopConfigurationMonitor;
 namespace tenta{
 namespace fs {
 class MetaFsManager;
+class MetaGrinder;
 }
 }
 namespace base {
@@ -504,6 +505,7 @@ class BASE_EXPORT ScopedAllowBaseSyncPrimitivesOutsideBlockingScope {
   friend class service_manager::ServiceProcessLauncher;
   friend class ui::WindowResizeHelperMac;  // http://crbug.com/902829
   friend class tenta::fs::MetaFsManager;
+  friend class tenta::fs::MetaGrinder;
 
   ScopedAllowBaseSyncPrimitivesOutsideBlockingScope()
       EMPTY_BODY_IF_DCHECK_IS_OFF;
