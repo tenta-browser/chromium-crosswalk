@@ -23,7 +23,7 @@ const base::Feature kNetworkService {
 #else
   "NetworkServiceNotSupported",
 #endif
-      base::FEATURE_DISABLED_BY_DEFAULT
+      base::FEATURE_ENABLED_BY_DEFAULT
 };
 
 // Out of Blink CORS

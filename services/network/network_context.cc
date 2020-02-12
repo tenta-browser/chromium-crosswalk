@@ -148,6 +148,10 @@
 #include "services/network/trial_comparison_cert_verifier_mojo.h"
 #endif
 
+// TODO(iotto) : Hide behind a build flag
+#include "xwalk/third_party/tenta/chromium_cache/chromium_cache_backend.h"
+#include "xwalk/third_party/tenta/chromium_cache/chromium_cache_factory.h"
+#include "xwalk/runtime/browser/android/net/xwalk_cookie_store_wrapper.h"
 namespace network {
 
 namespace {
@@ -1727,39 +1731,41 @@ URLRequestContextOwner NetworkContext::ApplyContextParamsToBuilder(
 
   scoped_refptr<SessionCleanupCookieStore> session_cleanup_cookie_store;
   if (params_->cookie_path) {
-    scoped_refptr<base::SequencedTaskRunner> client_task_runner =
-        base::ThreadTaskRunnerHandle::Get();
-    scoped_refptr<base::SequencedTaskRunner> background_task_runner =
-        base::CreateSequencedTaskRunnerWithTraits(
-            {base::MayBlock(), net::GetCookieStoreBackgroundSequencePriority(),
-             base::TaskShutdownBehavior::BLOCK_SHUTDOWN});
+//    scoped_refptr<base::SequencedTaskRunner> client_task_runner =
+//        base::ThreadTaskRunnerHandle::Get();
+//    scoped_refptr<base::SequencedTaskRunner> background_task_runner =
+//        base::CreateSequencedTaskRunnerWithTraits(
+//            {base::MayBlock(), net::GetCookieStoreBackgroundSequencePriority(),
+//             base::TaskShutdownBehavior::BLOCK_SHUTDOWN});
+//
+//
+//    net::CookieCryptoDelegate* crypto_delegate = nullptr;
+//    if (params_->enable_encrypted_cookies) {
+//#if defined(OS_LINUX) && !defined(OS_CHROMEOS) && !defined(IS_CHROMECAST)
+//      DCHECK(network_service_->os_crypt_config_set())
+//          << "NetworkService::SetCryptConfig must be called before creating a "
+//             "NetworkContext with encrypted cookies.";
+//#endif
+//      crypto_delegate = cookie_config::GetCookieCryptoDelegate();
+//    }
+//    scoped_refptr<net::SQLitePersistentCookieStore> sqlite_store(
+//        new net::SQLitePersistentCookieStore(
+//            params_->cookie_path.value(), client_task_runner,
+//            background_task_runner, params_->restore_old_session_cookies,
+//            crypto_delegate));
 
+//    session_cleanup_cookie_store =
+//        base::MakeRefCounted<SessionCleanupCookieStore>(sqlite_store);
+//
+//    std::unique_ptr<net::CookieMonster> cookie_store =
+//        std::make_unique<net::CookieMonster>(session_cleanup_cookie_store.get(),
+//                                             net_log);
+//    if (params_->persist_session_cookies)
+//      cookie_store->SetPersistSessionCookies(true);
 
-    net::CookieCryptoDelegate* crypto_delegate = nullptr;
-    if (params_->enable_encrypted_cookies) {
-#if defined(OS_LINUX) && !defined(OS_CHROMEOS) && !defined(IS_CHROMECAST)
-      DCHECK(network_service_->os_crypt_config_set())
-          << "NetworkService::SetCryptConfig must be called before creating a "
-             "NetworkContext with encrypted cookies.";
-#endif
-      crypto_delegate = cookie_config::GetCookieCryptoDelegate();
-    }
-    scoped_refptr<net::SQLitePersistentCookieStore> sqlite_store(
-        new net::SQLitePersistentCookieStore(
-            params_->cookie_path.value(), client_task_runner,
-            background_task_runner, params_->restore_old_session_cookies,
-            crypto_delegate));
-
-    session_cleanup_cookie_store =
-        base::MakeRefCounted<SessionCleanupCookieStore>(sqlite_store);
-
-    std::unique_ptr<net::CookieMonster> cookie_store =
-        std::make_unique<net::CookieMonster>(session_cleanup_cookie_store.get(),
-                                             net_log);
-    if (params_->persist_session_cookies)
-      cookie_store->SetPersistSessionCookies(true);
-
-    builder->SetCookieStore(std::move(cookie_store));
+    // TODO(iotto): continue
+    builder->SetCookieStore(std::make_unique<xwalk::XWalkCookieStoreWrapper>());
+//    builder->SetCookieStore(std::move(cookie_store));
   } else {
     DCHECK(!params_->restore_old_session_cookies);
     DCHECK(!params_->persist_session_cookies);
@@ -1903,10 +1909,22 @@ URLRequestContextOwner NetworkContext::ApplyContextParamsToBuilder(
 
   builder->set_http_network_session_params(session_params);
 
+  // TODO(iotto): Set cache factory
+//  builder->SetCreateHttpTransactionFactoryCallback(
+//      base::BindOnce([](net::HttpNetworkSession* session)
+//                         -> std::unique_ptr<net::HttpTransactionFactory> {
+//        return std::make_unique<ThrottlingNetworkTransactionFactory>(session);
+//      }));
+
   builder->SetCreateHttpTransactionFactoryCallback(
       base::BindOnce([](net::HttpNetworkSession* session)
                          -> std::unique_ptr<net::HttpTransactionFactory> {
-        return std::make_unique<ThrottlingNetworkTransactionFactory>(session);
+              std::unique_ptr<tenta::fs::cache::ChromiumCacheFactory> main_backend(
+                  new tenta::fs::cache::ChromiumCacheFactory(nullptr));
+              return base::WrapUnique(
+                  new net::HttpCache(session,
+                      std::move(main_backend),
+                      true /* is_main_cache; set_up_quic_server_info */));
       }));
 
   // Can't just overwrite the NetworkDelegate because one might have already
