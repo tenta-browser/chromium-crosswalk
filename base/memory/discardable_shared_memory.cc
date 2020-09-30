@@ -476,4 +476,11 @@ Time DiscardableSharedMemory::Now() const {
   return Time::Now();
 }
 
+#if defined(OS_ANDROID)
+// static
+bool DiscardableSharedMemory::IsAshmemDeviceSupportedForTesting() {
+  return ashmem_device_is_supported();
+}
+#endif
+
 }  // namespace base
